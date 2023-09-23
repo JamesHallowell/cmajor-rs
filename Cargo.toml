@@ -1,0 +1,11 @@
+[package]
+name = "cmajor"
+description = ""
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libloading = "0.8.0"
+json = "0.12.4"
+thiserror = "1.0.48"
+cpal = "0.15.2"
