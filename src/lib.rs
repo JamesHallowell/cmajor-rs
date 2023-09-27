@@ -1,14 +1,11 @@
+mod engine;
 mod ffi;
-use ffi::Library;
+mod library;
+mod performer;
+mod program;
 
-pub struct CMajor {
-    library: Library,
-}
-
-impl CMajor {
-    pub fn new() -> Self {
-        let library = Library::load("libCmajPerformer.dylib").unwrap();
-
-        Self { library }
-    }
-}
+pub use {
+    engine::{Engine, EngineBuilder, EngineType},
+    library::{CMajor, Error},
+    program::Program,
+};

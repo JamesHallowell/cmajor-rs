@@ -1,7 +1,7 @@
 use std::{
+    borrow::Cow,
     ffi::{c_char, c_int},
     ptr::null_mut,
-    str::Utf8Error,
 };
 
 #[repr(C)]
@@ -18,29 +18,35 @@ pub struct CMajorString {
     vtable: *const CMajorStringVTable,
 }
 
-pub struct CMajorStringPtr(*mut CMajorString);
+pub struct CMajorStringPtr {
+    string: *mut CMajorString,
+}
 
 impl Drop for CMajorStringPtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.0).vtable).release)(self.0) };
+        unsafe { ((*(*self.string).vtable).release)(self.string) };
     }
 }
 
 impl CMajorStringPtr {
     pub unsafe fn new(string: *mut CMajorString) -> Self {
         assert_ne!(string, null_mut());
-        Self(string)
+        Self { string }
     }
 
-    pub fn to_str(&self) -> Result<&str, Utf8Error> {
-        let begin = unsafe { ((*(*self.0).vtable).begin)(self.0) };
-        let end = unsafe { ((*(*self.0).vtable).end)(self.0) };
+    pub fn to_string(&self) -> Cow<'_, str> {
+        let begin = unsafe { ((*(*self.string).vtable).begin)(self.string) };
+        let end = unsafe { ((*(*self.string).vtable).end)(self.string) };
 
         let len = unsafe { end.offset_from(begin) };
         assert!(len >= 0);
 
         let slice = unsafe { std::slice::from_raw_parts(begin.cast(), len as usize) };
 
-        std::str::from_utf8(slice)
+        String::from_utf8_lossy(slice)
+    }
+
+    pub fn to_json(&self) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::from_str(&self.to_string())
     }
 }

@@ -6,7 +6,7 @@ use {
     },
     std::{
         ffi::{c_char, c_int, c_void, CStr},
-        ptr::{addr_of_mut, null_mut},
+        ptr::null_mut,
     },
 };
 
@@ -47,6 +47,7 @@ pub struct Engine {
     vtable: *const EngineVTable,
 }
 
+#[derive(Debug)]
 pub struct EnginePtr {
     engine: *mut Engine,
 }
@@ -56,7 +57,7 @@ impl EnginePtr {
         Self { engine }
     }
 
-    pub fn build_settings(&self) -> CMajorStringPtr {
+    pub fn get_build_settings(&self) -> CMajorStringPtr {
         let result = unsafe { ((*(*self.engine).vtable).get_build_settings)(self.engine) };
         unsafe { CMajorStringPtr::new(result) }
     }
@@ -103,6 +104,10 @@ impl EnginePtr {
         }
 
         Err(unsafe { CMajorStringPtr::new(error) })
+    }
+
+    pub fn unload(&self) {
+        unsafe { ((*(*self.engine).vtable).unload)(self.engine) };
     }
 
     pub fn program_details(&self) -> Option<CMajorStringPtr> {
