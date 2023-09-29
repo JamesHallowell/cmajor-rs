@@ -16,7 +16,7 @@ mod program;
 mod string;
 
 pub use {
-    engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr, string::CMajorStringPtr,
+    engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr, string::CmajorStringPtr,
 };
 
 pub struct Library {

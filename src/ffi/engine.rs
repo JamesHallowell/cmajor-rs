@@ -2,7 +2,7 @@ use {
     crate::ffi::{
         performer::{Performer, PerformerPtr},
         program::{Program, ProgramPtr},
-        string::{CMajorString, CMajorStringPtr},
+        string::{CmajorString, CmajorStringPtr},
     },
     std::{
         ffi::{c_char, c_int, c_void, CStr},
@@ -22,7 +22,7 @@ struct EngineVTable {
     add_ref: unsafe extern "system" fn(*mut Engine) -> c_int,
     release: unsafe extern "system" fn(*mut Engine) -> c_int,
     ref_count: unsafe extern "system" fn(*const Engine) -> c_int,
-    get_build_settings: unsafe extern "system" fn(*mut Engine) -> *mut CMajorString,
+    get_build_settings: unsafe extern "system" fn(*mut Engine) -> *mut CmajorString,
     set_build_settings: unsafe extern "system" fn(*mut Engine, *const c_char),
     load: unsafe extern "system" fn(
         *mut Engine,
@@ -31,15 +31,15 @@ struct EngineVTable {
         RequestExternalVariableCallback,
         *mut c_void,
         RequestExternalFunctionCallback,
-    ) -> *mut CMajorString,
+    ) -> *mut CmajorString,
     set_external_variable:
         unsafe extern "system" fn(*mut Engine, *const c_char, *const c_void, isize),
     unload: unsafe extern "system" fn(*mut Engine),
-    get_program_details: unsafe extern "system" fn(*mut Engine) -> *mut CMajorString,
+    get_program_details: unsafe extern "system" fn(*mut Engine) -> *mut CmajorString,
     get_endpoint_handle: unsafe extern "system" fn(*mut Engine, *const c_char) -> EndpointHandle,
-    link: unsafe extern "system" fn(*mut Engine, *mut c_void) -> *mut CMajorString,
+    link: unsafe extern "system" fn(*mut Engine, *mut c_void) -> *mut CmajorString,
     create_performer: unsafe extern "system" fn(*mut Engine) -> *mut Performer,
-    get_last_build_log: unsafe extern "system" fn(*mut Engine) -> *mut CMajorString,
+    get_last_build_log: unsafe extern "system" fn(*mut Engine) -> *mut CmajorString,
 }
 
 #[repr(C)]
@@ -57,9 +57,9 @@ impl EnginePtr {
         Self { engine }
     }
 
-    pub fn get_build_settings(&self) -> CMajorStringPtr {
+    pub fn get_build_settings(&self) -> CmajorStringPtr {
         let result = unsafe { ((*(*self.engine).vtable).get_build_settings)(self.engine) };
-        unsafe { CMajorStringPtr::new(result) }
+        unsafe { CmajorStringPtr::new(result) }
     }
 
     pub fn set_build_settings(&self, build_settings: &CStr) {
@@ -68,7 +68,7 @@ impl EnginePtr {
         };
     }
 
-    pub fn load(&self, program: &ProgramPtr) -> Result<(), CMajorStringPtr> {
+    pub fn load(&self, program: &ProgramPtr) -> Result<(), CmajorStringPtr> {
         extern "system" fn request_external_variable_callback(
             ctx: *mut c_void,
             name: *const c_char,
@@ -103,18 +103,18 @@ impl EnginePtr {
             return Ok(());
         }
 
-        Err(unsafe { CMajorStringPtr::new(error) })
+        Err(unsafe { CmajorStringPtr::new(error) })
     }
 
     pub fn unload(&self) {
         unsafe { ((*(*self.engine).vtable).unload)(self.engine) };
     }
 
-    pub fn program_details(&self) -> Option<CMajorStringPtr> {
+    pub fn program_details(&self) -> Option<CmajorStringPtr> {
         let result = unsafe { ((*(*self.engine).vtable).get_program_details)(self.engine) };
 
         if !result.is_null() {
-            Some(unsafe { CMajorStringPtr::new(result) })
+            Some(unsafe { CmajorStringPtr::new(result) })
         } else {
             None
         }
@@ -131,14 +131,14 @@ impl EnginePtr {
         }
     }
 
-    pub fn link(&self) -> Result<(), CMajorStringPtr> {
+    pub fn link(&self) -> Result<(), CmajorStringPtr> {
         let cache_database = null_mut();
         let error = unsafe { ((*(*self.engine).vtable).link)(self.engine, cache_database) };
 
         if error.is_null() {
             Ok(())
         } else {
-            Err(unsafe { CMajorStringPtr::new(error) })
+            Err(unsafe { CmajorStringPtr::new(error) })
         }
     }
 

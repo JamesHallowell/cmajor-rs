@@ -1,5 +1,5 @@
 use {
-    crate::ffi::string::{CMajorString, CMajorStringPtr},
+    crate::ffi::string::{CmajorString, CmajorStringPtr},
     std::{
         ffi::{c_char, c_int, CStr},
         ptr::null,
@@ -24,9 +24,9 @@ struct ProgramVTable {
         *const c_char,
         *const c_char,
         isize,
-    ) -> *mut CMajorString,
+    ) -> *mut CmajorString,
     get_syntax_tree:
-        unsafe extern "system" fn(*mut Program, *const SyntaxTreeOptions) -> *mut CMajorString,
+        unsafe extern "system" fn(*mut Program, *const SyntaxTreeOptions) -> *mut CmajorString,
 }
 
 #[repr(C)]
@@ -51,7 +51,7 @@ impl ProgramPtr {
         &self,
         file_name: Option<&CStr>,
         file_content: impl AsRef<str>,
-    ) -> Result<(), CMajorStringPtr> {
+    ) -> Result<(), CmajorStringPtr> {
         let file_name = file_name.map(CStr::as_ptr).unwrap_or(null());
 
         let file_content_len = file_content.as_ref().len() as isize;
@@ -70,10 +70,10 @@ impl ProgramPtr {
             return Ok(());
         }
 
-        Err(unsafe { CMajorStringPtr::new(error) })
+        Err(unsafe { CmajorStringPtr::new(error) })
     }
 
-    pub fn syntax_tree(&self) -> CMajorStringPtr {
+    pub fn syntax_tree(&self) -> CmajorStringPtr {
         let options = SyntaxTreeOptions {
             namespace_or_module: null(),
             include_source_locations: false,
@@ -83,7 +83,7 @@ impl ProgramPtr {
 
         let result = unsafe { ((*(*self.program).vtable).get_syntax_tree)(self.program, &options) };
 
-        unsafe { CMajorStringPtr::new(result) }
+        unsafe { CmajorStringPtr::new(result) }
     }
 }
 

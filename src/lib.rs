@@ -6,6 +6,6 @@ mod program;
 
 pub use {
     engine::{Engine, EngineBuilder, EngineType},
-    library::{CMajor, Error},
+    library::{Cmajor, Error},
     program::Program,
 };

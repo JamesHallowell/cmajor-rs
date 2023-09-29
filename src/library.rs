@@ -17,11 +17,11 @@ pub enum Error {
     EngineNotFound,
 }
 
-pub struct CMajor {
+pub struct Cmajor {
     library: Library,
 }
 
-impl CMajor {
+impl Cmajor {
     pub fn new(path_to_library: impl AsRef<Path>) -> Result<Self, Error> {
         let library = Library::load(path_to_library)?;
         Ok(Self { library })

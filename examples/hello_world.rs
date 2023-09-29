@@ -1,5 +1,5 @@
 use {
-    cmajor::CMajor,
+    cmajor::Cmajor,
     cpal::traits::{DeviceTrait, HostTrait, StreamTrait},
     std::{thread::sleep, time::Duration},
 };
@@ -54,7 +54,7 @@ const SAMPLE_RATE: u32 = 48_000;
 const BLOCK_SIZE: u32 = 256;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cmajor = CMajor::new("libCmajPerformer.dylib")?;
+    let cmajor = Cmajor::new("libCmajPerformer.dylib")?;
 
     println!("Cmajor v{}", cmajor.version());
 

@@ -5,31 +5,31 @@ use std::{
 };
 
 #[repr(C)]
-struct CMajorStringVTable {
-    add_ref: unsafe extern "system" fn(*mut CMajorString) -> c_int,
-    release: unsafe extern "system" fn(*mut CMajorString) -> c_int,
-    ref_count: unsafe extern "system" fn(*const CMajorString) -> c_int,
-    begin: unsafe extern "system" fn(*const CMajorString) -> *const c_char,
-    end: unsafe extern "system" fn(*const CMajorString) -> *const c_char,
+struct CmajorStringVTable {
+    add_ref: unsafe extern "system" fn(*mut CmajorString) -> c_int,
+    release: unsafe extern "system" fn(*mut CmajorString) -> c_int,
+    ref_count: unsafe extern "system" fn(*const CmajorString) -> c_int,
+    begin: unsafe extern "system" fn(*const CmajorString) -> *const c_char,
+    end: unsafe extern "system" fn(*const CmajorString) -> *const c_char,
 }
 
 #[repr(C)]
-pub struct CMajorString {
-    vtable: *const CMajorStringVTable,
+pub struct CmajorString {
+    vtable: *const CmajorStringVTable,
 }
 
-pub struct CMajorStringPtr {
-    string: *mut CMajorString,
+pub struct CmajorStringPtr {
+    string: *mut CmajorString,
 }
 
-impl Drop for CMajorStringPtr {
+impl Drop for CmajorStringPtr {
     fn drop(&mut self) {
         unsafe { ((*(*self.string).vtable).release)(self.string) };
     }
 }
 
-impl CMajorStringPtr {
-    pub unsafe fn new(string: *mut CMajorString) -> Self {
+impl CmajorStringPtr {
+    pub unsafe fn new(string: *mut CmajorString) -> Self {
         assert_ne!(string, null_mut());
         Self { string }
     }
