@@ -1,14 +1,18 @@
 use {
     crate::{
+        endpoint::{EndpointDetails, EndpointDirection, EndpointId},
         ffi::{CmajorStringPtr, EnginePtr},
-        performer::Performer,
+        performer::PerformerBuilder,
         program::Program,
     },
-    serde_json::{Map, Number, Value},
+    serde::{Deserialize, Serialize},
+    serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue},
     std::{
         borrow::Cow,
+        collections::HashMap,
         ffi::{CStr, CString},
         slice::Split,
+        sync::Arc,
     },
 };
 
@@ -58,14 +62,16 @@ impl std::fmt::Debug for EngineType {
 }
 
 pub struct EngineBuilder {
-    pub(crate) build_settings: Map<String, Value>,
+    pub(crate) build_settings: JsonMap<String, JsonValue>,
     pub(crate) engine: Engine<Idle>,
 }
 
 impl EngineBuilder {
-    pub fn with_sample_rate(mut self, sample_rate: impl Into<Number>) -> Self {
-        self.build_settings
-            .insert("frequency".to_string(), Value::Number(sample_rate.into()));
+    pub fn with_sample_rate(mut self, sample_rate: impl Into<JsonNumber>) -> Self {
+        self.build_settings.insert(
+            "frequency".to_string(),
+            JsonValue::Number(sample_rate.into()),
+        );
         self
     }
 
@@ -76,7 +82,7 @@ impl EngineBuilder {
         } = self;
 
         let build_settings =
-            serde_json::to_string(&Value::Object(build_settings)).expect("valid json");
+            serde_json::to_string(&JsonValue::Object(build_settings)).expect("valid json");
         let build_settings =
             CString::new(build_settings).expect("failed to convert build settings JSON to CString");
 
@@ -84,8 +90,6 @@ impl EngineBuilder {
         engine
     }
 }
-
-pub struct EndpointHandle(pub(crate) u32);
 
 #[derive(Debug)]
 pub struct Engine<State = Idle> {
@@ -109,7 +113,31 @@ pub struct Idle;
 pub struct Loaded;
 
 #[derive(Debug)]
-pub struct Linked;
+pub struct Linked {
+    endpoints: Arc<HashMap<EndpointId, Endpoint>>,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct EndpointHandle(u32);
+
+impl Into<u32> for EndpointHandle {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProgramDetails {
+    inputs: Vec<EndpointDetails>,
+    outputs: Vec<EndpointDetails>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    pub handle: EndpointHandle,
+    pub direction: EndpointDirection,
+    pub details: EndpointDetails,
+}
 
 impl Engine<Idle> {
     pub(crate) fn new(engine: EnginePtr) -> Self {
@@ -131,7 +159,7 @@ impl Engine<Idle> {
 }
 
 impl Engine<Loaded> {
-    pub fn get_endpoint_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
+    fn get_endpoint_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
         let id = CString::new(id.as_ref()).ok()?;
 
         self.inner
@@ -139,30 +167,73 @@ impl Engine<Loaded> {
             .map(EndpointHandle)
     }
 
-    pub fn program_details(&self) -> Result<Value, serde_json::Error> {
-        Ok(self
+    pub fn program_details(&self) -> Result<ProgramDetails, serde_json::Error> {
+        let program_details = self
             .inner
             .program_details()
             .as_ref()
             .map(CmajorStringPtr::to_json)
             .transpose()?
-            .unwrap_or_default())
+            .unwrap_or_default();
+
+        serde_json::from_value(program_details)
     }
 
     pub fn link(self) -> Result<Engine<Linked>, Error> {
+        let ProgramDetails { inputs, outputs } = match self.program_details() {
+            Ok(program_details) => program_details,
+            Err(error) => {
+                return Err(Error::FailedToLink(
+                    self,
+                    format!("failed to get program details: {}", error),
+                ))
+            }
+        };
+
+        let inputs = inputs
+            .into_iter()
+            .map(|endpoint| (EndpointDirection::Input, endpoint));
+
+        let outputs = outputs
+            .into_iter()
+            .map(|endpoint| (EndpointDirection::Output, endpoint));
+
+        let endpoints = inputs
+            .chain(outputs)
+            .filter_map(|(direction, endpoint)| {
+                let handle = self.get_endpoint_handle(endpoint.id().as_str())?;
+                Some((
+                    endpoint.id().clone(),
+                    Endpoint {
+                        handle,
+                        details: endpoint,
+                        direction,
+                    },
+                ))
+            })
+            .collect();
+
         match self.inner.link() {
-            Ok(_) => Ok(Engine {
-                inner: self.inner,
-                _state: Linked,
-            }),
+            Ok(_) => {
+                let linked = Linked {
+                    endpoints: Arc::new(endpoints),
+                };
+                Ok(Engine {
+                    inner: self.inner,
+                    _state: linked,
+                })
+            }
             Err(error) => Err(Error::FailedToLink(self, error.to_string().into_owned())),
         }
     }
 }
 
 impl Engine<Linked> {
-    pub fn create_performer(&self) -> Performer {
-        self.inner.create_performer().into()
+    pub fn performer(&self) -> PerformerBuilder {
+        PerformerBuilder::new(
+            self.inner.create_performer(),
+            Arc::clone(&self._state.endpoints),
+        )
     }
 }
 

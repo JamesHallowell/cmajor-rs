@@ -3,8 +3,14 @@ use {
         de::{value::MapAccessDeserializer, Visitor},
         Deserialize, Deserializer,
     },
-    std::fmt::Formatter,
+    std::{borrow::Borrow, fmt::Formatter},
 };
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum EndpointDirection {
+    Input,
+    Output,
+}
 
 #[derive(Debug, Copy, Clone, Deserialize, PartialEq)]
 pub enum EndpointType {
@@ -57,10 +63,19 @@ pub struct EndpointDataType {
     r#type: DataType,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+pub struct EndpointId(String);
+
+impl Borrow<str> for EndpointId {
+    fn borrow(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct EndpointDetails {
     #[serde(rename = "endpointID")]
-    id: String,
+    id: EndpointId,
 
     #[serde(rename = "endpointType")]
     r#type: EndpointType,
@@ -108,8 +123,14 @@ where
     deserializer.deserialize_any(DataTypesVisitor)
 }
 
+impl EndpointId {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl EndpointDetails {
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &EndpointId {
         &self.id
     }
 
@@ -139,7 +160,7 @@ mod test {
 
         let details: EndpointDetails = serde_json::from_str(json).unwrap();
 
-        assert_eq!(details.id(), "out");
+        assert_eq!(details.id().as_str(), "out");
         assert_eq!(details.endpoint_type(), EndpointType::Stream);
         assert_eq!(
             details.data_type().collect::<Vec<_>>(),
@@ -168,7 +189,7 @@ mod test {
 
         let details: EndpointDetails = serde_json::from_str(json).unwrap();
 
-        assert_eq!(details.id(), "out");
+        assert_eq!(details.id().as_str(), "out");
         assert_eq!(details.endpoint_type(), EndpointType::Event);
         assert_eq!(
             details.data_type().collect::<Vec<_>>(),

@@ -11,13 +11,13 @@ pub enum Error {
 }
 
 impl Program {
-    pub fn parse(&mut self, program: impl AsRef<str>) -> Result<(), Error> {
+    pub(crate) fn parse(&mut self, program: impl AsRef<str>) -> Result<(), Error> {
         self.inner
             .parse(None, program.as_ref())
             .map_err(|error| Error::Parse(error.to_string().into_owned()))
     }
 
-    pub fn syntax_tree(&self) -> Result<Value, serde_json::Error> {
+    fn syntax_tree(&self) -> Result<Value, serde_json::Error> {
         self.inner.syntax_tree().to_json()
     }
 }

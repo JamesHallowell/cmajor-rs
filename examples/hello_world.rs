@@ -50,7 +50,7 @@ processor HelloWorld
 }
 "#;
 
-const SAMPLE_RATE: u32 = 48_000;
+const SAMPLE_RATE: u32 = 44_100;
 const BLOCK_SIZE: u32 = 256;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,17 +68,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_sample_rate(SAMPLE_RATE)
         .build();
 
-    let mut program = cmajor.create_program();
-    program.parse(PLAY_A_TUNE)?;
+    let mut program = cmajor.parse(PLAY_A_TUNE)?;
 
     let engine = engine.load(&program)?;
 
-    let out = engine.get_endpoint_handle("out").expect("no out endpoint");
 
     let engine = engine.link()?;
 
-    let mut performer = engine.create_performer();
-    performer.set_block_size(BLOCK_SIZE);
+    let (mut performer, endpoints) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
 
     let stream = cpal::default_host()
         .default_output_device()
@@ -91,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 performer.advance();
-                performer.copy_output_frames(&out, data);
+                performer.output_stream("out").unwrap().copy_frames(data);
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,

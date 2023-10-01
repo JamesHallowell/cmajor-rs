@@ -1,54 +1,56 @@
-use {
-    crate::endpoint::buffer::Producer,
-    serde::Serialize,
-    std::{borrow::Borrow, marker::PhantomData},
-};
+use serde::{Deserialize, Serialize};
 
 mod buffer;
 mod details;
 
-pub struct Endpoints {
-    buffer: Producer,
+pub use details::{EndpointDataType, EndpointDetails, EndpointDirection, EndpointId, EndpointType};
+
+use crate::engine::EndpointHandle;
+
+#[derive(Debug)]
+pub struct EndpointProducer {
+    buffer: buffer::Producer,
 }
 
-pub struct Endpoint<'a, EndpointType, DataType> {
-    endpoints: &'a mut Endpoints,
-    _marker: PhantomData<(EndpointType, DataType)>,
+#[derive(Debug)]
+pub struct EndpointConsumer {
+    buffer: buffer::Consumer,
 }
 
-pub struct Value;
+pub fn endpoint_channel(capacity: usize) -> (EndpointProducer, EndpointConsumer) {
+    let (producer, consumer) = buffer::make_buffer(capacity);
+    (
+        EndpointProducer { buffer: producer },
+        EndpointConsumer { buffer: consumer },
+    )
+}
 
-impl Endpoints {
-    pub fn get_value_endpoint<Type>(
+#[derive(Debug, Serialize, Deserialize)]
+pub enum EndpointMessage<'a> {
+    Value {
+        handle: EndpointHandle,
+        data: &'a [u8],
+    },
+}
+
+impl EndpointProducer {
+    pub fn send_value(
         &mut self,
-        _name: impl AsRef<str>,
-    ) -> Endpoint<'_, Value, Type> {
-        Endpoint {
-            endpoints: self,
-            _marker: PhantomData,
-        }
+        endpoint: EndpointHandle,
+        data: &[u8],
+    ) -> Result<(), buffer::Error> {
+        self.buffer.write(&EndpointMessage::Value {
+            handle: endpoint,
+            data,
+        })
     }
 }
 
-impl<DataType> Endpoint<'_, Value, DataType> {
-    pub fn post(&mut self, value: impl Borrow<DataType>)
-    where
-        DataType: Serialize,
-    {
-        self.endpoints.buffer.write(value.borrow()).unwrap();
-    }
-}
-
-mod test {
-    use {super::*, crate::endpoint::buffer::buffer};
-
-    #[test]
-    fn example() {
-        let (producer, consumer) = buffer(1024);
-
-        let mut endpoints = Endpoints { buffer: producer };
-
-        endpoints.get_value_endpoint("other").post(5);
-        endpoints.get_value_endpoint("someother").post(5);
+impl EndpointConsumer {
+    pub fn read_messages(
+        &mut self,
+        callback: impl FnMut(EndpointMessage),
+    ) -> Result<usize, buffer::Error> {
+        self.buffer.read_all(callback)
     }
 }

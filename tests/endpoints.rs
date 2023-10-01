@@ -1,6 +1,6 @@
-use cmajor::{Cmajor, Engine};
+use cmajor::{Cmajor, Endpoints, Performer};
 
-fn setup() -> (Cmajor, Engine) {
+fn setup(program: &str) -> (Performer, Endpoints) {
     let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");
 
     let llvm = cmajor
@@ -10,35 +10,41 @@ fn setup() -> (Cmajor, Engine) {
 
     let engine = cmajor.create_engine(llvm).with_sample_rate(48_000).build();
 
-    (cmajor, engine)
+    let program = cmajor.parse(program).expect("failed to parse program");
+
+    let engine = engine.load(&program).expect("failed to load program");
+    let engine = engine.link().expect("failed to link program");
+
+    let (performer, endpoints) = engine
+        .performer()
+        .with_block_size(256)
+        .build()
+        .expect("failed to build performer");
+
+    (performer, endpoints)
 }
 
 #[test]
 fn can_write_to_value_endpoint() {
-    let (cmajor, engine) = setup();
-
     const PROGRAM: &str = r#"
-        processor Test
+        processor Doubler
         {
             input value int in;
-            output value int out;
+            output value int doubled;
         
             void main()
-            {
-                out <- in * 2;
+            {            
+                doubled <- in * 2;
                 advance();
             }
         }
     "#;
 
-    let mut program = cmajor.create_program();
-    program.parse(PROGRAM).unwrap();
+    let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let engine = engine.load(&program).unwrap();
+    endpoints.input_value("in").unwrap().send(2);
+    performer.advance();
+    let result = performer.output_value("doubled").unwrap().get();
 
-    let value = engine.get_endpoint_handle("value");
-    let doubled = engine.get_endpoint_handle("doubled");
-
-    let engine = engine.link().unwrap();
-    let mut performer = engine.create_performer();
+    assert_eq!(result, 4);
 }

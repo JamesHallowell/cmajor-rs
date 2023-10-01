@@ -2,7 +2,7 @@ use {
     crate::{
         engine::{Engine, EngineBuilder, EngineType, EngineTypes},
         ffi::Library,
-        program::Program,
+        program::{Error as ProgramError, Program},
     },
     serde_json::{Map, Value},
     std::{ffi::CString, path::Path},
@@ -31,10 +31,16 @@ impl Cmajor {
         self.library.version().to_str().unwrap_or_default()
     }
 
-    pub fn create_program(&self) -> Program {
+    fn create_program(&self) -> Program {
         Program {
             inner: self.library.create_program(),
         }
+    }
+
+    pub fn parse(&self, cmajor_program: impl AsRef<str>) -> Result<Program, ProgramError> {
+        let mut program = self.create_program();
+        program.parse(cmajor_program)?;
+        Ok(program)
     }
 
     pub fn engine_types(&self) -> impl Iterator<Item = EngineType> + '_ {

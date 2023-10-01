@@ -2,7 +2,7 @@ use {
     crate::ffi::engine::EndpointHandle,
     std::{
         ffi::{c_char, c_double, c_int, c_void},
-        ptr::{addr_of, null_mut},
+        ptr::{addr_of_mut, null_mut},
     },
 };
 
@@ -21,7 +21,7 @@ struct PerformerVTable {
     set_input_value: unsafe extern "system" fn(*mut Performer, EndpointHandle, *const c_void, u32),
     add_input_event: unsafe extern "system" fn(*mut Performer, EndpointHandle, u32, *const c_void),
 
-    copy_output_values: unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut c_void),
+    copy_output_value: unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut c_void),
     copy_output_frames: unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut c_void, u32),
     iterate_output_events: unsafe extern "system" fn(
         *mut Performer,
@@ -74,19 +74,19 @@ impl PerformerPtr {
         };
     }
 
-    pub fn set_input_value<T>(
+    pub fn set_input_value(
         &self,
         handle: EndpointHandle,
-        value: T,
+        value: &[u8],
         num_frames_to_reach_value: u32,
     ) {
-        let value = addr_of!(value).cast();
+        let value_ptr = value.as_ptr().cast();
 
         unsafe {
             ((*(*self.performer).vtable).set_input_value)(
                 self.performer,
                 handle,
-                value,
+                value_ptr,
                 num_frames_to_reach_value,
             )
         };
@@ -108,6 +108,24 @@ impl PerformerPtr {
                 num_frames,
             )
         };
+    }
+
+    pub fn copy_output_value<T>(&self, handle: EndpointHandle) -> T
+    where
+        T: Default,
+    {
+        let mut value = T::default();
+        let value_ptr = addr_of_mut!(value);
+
+        unsafe {
+            ((*(*self.performer).vtable).copy_output_value)(
+                self.performer,
+                handle,
+                value_ptr.cast(),
+            )
+        };
+
+        value
     }
 }
 

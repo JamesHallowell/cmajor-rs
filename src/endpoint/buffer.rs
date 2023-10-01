@@ -3,16 +3,18 @@ use {
     std::io::Read,
 };
 
+#[derive(Debug)]
 pub struct Producer {
     inner: rtrb::Producer<u8>,
 }
 
+#[derive(Debug)]
 pub struct Consumer {
     inner: rtrb::Consumer<u8>,
     scratch_buffer: Vec<u8>,
 }
 
-pub fn buffer(capacity: usize) -> (Producer, Consumer) {
+pub fn make_buffer(capacity: usize) -> (Producer, Consumer) {
     let (producer, consumer) = rtrb::RingBuffer::new(capacity);
     (
         Producer { inner: producer },
@@ -46,11 +48,15 @@ impl Producer {
 impl Consumer {
     pub fn read_all<'de, 'this: 'de, T>(
         &'this mut self,
-        mut callback: impl FnMut(&T),
+        mut callback: impl FnMut(T),
     ) -> Result<usize, Error>
     where
         T: Deserialize<'de>,
     {
+        if self.inner.is_empty() {
+            return Ok(0);
+        }
+
         let read = self.inner.read(&mut self.scratch_buffer)?;
 
         let mut scratch_buffer = &self.scratch_buffer[..read];
@@ -61,7 +67,7 @@ impl Consumer {
             scratch_buffer = &scratch_buffer[std::mem::size_of::<u64>()..];
 
             let value = bincode::deserialize::<T>(&scratch_buffer[..size])?;
-            callback(&value);
+            callback(value);
 
             scratch_buffer = &scratch_buffer[size..];
             count += 1;
@@ -93,13 +99,13 @@ mod test {
             buffer: &[1, 2, 3, 4, 5],
         };
 
-        let (mut producer, mut consumer) = buffer(1024);
+        let (mut producer, mut consumer) = make_buffer(1024);
         let count = assert_no_alloc(|| {
             producer.write(&a).unwrap();
 
             consumer
-                .read_all(|b: &S| {
-                    assert_eq!(a, *b);
+                .read_all(|b: S| {
+                    assert_eq!(a, b);
                 })
                 .unwrap()
         });
