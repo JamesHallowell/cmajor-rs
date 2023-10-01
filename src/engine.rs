@@ -1,6 +1,10 @@
 use {
-    crate::{ffi::EnginePtr, performer::Performer, program::Program},
-    serde_json::{Map, Value},
+    crate::{
+        ffi::{CmajorStringPtr, EnginePtr},
+        performer::Performer,
+        program::Program,
+    },
+    serde_json::{Map, Number, Value},
     std::{
         borrow::Cow,
         ffi::{CStr, CString},
@@ -33,7 +37,13 @@ impl<'a> Iterator for EngineTypes<'a> {
 }
 
 #[derive(Clone)]
-pub struct EngineType(pub(crate) String);
+pub struct EngineType(String);
+
+impl EngineType {
+    pub(crate) fn to_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl PartialEq<str> for EngineType {
     fn eq(&self, other: &str) -> bool {
@@ -53,9 +63,9 @@ pub struct EngineBuilder {
 }
 
 impl EngineBuilder {
-    pub fn with_sample_rate(mut self, sample_rate: u32) -> Self {
+    pub fn with_sample_rate(mut self, sample_rate: impl Into<Number>) -> Self {
         self.build_settings
-            .insert("frequency".to_string(), sample_rate.into());
+            .insert("frequency".to_string(), Value::Number(sample_rate.into()));
         self
     }
 
@@ -127,6 +137,16 @@ impl Engine<Loaded> {
         self.inner
             .get_endpoint_handle(id.as_c_str())
             .map(EndpointHandle)
+    }
+
+    pub fn program_details(&self) -> Result<Value, serde_json::Error> {
+        Ok(self
+            .inner
+            .program_details()
+            .as_ref()
+            .map(CmajorStringPtr::to_json)
+            .transpose()?
+            .unwrap_or_default())
     }
 
     pub fn link(self) -> Result<Engine<Linked>, Error> {

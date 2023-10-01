@@ -1,3 +1,4 @@
+mod endpoint;
 mod engine;
 mod ffi;
 mod library;

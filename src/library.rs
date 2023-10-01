@@ -41,9 +41,9 @@ impl Cmajor {
         EngineTypes::new(self.library.engine_types())
     }
 
-    pub fn create_engine(&self, EngineType(engine_type): EngineType) -> EngineBuilder {
-        let engine_type =
-            CString::new(engine_type).expect("engine type should not contain a null character");
+    pub fn create_engine(&self, engine_type: EngineType) -> EngineBuilder {
+        let engine_type = CString::new(engine_type.to_str())
+            .expect("engine type should not contain a null character");
 
         let engine_factory = self
             .library
