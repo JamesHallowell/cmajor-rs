@@ -122,3 +122,41 @@ fn can_read_and_write_complex_numbers() {
         }
     );
 }
+
+#[test]
+fn can_post_events() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            input event (int, bool) in;
+            output value int out;
+            
+            event in (int x)
+            {
+                out <- x * x;
+            }
+            
+            event in (bool x)
+            {            
+                out <- x ? 42 : 0;
+            }
+        
+            void main()
+            {
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, mut endpoints) = setup(PROGRAM);
+
+    endpoints.post_event("in", 4).unwrap();
+    performer.advance();
+
+    assert_eq!(performer.read_value::<i32>("out").unwrap(), 16);
+
+    endpoints.post_event("in", true).unwrap();
+    performer.advance();
+
+    assert_eq!(performer.read_value::<i32>("out").unwrap(), 42);
+}

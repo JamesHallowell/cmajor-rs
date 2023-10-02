@@ -96,6 +96,11 @@ impl Performer {
                 EndpointMessage::Value { handle, data } => {
                     self.inner.set_input_value(handle, data, 0);
                 }
+                EndpointMessage::Event {
+                    handle,
+                    type_index,
+                    data,
+                } => self.inner.add_input_event(handle, type_index, data),
             });
         debug_assert!(result.is_ok());
 
@@ -115,7 +120,7 @@ impl Performer {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        if !endpoint.data_type_matches::<T>() {
+        if endpoint.data_type_matches::<T>().is_none() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
@@ -140,7 +145,7 @@ impl Performer {
             .get(id.as_ref())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if !endpoint.data_type_matches::<T>() {
+        if endpoint.data_type_matches::<T>().is_none() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
@@ -169,7 +174,7 @@ impl Endpoints {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        if !endpoint.data_type_matches::<Value>() {
+        if endpoint.data_type_matches::<Value>().is_none() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
@@ -177,6 +182,39 @@ impl Endpoints {
 
         value
             .to_bytes(|bytes| self.endpoint_producer.send_value(handle, bytes))
+            .map_err(|_| EndpointError::FailedToSendValue)
+    }
+
+    pub fn post_event<Value>(
+        &mut self,
+        id: impl AsRef<str>,
+        value: Value,
+    ) -> Result<(), EndpointError>
+    where
+        Value: CmajorType,
+    {
+        let endpoint = self
+            .endpoints
+            .get(id.as_ref())
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.endpoint_type() != EndpointType::Event {
+            return Err(EndpointError::EndpointTypeMismatch);
+        }
+
+        let type_index = if let Some(type_index) = endpoint.data_type_matches::<Value>() {
+            type_index
+        } else {
+            return Err(EndpointError::DataTypeMismatch);
+        };
+
+        let handle = endpoint.handle();
+
+        value
+            .to_bytes(|bytes| {
+                self.endpoint_producer
+                    .send_event(handle, type_index as u32, bytes)
+            })
             .map_err(|_| EndpointError::FailedToSendValue)
     }
 }

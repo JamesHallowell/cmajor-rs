@@ -180,13 +180,14 @@ impl Endpoint {
         self.details.endpoint_type()
     }
 
-    pub fn data_type_matches<T>(&self) -> bool
+    pub fn data_type_matches<T>(&self) -> Option<usize>
     where
         T: CmajorType,
     {
         self.details
             .data_type()
-            .any(|data_type| data_type.data_type() == T::TYPE)
+            .enumerate()
+            .find_map(|(i, data_type)| (data_type.data_type() == T::TYPE).then_some(i))
     }
 }
 

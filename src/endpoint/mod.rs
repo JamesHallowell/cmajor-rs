@@ -31,6 +31,11 @@ pub enum EndpointMessage<'a> {
         handle: EndpointHandle,
         data: &'a [u8],
     },
+    Event {
+        handle: EndpointHandle,
+        type_index: u32,
+        data: &'a [u8],
+    },
 }
 
 impl EndpointProducer {
@@ -41,6 +46,19 @@ impl EndpointProducer {
     ) -> Result<(), buffer::Error> {
         self.buffer.write(&EndpointMessage::Value {
             handle: endpoint,
+            data,
+        })
+    }
+
+    pub fn send_event(
+        &mut self,
+        endpoint: EndpointHandle,
+        type_index: u32,
+        data: &[u8],
+    ) -> Result<(), buffer::Error> {
+        self.buffer.write(&EndpointMessage::Event {
+            handle: endpoint,
+            type_index,
             data,
         })
     }
