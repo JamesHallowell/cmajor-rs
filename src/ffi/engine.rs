@@ -1,8 +1,11 @@
 use {
-    crate::ffi::{
-        performer::{Performer, PerformerPtr},
-        program::{Program, ProgramPtr},
-        string::{CmajorString, CmajorStringPtr},
+    crate::{
+        engine::EndpointHandle,
+        ffi::{
+            performer::{Performer, PerformerPtr},
+            program::{Program, ProgramPtr},
+            string::{CmajorString, CmajorStringPtr},
+        },
     },
     std::{
         ffi::{c_char, c_int, c_void, CStr},
@@ -14,8 +17,6 @@ type RequestExternalVariableCallback = unsafe extern "system" fn(*mut c_void, *c
 
 type RequestExternalFunctionCallback =
     unsafe extern "system" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
-
-pub type EndpointHandle = u32;
 
 #[repr(C)]
 struct EngineVTable {
@@ -36,7 +37,7 @@ struct EngineVTable {
         unsafe extern "system" fn(*mut Engine, *const c_char, *const c_void, isize),
     unload: unsafe extern "system" fn(*mut Engine),
     get_program_details: unsafe extern "system" fn(*mut Engine) -> *mut CmajorString,
-    get_endpoint_handle: unsafe extern "system" fn(*mut Engine, *const c_char) -> EndpointHandle,
+    get_endpoint_handle: unsafe extern "system" fn(*mut Engine, *const c_char) -> u32,
     link: unsafe extern "system" fn(*mut Engine, *mut c_void) -> *mut CmajorString,
     create_performer: unsafe extern "system" fn(*mut Engine) -> *mut Performer,
     get_last_build_log: unsafe extern "system" fn(*mut Engine) -> *mut CmajorString,
@@ -125,7 +126,7 @@ impl EnginePtr {
             unsafe { ((*(*self.engine).vtable).get_endpoint_handle)(self.engine, id.as_ptr()) };
 
         if handle != 0 {
-            Some(handle)
+            Some(handle.into())
         } else {
             None
         }

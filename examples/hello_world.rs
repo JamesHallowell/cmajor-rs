@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 performer.advance();
-                performer.output_stream("out").unwrap().copy_frames(data);
+                performer.read_stream("out", data).unwrap();
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,

@@ -1,13 +1,13 @@
 use {
-    crate::ffi::engine::EndpointHandle,
+    crate::engine::EndpointHandle,
     std::{
         ffi::{c_char, c_double, c_int, c_void},
-        ptr::{addr_of_mut, null_mut},
+        ptr::null_mut,
     },
 };
 
 type HandleOutputEventCallback =
-    unsafe extern "system" fn(*mut c_void, EndpointHandle, u32, u32, *const c_void, u32);
+    unsafe extern "system" fn(*mut c_void, u32, u32, u32, *const c_void, u32);
 
 #[repr(C)]
 struct PerformerVTable {
@@ -17,22 +17,18 @@ struct PerformerVTable {
 
     set_block_size: unsafe extern "system" fn(*mut Performer, u32),
 
-    set_input_frames: unsafe extern "system" fn(*mut Performer, EndpointHandle, *const c_void, u32),
-    set_input_value: unsafe extern "system" fn(*mut Performer, EndpointHandle, *const c_void, u32),
-    add_input_event: unsafe extern "system" fn(*mut Performer, EndpointHandle, u32, *const c_void),
+    set_input_frames: unsafe extern "system" fn(*mut Performer, u32, *const c_void, u32),
+    set_input_value: unsafe extern "system" fn(*mut Performer, u32, *const c_void, u32),
+    add_input_event: unsafe extern "system" fn(*mut Performer, u32, u32, *const c_void),
 
-    copy_output_value: unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut c_void),
-    copy_output_frames: unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut c_void, u32),
-    iterate_output_events: unsafe extern "system" fn(
-        *mut Performer,
-        EndpointHandle,
-        *mut c_void,
-        HandleOutputEventCallback,
-    ),
+    copy_output_value: unsafe extern "system" fn(*mut Performer, u32, *mut c_void),
+    copy_output_frames: unsafe extern "system" fn(*mut Performer, u32, *mut c_void, u32),
+    iterate_output_events:
+        unsafe extern "system" fn(*mut Performer, u32, *mut c_void, HandleOutputEventCallback),
 
     advance: unsafe extern "system" fn(*mut Performer),
     get_string_for_handle:
-        unsafe extern "system" fn(*mut Performer, EndpointHandle, *mut isize) -> *const c_char,
+        unsafe extern "system" fn(*mut Performer, u32, *mut isize) -> *const c_char,
     get_xruns: unsafe extern "system" fn(*mut Performer) -> u32,
     get_max_block_size: unsafe extern "system" fn(*mut Performer) -> u32,
     get_event_buffer_size: unsafe extern "system" fn(*mut Performer) -> u32,
@@ -67,7 +63,7 @@ impl PerformerPtr {
         unsafe {
             ((*(*self.performer).vtable).set_input_frames)(
                 self.performer,
-                handle,
+                handle.into(),
                 frames,
                 num_frames,
             )
@@ -85,7 +81,7 @@ impl PerformerPtr {
         unsafe {
             ((*(*self.performer).vtable).set_input_value)(
                 self.performer,
-                handle,
+                handle.into(),
                 value_ptr,
                 num_frames_to_reach_value,
             )
@@ -103,29 +99,19 @@ impl PerformerPtr {
         unsafe {
             ((*(*self.performer).vtable).copy_output_frames)(
                 self.performer,
-                handle,
+                handle.into(),
                 frames,
                 num_frames,
             )
         };
     }
 
-    pub fn copy_output_value<T>(&self, handle: EndpointHandle) -> T
-    where
-        T: Default,
-    {
-        let mut value = T::default();
-        let value_ptr = addr_of_mut!(value);
+    pub unsafe fn copy_output_value(&self, handle: EndpointHandle, buffer: &mut [u8]) {
+        let buffer = buffer.as_mut_ptr().cast();
 
         unsafe {
-            ((*(*self.performer).vtable).copy_output_value)(
-                self.performer,
-                handle,
-                value_ptr.cast(),
-            )
+            ((*(*self.performer).vtable).copy_output_value)(self.performer, handle.into(), buffer)
         };
-
-        value
     }
 }
 

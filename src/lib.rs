@@ -4,10 +4,12 @@ mod ffi;
 mod library;
 mod performer;
 mod program;
+mod types;
 
 pub use {
     engine::{Engine, EngineBuilder, EngineType},
     library::{Cmajor, Error},
-    performer::{Endpoints, Performer},
+    performer::{EndpointError, Endpoints, Performer},
     program::Program,
+    types::{Complex, Complex32, Complex64},
 };

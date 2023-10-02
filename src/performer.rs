@@ -2,9 +2,11 @@ use {
     crate::{
         endpoint::{
             endpoint_channel, EndpointConsumer, EndpointId, EndpointMessage, EndpointProducer,
+            EndpointType,
         },
-        engine::{Endpoint, EndpointHandle},
+        engine::Endpoint,
         ffi::PerformerPtr,
+        types::CmajorType,
     },
     std::{collections::HashMap, marker::PhantomData, sync::Arc},
 };
@@ -19,6 +21,7 @@ pub struct Performer {
     inner: PerformerPtr,
     endpoints: Arc<HashMap<EndpointId, Endpoint>>,
     endpoint_consumer: EndpointConsumer,
+    scratch_buffer: Vec<u8>,
 }
 
 pub struct Endpoints {
@@ -60,6 +63,7 @@ impl PerformerBuilder {
                 inner: self.inner,
                 endpoints: Arc::clone(&self.endpoints),
                 endpoint_consumer,
+                scratch_buffer: vec![0; 512],
             },
             Endpoints {
                 endpoints: self.endpoints,
@@ -69,28 +73,19 @@ impl PerformerBuilder {
     }
 }
 
-pub struct InputStream<T> {
-    _marker: PhantomData<T>,
-}
-
-pub struct OutputStream<'a, T> {
-    handle: EndpointHandle,
-    performer: &'a mut Performer,
-    _marker: PhantomData<T>,
-}
-
-impl<'a, T> OutputStream<'a, T> {
-    pub fn copy_frames(&mut self, frames: &mut [T]) {
-        self.performer
-            .inner
-            .copy_output_frames(self.handle.into(), frames);
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum EndpointError {
     #[error("no such endpoint")]
     EndpointDoesNotExist,
+
+    #[error("type mismatch")]
+    EndpointTypeMismatch,
+
+    #[error("data type mismatch")]
+    DataTypeMismatch,
+
+    #[error("failed to send value")]
+    FailedToSendValue,
 }
 
 impl Performer {
@@ -99,7 +94,7 @@ impl Performer {
             .endpoint_consumer
             .read_messages(|message| match message {
                 EndpointMessage::Value { handle, data } => {
-                    self.inner.set_input_value(handle.into(), data, 0);
+                    self.inner.set_input_value(handle, data, 0);
                 }
             });
         debug_assert!(result.is_ok());
@@ -107,79 +102,81 @@ impl Performer {
         self.inner.advance();
     }
 
-    pub fn output_value(&mut self, id: impl AsRef<str>) -> Result<OutputValue<'_, i32>, Error> {
+    pub fn read_value<T>(&mut self, id: impl AsRef<str>) -> Result<T, EndpointError>
+    where
+        T: CmajorType + Default,
+    {
         let endpoint = self
             .endpoints
             .get(id.as_ref())
-            .ok_or(Error::EndpointDoesNotExist)?;
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        let handle = endpoint.handle;
+        if endpoint.endpoint_type() != EndpointType::Value {
+            return Err(EndpointError::EndpointTypeMismatch);
+        }
 
-        Ok(OutputValue {
-            handle,
-            performer: self,
-            _marker: PhantomData,
-        })
+        if !endpoint.data_type_matches::<T>() {
+            return Err(EndpointError::DataTypeMismatch);
+        }
+
+        unsafe {
+            self.inner
+                .copy_output_value(endpoint.handle(), self.scratch_buffer.as_mut_slice())
+        };
+
+        Ok(T::from_bytes(&self.scratch_buffer))
     }
 
-    pub fn output_stream(&mut self, id: impl AsRef<str>) -> Result<OutputStream<'_, f32>, Error> {
+    pub fn read_stream<T>(
+        &mut self,
+        id: impl AsRef<str>,
+        frames: &mut [T],
+    ) -> Result<(), EndpointError>
+    where
+        T: CmajorType,
+    {
         let endpoint = self
             .endpoints
             .get(id.as_ref())
-            .ok_or(Error::EndpointDoesNotExist)?;
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        let handle = endpoint.handle;
+        if !endpoint.data_type_matches::<T>() {
+            return Err(EndpointError::DataTypeMismatch);
+        }
 
-        Ok(OutputStream {
-            handle,
-            performer: self,
-            _marker: PhantomData,
-        })
-    }
-}
+        let handle = endpoint.handle();
 
-pub struct InputValue<'a, T> {
-    handle: EndpointHandle,
-    endpoints: &'a mut Endpoints,
-    _marker: PhantomData<T>,
-}
-
-pub struct OutputValue<'a, T> {
-    handle: EndpointHandle,
-    performer: &'a mut Performer,
-    _marker: PhantomData<T>,
-}
-
-impl InputValue<'_, i32> {
-    pub fn send(&mut self, value: i32) {
-        let result = self
-            .endpoints
-            .endpoint_producer
-            .send_value(self.handle.into(), &value.to_ne_bytes());
-
-        debug_assert!(result.is_ok());
-    }
-}
-
-impl OutputValue<'_, i32> {
-    pub fn get(&mut self) -> i32 {
-        self.performer.inner.copy_output_value(self.handle.into())
+        self.inner.copy_output_frames(handle, frames);
+        Ok(())
     }
 }
 
 impl Endpoints {
-    pub fn input_value(&mut self, id: impl AsRef<str>) -> Result<InputValue<'_, i32>, Error> {
+    pub fn write_value<Value>(
+        &mut self,
+        id: impl AsRef<str>,
+        value: Value,
+    ) -> Result<(), EndpointError>
+    where
+        Value: CmajorType,
+    {
         let endpoint = self
             .endpoints
             .get(id.as_ref())
-            .ok_or(Error::EndpointDoesNotExist)?;
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        let handle = endpoint.handle;
+        if endpoint.endpoint_type() != EndpointType::Value {
+            return Err(EndpointError::EndpointTypeMismatch);
+        }
 
-        Ok(InputValue {
-            handle,
-            endpoints: self,
-            _marker: PhantomData,
-        })
+        if !endpoint.data_type_matches::<Value>() {
+            return Err(EndpointError::DataTypeMismatch);
+        }
+
+        let handle = endpoint.handle();
+
+        value
+            .to_bytes(|bytes| self.endpoint_producer.send_value(handle, bytes))
+            .map_err(|_| EndpointError::FailedToSendValue)
     }
 }

@@ -1,9 +1,10 @@
 use {
     crate::{
-        endpoint::{EndpointDetails, EndpointDirection, EndpointId},
+        endpoint::{EndpointDetails, EndpointDirection, EndpointId, EndpointType},
         ffi::{CmajorStringPtr, EnginePtr},
         performer::PerformerBuilder,
         program::Program,
+        types::CmajorType,
     },
     serde::{Deserialize, Serialize},
     serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue},
@@ -120,23 +121,73 @@ pub struct Linked {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct EndpointHandle(u32);
 
-impl Into<u32> for EndpointHandle {
-    fn into(self) -> u32 {
-        self.0
+impl From<u32> for EndpointHandle {
+    fn from(handle: u32) -> Self {
+        Self(handle)
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ProgramDetails {
-    inputs: Vec<EndpointDetails>,
-    outputs: Vec<EndpointDetails>,
+impl From<EndpointHandle> for u32 {
+    fn from(handle: EndpointHandle) -> Self {
+        handle.0
+    }
+}
+
+#[derive(Debug)]
+pub struct ProgramDetails(JsonValue);
+
+impl ProgramDetails {
+    pub fn inputs(&self) -> Vec<EndpointDetails> {
+        self.0
+            .get("inputs")
+            .and_then(JsonValue::as_array)
+            .map(|inputs| {
+                inputs
+                    .iter()
+                    .filter_map(|input| serde_json::from_value(input.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn outputs(&self) -> Vec<EndpointDetails> {
+        self.0
+            .get("outputs")
+            .and_then(JsonValue::as_array)
+            .map(|outputs| {
+                outputs
+                    .iter()
+                    .filter_map(|output| serde_json::from_value(output.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
-    pub handle: EndpointHandle,
-    pub direction: EndpointDirection,
-    pub details: EndpointDetails,
+    handle: EndpointHandle,
+    direction: EndpointDirection,
+    details: EndpointDetails,
+}
+
+impl Endpoint {
+    pub fn handle(&self) -> EndpointHandle {
+        self.handle
+    }
+
+    pub fn endpoint_type(&self) -> EndpointType {
+        self.details.endpoint_type()
+    }
+
+    pub fn data_type_matches<T>(&self) -> bool
+    where
+        T: CmajorType,
+    {
+        self.details
+            .data_type()
+            .any(|data_type| data_type.data_type() == T::TYPE)
+    }
 }
 
 impl Engine<Idle> {
@@ -162,25 +213,22 @@ impl Engine<Loaded> {
     fn get_endpoint_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
         let id = CString::new(id.as_ref()).ok()?;
 
-        self.inner
-            .get_endpoint_handle(id.as_c_str())
-            .map(EndpointHandle)
+        self.inner.get_endpoint_handle(id.as_c_str())
     }
 
     pub fn program_details(&self) -> Result<ProgramDetails, serde_json::Error> {
-        let program_details = self
-            .inner
-            .program_details()
-            .as_ref()
-            .map(CmajorStringPtr::to_json)
-            .transpose()?
-            .unwrap_or_default();
-
-        serde_json::from_value(program_details)
+        Ok(ProgramDetails(
+            self.inner
+                .program_details()
+                .as_ref()
+                .map(CmajorStringPtr::to_json)
+                .transpose()?
+                .unwrap_or_default(),
+        ))
     }
 
     pub fn link(self) -> Result<Engine<Linked>, Error> {
-        let ProgramDetails { inputs, outputs } = match self.program_details() {
+        let program_details = match self.program_details() {
             Ok(program_details) => program_details,
             Err(error) => {
                 return Err(Error::FailedToLink(
@@ -190,11 +238,13 @@ impl Engine<Loaded> {
             }
         };
 
-        let inputs = inputs
+        let inputs = program_details
+            .inputs()
             .into_iter()
             .map(|endpoint| (EndpointDirection::Input, endpoint));
 
-        let outputs = outputs
+        let outputs = program_details
+            .outputs()
             .into_iter()
             .map(|endpoint| (EndpointDirection::Output, endpoint));
 
