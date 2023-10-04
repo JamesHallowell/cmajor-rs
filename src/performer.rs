@@ -8,7 +8,7 @@ use {
         ffi::PerformerPtr,
         types::CmajorType,
     },
-    std::{collections::HashMap, marker::PhantomData, sync::Arc},
+    std::{collections::HashMap, sync::Arc},
 };
 
 pub struct PerformerBuilder {

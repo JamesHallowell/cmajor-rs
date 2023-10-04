@@ -5,6 +5,7 @@ mod library;
 mod performer;
 mod program;
 mod types;
+mod value;
 
 pub use {
     engine::{Engine, EngineBuilder, EngineType},
