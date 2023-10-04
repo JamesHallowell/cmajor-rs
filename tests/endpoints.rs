@@ -1,6 +1,6 @@
-use cmajor::{Cmajor, Complex, Complex32, Complex64, Endpoints, Performer};
+use cmajor::{Cmajor, Complex32, EndpointsHandle, Performer, ValueView};
 
-fn setup(program: &str) -> (Performer, Endpoints) {
+fn setup(program: &str) -> (Performer, EndpointsHandle) {
     let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");
 
     let llvm = cmajor
@@ -44,9 +44,9 @@ fn can_read_and_write_to_value_endpoint() {
 
     endpoints.write_value("in", 2).unwrap();
     performer.advance();
-    let result: i32 = performer.read_value("out").unwrap();
+    let result = performer.read_value("out").unwrap();
 
-    assert_eq!(result, 4);
+    assert!(matches!(result.get(), ValueView::Int32(4)));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn cant_access_endpoints_with_wrong_type() {
     ));
 
     assert!(matches!(
-        performer.read_value::<f32>("out"),
+        performer.read_value("out"),
         Err(cmajor::EndpointError::EndpointTypeMismatch)
     ));
 }
@@ -114,13 +114,11 @@ fn can_read_and_write_complex_numbers() {
 
     performer.advance();
 
-    assert_eq!(
-        performer.read_value::<Complex32>("out32").unwrap(),
-        Complex32 {
-            imag: 1.0,
-            real: 2.0
-        }
-    );
+    let result = performer.read_value("out32").unwrap();
+    let object = result.object().unwrap();
+
+    assert_eq!(object.field("imag").unwrap(), ValueView::Float32(1.0));
+    assert_eq!(object.field("real").unwrap(), ValueView::Float32(2.0));
 }
 
 #[test]
@@ -153,10 +151,16 @@ fn can_post_events() {
     endpoints.post_event("in", 4).unwrap();
     performer.advance();
 
-    assert_eq!(performer.read_value::<i32>("out").unwrap(), 16);
+    assert_eq!(
+        performer.read_value("out").unwrap().get(),
+        ValueView::Int32(16)
+    );
 
     endpoints.post_event("in", true).unwrap();
     performer.advance();
 
-    assert_eq!(performer.read_value::<i32>("out").unwrap(), 42);
+    assert_eq!(
+        performer.read_value("out").unwrap().get(),
+        ValueView::Int32(42)
+    );
 }

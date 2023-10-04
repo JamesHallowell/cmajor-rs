@@ -33,11 +33,6 @@ impl EngineFactoryPtr {
         let engine = unsafe { ((*(*self.0).vtable).create_engine)(self.0, options) };
         EnginePtr::new(engine.cast())
     }
-
-    pub fn name(&self) -> &CStr {
-        let name = unsafe { ((*(*self.0).vtable).get_name)(self.0) };
-        unsafe { CStr::from_ptr(name) }
-    }
 }
 
 impl Drop for EngineFactoryPtr {

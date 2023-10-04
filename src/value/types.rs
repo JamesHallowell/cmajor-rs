@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Void,
     Bool,
     Int32,
     Int64,
@@ -29,6 +30,7 @@ pub struct Array {
 impl Type {
     pub fn size(&self) -> usize {
         match self {
+            Type::Void => 0,
             Type::Bool => 4,
             Type::Int32 => 4,
             Type::Int64 => 8,
@@ -96,4 +98,48 @@ impl Field {
     pub fn ty(&self) -> &Type {
         &self.ty
     }
+}
+
+pub trait IsType: sealed::Sealed {
+    fn get_type() -> Type;
+}
+
+impl IsType for bool {
+    fn get_type() -> Type {
+        Type::Bool
+    }
+}
+
+impl IsType for i32 {
+    fn get_type() -> Type {
+        Type::Int32
+    }
+}
+
+impl IsType for i64 {
+    fn get_type() -> Type {
+        Type::Int64
+    }
+}
+
+impl IsType for f32 {
+    fn get_type() -> Type {
+        Type::Float32
+    }
+}
+
+impl IsType for f64 {
+    fn get_type() -> Type {
+        Type::Float64
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for bool {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
 }

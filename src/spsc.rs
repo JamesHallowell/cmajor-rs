@@ -1,29 +1,7 @@
-use serde::{Deserialize, Serialize};
-
-mod buffer;
-mod details;
-
-pub use details::{EndpointDataType, EndpointDetails, EndpointDirection, EndpointId, EndpointType};
-
-use crate::engine::EndpointHandle;
-
-#[derive(Debug)]
-pub struct EndpointProducer {
-    buffer: buffer::Producer,
-}
-
-#[derive(Debug)]
-pub struct EndpointConsumer {
-    buffer: buffer::Consumer,
-}
-
-pub fn endpoint_channel(capacity: usize) -> (EndpointProducer, EndpointConsumer) {
-    let (producer, consumer) = buffer::make_buffer(capacity);
-    (
-        EndpointProducer { buffer: producer },
-        EndpointConsumer { buffer: consumer },
-    )
-}
+use {
+    crate::{buffer, engine::EndpointHandle},
+    serde::{Deserialize, Serialize},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EndpointMessage<'a> {
@@ -38,7 +16,25 @@ pub enum EndpointMessage<'a> {
     },
 }
 
-impl EndpointProducer {
+#[derive(Debug)]
+pub struct EndpointSender {
+    buffer: buffer::Producer,
+}
+
+#[derive(Debug)]
+pub struct EndpointReceiver {
+    buffer: buffer::Consumer,
+}
+
+pub fn channel(capacity: usize) -> (EndpointSender, EndpointReceiver) {
+    let (sender, receiver) = buffer::make_buffer(capacity);
+    (
+        EndpointSender { buffer: sender },
+        EndpointReceiver { buffer: receiver },
+    )
+}
+
+impl EndpointSender {
     pub fn send_value(
         &mut self,
         endpoint: EndpointHandle,
@@ -64,7 +60,7 @@ impl EndpointProducer {
     }
 }
 
-impl EndpointConsumer {
+impl EndpointReceiver {
     pub fn read_messages(
         &mut self,
         callback: impl FnMut(EndpointMessage),

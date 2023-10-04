@@ -56,20 +56,6 @@ impl PerformerPtr {
         unsafe { ((*(*self.performer).vtable).set_block_size)(self.performer, block_size) };
     }
 
-    pub fn set_input_frames<T>(&self, handle: EndpointHandle, frames: &[T]) {
-        let num_frames = frames.len() as u32;
-        let frames = frames.as_ptr().cast();
-
-        unsafe {
-            ((*(*self.performer).vtable).set_input_frames)(
-                self.performer,
-                handle.into(),
-                frames,
-                num_frames,
-            )
-        };
-    }
-
     pub fn set_input_value(
         &self,
         handle: EndpointHandle,

@@ -1,16 +1,16 @@
-mod endpoint;
+mod buffer;
 mod engine;
 mod ffi;
 mod library;
 mod performer;
 mod program;
-mod types;
+mod spsc;
 mod value;
 
 pub use {
     engine::{Engine, EngineBuilder, EngineType},
     library::{Cmajor, Error},
-    performer::{EndpointError, Endpoints, Performer},
+    performer::{EndpointError, EndpointsHandle, Performer},
     program::Program,
-    types::{Complex, Complex32, Complex64},
+    value::{Array, Complex32, Object, Type, Value, ValueRef, ValueView},
 };

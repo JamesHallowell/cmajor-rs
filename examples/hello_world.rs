@@ -68,14 +68,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_sample_rate(SAMPLE_RATE)
         .build();
 
-    let mut program = cmajor.parse(PLAY_A_TUNE)?;
+    let program = cmajor.parse(PLAY_A_TUNE)?;
 
     let engine = engine.load(&program)?;
 
-
     let engine = engine.link()?;
 
-    let (mut performer, endpoints) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
+    let (mut performer, _endpoints) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
 
     let stream = cpal::default_host()
         .default_output_device()

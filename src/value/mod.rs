@@ -1,14 +1,7 @@
-use {
-    bytes::{Buf, BufMut},
-    smallvec::SmallVec,
-};
+use {bytes::Buf, smallvec::SmallVec};
 
 mod types;
-
-use {
-    crate::value::types::Array,
-    types::{Object, Type},
-};
+pub use types::{Array, IsType, Object, Type};
 
 pub struct Value {
     ty: Type,
@@ -21,8 +14,9 @@ pub struct ValueRef<'a> {
     data: &'a [u8],
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValueView<'a> {
+    Void,
     Bool(bool),
     Int32(i32),
     Int64(i64),
@@ -32,22 +26,22 @@ pub enum ValueView<'a> {
     Object(ObjectView<'a>),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ArrayView<'a> {
     array: &'a Array,
     data: &'a [u8],
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ObjectView<'a> {
     object: &'a Object,
     data: &'a [u8],
 }
 
 impl Value {
-    pub fn new(ty: Type, data: &[u8]) -> Self {
+    pub fn new(ty: impl Into<Type>, data: &[u8]) -> Self {
         Value {
-            ty,
+            ty: ty.into(),
             data: SmallVec::from_slice(data),
         }
     }
@@ -59,15 +53,33 @@ impl Value {
     pub fn data(&self) -> &[u8] {
         &self.data
     }
+
+    pub fn ty(&self) -> &Type {
+        &self.ty
+    }
 }
 
-impl ValueRef<'_> {
+impl<'a> ValueRef<'a> {
+    pub fn new<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
+    where
+        'b: 'a,
+    {
+        Self { ty, data }
+    }
+
     pub fn get(&self) -> ValueView<'_> {
         ValueView::new(self.ty, self.data)
     }
 
     pub fn data(&self) -> &[u8] {
         self.data
+    }
+
+    pub fn object(&'a self) -> Option<ObjectView<'a>> {
+        match self.get() {
+            ValueView::Object(object) => Some(object),
+            _ => None,
+        }
     }
 }
 
@@ -78,6 +90,7 @@ impl<'a> ValueView<'a> {
     {
         let mut data = data;
         match value_type {
+            Type::Void => ValueView::Void,
             Type::Bool => ValueView::Bool(data.get_u32_ne() != 0),
             Type::Int32 => ValueView::Int32(data.get_i32_ne()),
             Type::Int64 => ValueView::Int64(data.get_i64_ne()),
@@ -189,9 +202,34 @@ impl From<f64> for Value {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct Complex32 {
+    pub imag: f32,
+    pub real: f32,
+}
+
+impl From<Complex32> for Value {
+    fn from(value: Complex32) -> Self {
+        let object = Object::new()
+            .with_field("imag", Type::Float32)
+            .with_field("real", Type::Float32);
+
+        Self::new(
+            object,
+            &[value.imag.to_ne_bytes(), value.real.to_ne_bytes()].concat(),
+        )
+    }
+}
+
+impl<'a> From<&'a Value> for ValueRef<'a> {
+    fn from(value: &'a Value) -> Self {
+        ValueRef::new(&value.ty, &value.data)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, bytes::BufMut};
 
     #[test]
     fn bool_as_value() {

@@ -1,4 +1,4 @@
-use {crate::ffi::ProgramPtr, serde_json::Value};
+use crate::ffi::ProgramPtr;
 
 pub struct Program {
     pub(crate) inner: ProgramPtr,
@@ -15,9 +15,5 @@ impl Program {
         self.inner
             .parse(None, program.as_ref())
             .map_err(|error| Error::Parse(error.to_string().into_owned()))
-    }
-
-    fn syntax_tree(&self) -> Result<Value, serde_json::Error> {
-        self.inner.syntax_tree().to_json()
     }
 }

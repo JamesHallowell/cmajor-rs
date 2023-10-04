@@ -72,19 +72,6 @@ impl ProgramPtr {
 
         Err(unsafe { CmajorStringPtr::new(error) })
     }
-
-    pub fn syntax_tree(&self) -> CmajorStringPtr {
-        let options = SyntaxTreeOptions {
-            namespace_or_module: null(),
-            include_source_locations: false,
-            include_comments: false,
-            include_function_contents: false,
-        };
-
-        let result = unsafe { ((*(*self.program).vtable).get_syntax_tree)(self.program, &options) };
-
-        unsafe { CmajorStringPtr::new(result) }
-    }
 }
 
 impl Drop for ProgramPtr {

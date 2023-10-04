@@ -1,32 +1,29 @@
 use {
     crate::{
-        endpoint::{
-            endpoint_channel, EndpointConsumer, EndpointId, EndpointMessage, EndpointProducer,
-            EndpointType,
-        },
-        engine::Endpoint,
+        engine::{EndpointType, Endpoints},
         ffi::PerformerPtr,
-        types::CmajorType,
+        spsc::{self, EndpointMessage, EndpointSender},
+        value::{IsType, Value, ValueRef},
     },
-    std::{collections::HashMap, sync::Arc},
+    std::sync::Arc,
 };
 
 pub struct PerformerBuilder {
     inner: PerformerPtr,
-    endpoints: Arc<HashMap<EndpointId, Endpoint>>,
+    endpoints: Arc<Endpoints>,
     block_size: Option<u32>,
 }
 
 pub struct Performer {
     inner: PerformerPtr,
-    endpoints: Arc<HashMap<EndpointId, Endpoint>>,
-    endpoint_consumer: EndpointConsumer,
+    endpoints: Arc<Endpoints>,
+    endpoint_rx: spsc::EndpointReceiver,
     scratch_buffer: Vec<u8>,
 }
 
-pub struct Endpoints {
-    endpoints: Arc<HashMap<EndpointId, Endpoint>>,
-    endpoint_producer: EndpointProducer,
+pub struct EndpointsHandle {
+    endpoints: Arc<Endpoints>,
+    endpoint_tx: EndpointSender,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -36,10 +33,7 @@ pub enum BuilderError {
 }
 
 impl PerformerBuilder {
-    pub(crate) fn new(
-        performer: PerformerPtr,
-        endpoints: Arc<HashMap<EndpointId, Endpoint>>,
-    ) -> Self {
+    pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<Endpoints>) -> Self {
         Self {
             inner: performer,
             endpoints,
@@ -52,22 +46,22 @@ impl PerformerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<(Performer, Endpoints), BuilderError> {
+    pub fn build(self) -> Result<(Performer, EndpointsHandle), BuilderError> {
         let block_size = self.block_size.ok_or(BuilderError::NoBlockSize)?;
         self.inner.set_block_size(block_size);
 
-        let (endpoint_producer, endpoint_consumer) = endpoint_channel(8192);
+        let (endpoint_tx, endpoint_rx) = spsc::channel(8192);
 
         Ok((
             Performer {
                 inner: self.inner,
                 endpoints: Arc::clone(&self.endpoints),
-                endpoint_consumer,
+                endpoint_rx,
                 scratch_buffer: vec![0; 512],
             },
-            Endpoints {
+            EndpointsHandle {
                 endpoints: self.endpoints,
-                endpoint_producer,
+                endpoint_tx,
             },
         ))
     }
@@ -90,46 +84,42 @@ pub enum EndpointError {
 
 impl Performer {
     pub fn advance(&mut self) {
-        let result = self
-            .endpoint_consumer
-            .read_messages(|message| match message {
-                EndpointMessage::Value { handle, data } => {
-                    self.inner.set_input_value(handle, data, 0);
-                }
-                EndpointMessage::Event {
-                    handle,
-                    type_index,
-                    data,
-                } => self.inner.add_input_event(handle, type_index, data),
-            });
+        let result = self.endpoint_rx.read_messages(|message| match message {
+            EndpointMessage::Value { handle, data } => {
+                self.inner.set_input_value(handle, data, 0);
+            }
+            EndpointMessage::Event {
+                handle,
+                type_index,
+                data,
+            } => self.inner.add_input_event(handle, type_index, data),
+        });
         debug_assert!(result.is_ok());
 
         self.inner.advance();
     }
 
-    pub fn read_value<T>(&mut self, id: impl AsRef<str>) -> Result<T, EndpointError>
-    where
-        T: CmajorType + Default,
-    {
+    pub fn read_value(&mut self, id: impl AsRef<str>) -> Result<ValueRef<'_>, EndpointError> {
         let endpoint = self
             .endpoints
-            .get(id.as_ref())
+            .get_output(id.as_ref())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        if endpoint.data_type_matches::<T>().is_none() {
-            return Err(EndpointError::DataTypeMismatch);
-        }
+        let value_type = endpoint.value_type().first().unwrap();
 
         unsafe {
             self.inner
                 .copy_output_value(endpoint.handle(), self.scratch_buffer.as_mut_slice())
         };
 
-        Ok(T::from_bytes(&self.scratch_buffer))
+        Ok(ValueRef::new(
+            value_type,
+            &self.scratch_buffer[..value_type.size()],
+        ))
     }
 
     pub fn read_stream<T>(
@@ -138,14 +128,14 @@ impl Performer {
         frames: &mut [T],
     ) -> Result<(), EndpointError>
     where
-        T: CmajorType,
+        T: IsType,
     {
         let endpoint = self
             .endpoints
-            .get(id.as_ref())
+            .get_output(id.as_ref())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.data_type_matches::<T>().is_none() {
+        if !endpoint.value_type().contains(&T::get_type()) {
             return Err(EndpointError::DataTypeMismatch);
         }
 
@@ -156,65 +146,59 @@ impl Performer {
     }
 }
 
-impl Endpoints {
-    pub fn write_value<Value>(
+impl EndpointsHandle {
+    pub fn write_value<'a>(
         &mut self,
         id: impl AsRef<str>,
-        value: Value,
-    ) -> Result<(), EndpointError>
-    where
-        Value: CmajorType,
-    {
+        value: impl Into<Value>,
+    ) -> Result<(), EndpointError> {
         let endpoint = self
             .endpoints
-            .get(id.as_ref())
+            .get_input(id.as_ref())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        if endpoint.data_type_matches::<Value>().is_none() {
+        let handle = endpoint.handle();
+        let value = value.into();
+
+        if !endpoint.value_type().contains(value.ty()) {
             return Err(EndpointError::DataTypeMismatch);
         }
 
-        let handle = endpoint.handle();
-
-        value
-            .to_bytes(|bytes| self.endpoint_producer.send_value(handle, bytes))
+        self.endpoint_tx
+            .send_value(handle, value.data())
             .map_err(|_| EndpointError::FailedToSendValue)
     }
 
-    pub fn post_event<Value>(
+    pub fn post_event<'a>(
         &mut self,
         id: impl AsRef<str>,
-        value: Value,
-    ) -> Result<(), EndpointError>
-    where
-        Value: CmajorType,
-    {
+        value: impl Into<Value>,
+    ) -> Result<(), EndpointError> {
         let endpoint = self
             .endpoints
-            .get(id.as_ref())
+            .get_input(id.as_ref())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Event {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        let type_index = if let Some(type_index) = endpoint.data_type_matches::<Value>() {
-            type_index
-        } else {
-            return Err(EndpointError::DataTypeMismatch);
-        };
-
         let handle = endpoint.handle();
+        let value = value.into();
 
-        value
-            .to_bytes(|bytes| {
-                self.endpoint_producer
-                    .send_event(handle, type_index as u32, bytes)
-            })
+        let index = endpoint
+            .value_type()
+            .iter()
+            .enumerate()
+            .find_map(|(index, ty)| (ty == value.ty()).then_some(index))
+            .ok_or(EndpointError::DataTypeMismatch)?;
+
+        self.endpoint_tx
+            .send_event(handle, index as u32, value.data())
             .map_err(|_| EndpointError::FailedToSendValue)
     }
 }
