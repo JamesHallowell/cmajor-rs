@@ -22,8 +22,14 @@ pub enum ValueView<'a> {
     Int64(i64),
     Float32(f32),
     Float64(f64),
+    String(&'a str),
     Array(ArrayView<'a>),
     Object(ObjectView<'a>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct StringView<'a> {
+    data: &'a str,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -50,25 +56,41 @@ impl Value {
         ValueView::new(&self.ty, &self.data)
     }
 
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-
     pub fn ty(&self) -> &Type {
         &self.ty
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 }
 
 impl<'a> ValueRef<'a> {
-    pub fn new<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
+    pub fn from_bytes<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
     where
         'b: 'a,
     {
-        Self { ty, data }
+        let size = match ty {
+            Type::String => data
+                .iter()
+                .enumerate()
+                .find_map(|(i, &b)| (b == b'\0').then_some(i + 1))
+                .unwrap_or(0),
+            _ => ty.size(),
+        };
+
+        Self {
+            ty,
+            data: &data[..size],
+        }
     }
 
     pub fn get(&self) -> ValueView<'_> {
         ValueView::new(self.ty, self.data)
+    }
+
+    pub fn ty(&self) -> &Type {
+        self.ty
     }
 
     pub fn data(&self) -> &[u8] {
@@ -96,9 +118,24 @@ impl<'a> ValueView<'a> {
             Type::Int64 => ValueView::Int64(data.get_i64_ne()),
             Type::Float32 => ValueView::Float32(data.get_f32_ne()),
             Type::Float64 => ValueView::Float64(data.get_f64_ne()),
+            Type::String => {
+                if data.is_empty() {
+                    return ValueView::String("");
+                }
+
+                let string = std::str::from_utf8(&data[..data.len() - 1])
+                    .expect("valid utf8 and null terminated");
+                ValueView::String(string)
+            }
             Type::Array(ref array) => ValueView::Array(ArrayView { array, data }),
             Type::Object(ref object) => ValueView::Object(ObjectView { object, data }),
         }
+    }
+}
+
+impl<'a> StringView<'a> {
+    pub fn to_str(&self) -> &str {
+        self.data
     }
 }
 
@@ -202,6 +239,18 @@ impl From<f64> for Value {
     }
 }
 
+impl<'a> From<&'a str> for Value {
+    fn from(value: &'a str) -> Self {
+        let mut data = SmallVec::from(value.as_bytes());
+        data.push(b'\0');
+
+        Self {
+            ty: Type::String,
+            data,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Complex32 {
     pub imag: f32,
@@ -223,7 +272,10 @@ impl From<Complex32> for Value {
 
 impl<'a> From<&'a Value> for ValueRef<'a> {
     fn from(value: &'a Value) -> Self {
-        ValueRef::new(&value.ty, &value.data)
+        ValueRef {
+            ty: &value.ty,
+            data: &value.data,
+        }
     }
 }
 
@@ -358,5 +410,34 @@ mod test {
         };
 
         assert!(matches!(inner.field("d"), Some(ValueView::Bool(true))));
+    }
+
+    #[test]
+    fn strings_as_values() {
+        let s = "hello, world!";
+        let s: Value = s.into();
+
+        assert!(matches!(s.get(), ValueView::String("hello, world!")));
+    }
+
+    #[test]
+    fn string_data_is_null_terminated() {
+        let s = "hello, world!";
+        let s: Value = s.into();
+
+        assert_eq!(
+            s.data(),
+            b"hello, world!\0",
+            "strings should be null terminated"
+        );
+    }
+
+    #[test]
+    fn empty_strings() {
+        let s = "";
+        let s: Value = s.into();
+
+        assert_eq!(s.get(), ValueView::String(""));
+        assert_eq!(s.data(), b"\0", "strings should be null terminated");
     }
 }

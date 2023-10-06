@@ -92,6 +92,9 @@ pub struct EndpointDataType {
 
     #[serde(rename = "members")]
     members: Option<JsonMap<String, JsonValue>>,
+
+    #[serde(flatten)]
+    _extra: JsonMap<String, JsonValue>,
 }
 
 fn convert_type(value_type: EndpointDataType) -> Type {
@@ -102,6 +105,7 @@ fn convert_type(value_type: EndpointDataType) -> Type {
         ValueType::Int64 => Type::Int64,
         ValueType::Float32 => Type::Float32,
         ValueType::Float64 => Type::Float64,
+        ValueType::String => Type::String,
         ValueType::Object => {
             let mut object = Object::new();
             for (name, value) in value_type.members.unwrap_or_default() {

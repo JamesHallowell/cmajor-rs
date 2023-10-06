@@ -1,4 +1,4 @@
-use cmajor::{Cmajor, Complex32, EndpointsHandle, Performer, ValueView};
+use cmajor::{Cmajor, Complex32, EndpointsHandle, Performer, ValueRef, ValueView};
 
 fn setup(program: &str) -> (Performer, EndpointsHandle) {
     let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");

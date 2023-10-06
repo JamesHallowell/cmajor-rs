@@ -116,10 +116,7 @@ impl Performer {
                 .copy_output_value(endpoint.handle(), self.scratch_buffer.as_mut_slice())
         };
 
-        Ok(ValueRef::new(
-            value_type,
-            &self.scratch_buffer[..value_type.size()],
-        ))
+        Ok(ValueRef::from_bytes(value_type, &self.scratch_buffer))
     }
 
     pub fn read_stream<T>(

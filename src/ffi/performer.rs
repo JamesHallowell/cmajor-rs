@@ -105,7 +105,7 @@ impl PerformerPtr {
         };
     }
 
-    pub unsafe fn copy_output_value(&self, handle: EndpointHandle, buffer: &mut [u8]) {
+    pub fn copy_output_value(&self, handle: EndpointHandle, buffer: &mut [u8]) {
         let buffer = buffer.as_mut_ptr().cast();
 
         unsafe {

@@ -6,6 +6,7 @@ pub enum Type {
     Int64,
     Float32,
     Float64,
+    String,
     Array(Box<Array>),
     Object(Box<Object>),
 }
@@ -36,6 +37,7 @@ impl Type {
             Type::Int64 => 8,
             Type::Float32 => 4,
             Type::Float64 => 8,
+            Type::String => std::mem::size_of::<isize>(),
             Type::Array(ref array) => array.ty.size() * array.len,
             Type::Object(ref object) => object.fields.iter().map(|field| field.ty.size()).sum(),
         }
