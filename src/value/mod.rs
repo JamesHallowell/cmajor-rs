@@ -193,7 +193,7 @@ impl From<bool> for Value {
         let value: u32 = if value { 1 } else { 0 };
         Value {
             ty: Type::Bool,
-            data: SmallVec::from_slice(&value.to_ne_bytes()),
+            data: Data::from_slice(&value.to_ne_bytes()),
         }
     }
 }
@@ -202,7 +202,7 @@ impl From<i32> for Value {
     fn from(value: i32) -> Self {
         Value {
             ty: Type::Int32,
-            data: SmallVec::from_slice(&value.to_ne_bytes()),
+            data: Data::from_slice(&value.to_ne_bytes()),
         }
     }
 }
@@ -211,7 +211,7 @@ impl From<i64> for Value {
     fn from(value: i64) -> Self {
         Value {
             ty: Type::Int64,
-            data: SmallVec::from_slice(&value.to_ne_bytes()),
+            data: Data::from_slice(&value.to_ne_bytes()),
         }
     }
 }
@@ -220,7 +220,7 @@ impl From<f32> for Value {
     fn from(value: f32) -> Self {
         Value {
             ty: Type::Float32,
-            data: SmallVec::from_slice(&value.to_ne_bytes()),
+            data: Data::from_slice(&value.to_ne_bytes()),
         }
     }
 }
@@ -229,7 +229,7 @@ impl From<f64> for Value {
     fn from(value: f64) -> Self {
         Value {
             ty: Type::Float64,
-            data: SmallVec::from_slice(&value.to_ne_bytes()),
+            data: Data::from_slice(&value.to_ne_bytes()),
         }
     }
 }
@@ -260,6 +260,22 @@ impl From<Complex32> for Value {
     }
 }
 
+impl TryFrom<ValueRef<'_>> for Complex32 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value.get() {
+            ValueView::Object(object) => match (object.field("imag"), object.field("real")) {
+                (Some(ValueView::Float32(imag)), Some(ValueView::Float32(real))) => {
+                    Ok(Self { imag, real })
+                }
+                _ => return Err(()),
+            },
+            _ => Err(()),
+        }
+    }
+}
+
 impl From<Complex64> for Value {
     fn from(value: Complex64) -> Self {
         let object = Object::new()
@@ -271,6 +287,22 @@ impl From<Complex64> for Value {
         data.extend_from_slice(&value.real.to_ne_bytes());
 
         Self::new(object, data)
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for Complex64 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value.get() {
+            ValueView::Object(object) => match (object.field("imag"), object.field("real")) {
+                (Some(ValueView::Float64(imag)), Some(ValueView::Float64(real))) => {
+                    Ok(Self { imag, real })
+                }
+                _ => return Err(()),
+            },
+            _ => Err(()),
+        }
     }
 }
 

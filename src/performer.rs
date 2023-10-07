@@ -99,10 +99,16 @@ impl Performer {
         self.inner.advance();
     }
 
-    pub fn read_value(&mut self, id: impl AsRef<str>) -> Result<ValueRef<'_>, EndpointError> {
-        let (handle, endpoint) = self
-            .endpoints
+    pub fn get_output(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
+        self.endpoints
             .get_output_by_id(id)
+            .map(|(handle, _)| handle)
+    }
+
+    pub fn read_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
+        let endpoint = self
+            .endpoints
+            .get_output(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
@@ -119,15 +125,15 @@ impl Performer {
 
     pub fn read_stream<T>(
         &mut self,
-        id: impl AsRef<str>,
+        handle: EndpointHandle,
         frames: &mut [T],
     ) -> Result<(), EndpointError>
     where
         T: IsType,
     {
-        let (handle, endpoint) = self
+        let endpoint = self
             .endpoints
-            .get_output_by_id(id)
+            .get_output(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if !endpoint.value_type().contains(&T::get_type()) {
@@ -168,14 +174,18 @@ impl Performer {
 }
 
 impl EndpointHandles {
+    pub fn get_input(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
+        self.endpoints.get_input_by_id(id).map(|(handle, _)| handle)
+    }
+
     pub fn write_value(
         &mut self,
-        id: impl AsRef<str>,
+        handle: EndpointHandle,
         value: impl Into<Value>,
     ) -> Result<(), EndpointError> {
-        let (handle, endpoint) = self
+        let endpoint = self
             .endpoints
-            .get_input_by_id(id)
+            .get_input(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
@@ -195,12 +205,12 @@ impl EndpointHandles {
 
     pub fn post_event(
         &mut self,
-        id: impl AsRef<str>,
+        handle: EndpointHandle,
         value: impl Into<Value>,
     ) -> Result<(), EndpointError> {
-        let (handle, endpoint) = self
+        let endpoint = self
             .endpoints
-            .get_input_by_id(id)
+            .get_input(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Event {

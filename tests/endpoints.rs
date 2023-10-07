@@ -45,9 +45,13 @@ fn can_read_and_write_to_value_endpoint() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    endpoints.write_value("in", 2).unwrap();
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
+    endpoints.write_value(input, 2).unwrap();
     performer.advance();
-    let result = performer.read_value("out").unwrap();
+
+    let result = performer.read_value(output).unwrap();
 
     assert!(matches!(result.get(), ValueView::Int32(4)));
 }
@@ -71,18 +75,21 @@ fn cant_access_endpoints_with_wrong_type() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
     assert!(matches!(
-        endpoints.write_value("in", 5),
+        endpoints.write_value(input, 5),
         Err(cmajor::EndpointError::DataTypeMismatch)
     ));
 
     assert!(matches!(
-        performer.read_stream("out", &mut [0_i32; 512]),
+        performer.read_stream(output, &mut [0_i32; 512]),
         Err(cmajor::EndpointError::DataTypeMismatch)
     ));
 
     assert!(matches!(
-        performer.read_value("out"),
+        performer.read_value(output),
         Err(cmajor::EndpointError::EndpointTypeMismatch)
     ));
 }
@@ -105,9 +112,12 @@ fn can_read_and_write_complex32_numbers() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
     endpoints
         .write_value(
-            "in",
+            input,
             Complex32 {
                 imag: 1.0,
                 real: 2.0,
@@ -117,11 +127,15 @@ fn can_read_and_write_complex32_numbers() {
 
     performer.advance();
 
-    let result = performer.read_value("out").unwrap();
-    let object = result.object().unwrap();
+    let result: Complex32 = performer.read_value(output).unwrap().try_into().unwrap();
 
-    assert_eq!(object.field("imag").unwrap(), ValueView::Float32(1.0));
-    assert_eq!(object.field("real").unwrap(), ValueView::Float32(2.0));
+    assert_eq!(
+        result,
+        Complex32 {
+            imag: 1.0,
+            real: 2.0,
+        }
+    );
 }
 
 #[test]
@@ -142,9 +156,12 @@ fn can_read_and_write_complex64_numbers() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
     endpoints
         .write_value(
-            "in",
+            input,
             Complex64 {
                 imag: 1.0,
                 real: 2.0,
@@ -154,11 +171,15 @@ fn can_read_and_write_complex64_numbers() {
 
     performer.advance();
 
-    let result = performer.read_value("out").unwrap();
-    let object = result.object().unwrap();
+    let result: Complex64 = performer.read_value(output).unwrap().try_into().unwrap();
 
-    assert_eq!(object.field("imag").unwrap(), ValueView::Float64(1.0));
-    assert_eq!(object.field("real").unwrap(), ValueView::Float64(2.0));
+    assert_eq!(
+        result,
+        Complex64 {
+            imag: 1.0,
+            real: 2.0,
+        }
+    );
 }
 
 #[test]
@@ -184,10 +205,11 @@ fn can_read_structs() {
     "#;
 
     let (mut performer, _) = setup(PROGRAM);
+    let output = performer.get_output("out").unwrap();
 
     performer.advance();
 
-    let result = performer.read_value("out").unwrap();
+    let result = performer.read_value(output).unwrap();
     let object = result.object().unwrap();
 
     assert_eq!(object.field("a").unwrap(), ValueView::Bool(true));
@@ -213,12 +235,14 @@ fn can_read_and_write_arrays() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = [1, 2, 3, 4];
-    endpoints.write_value("in", input).unwrap();
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
+    endpoints.write_value(input, [1, 2, 3, 4]).unwrap();
 
     performer.advance();
 
-    let result = performer.read_value("out").unwrap();
+    let result = performer.read_value(output).unwrap();
     let array = result.array().unwrap();
     assert_eq!(array.len(), 4);
 
@@ -261,19 +285,23 @@ fn can_post_events() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    endpoints.post_event("in", 4).unwrap();
+    let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
+    endpoints.post_event(input, 4).unwrap();
+
     performer.advance();
 
     assert_eq!(
-        performer.read_value("out").unwrap().get(),
+        performer.read_value(output).unwrap().get(),
         ValueView::Int32(16)
     );
 
-    endpoints.post_event("in", true).unwrap();
+    endpoints.post_event(input, true).unwrap();
     performer.advance();
 
     assert_eq!(
-        performer.read_value("out").unwrap().get(),
+        performer.read_value(output).unwrap().get(),
         ValueView::Int32(42)
     );
 }
@@ -305,8 +333,9 @@ fn can_read_events() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    endpoints.post_event("in", 5_i32).unwrap();
-    endpoints.post_event("in", true).unwrap();
+    let input = endpoints.get_input("in").unwrap();
+    endpoints.post_event(input, 5_i32).unwrap();
+    endpoints.post_event(input, true).unwrap();
 
     performer.advance();
 
