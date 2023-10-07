@@ -6,12 +6,11 @@ pub enum Type {
     Int64,
     Float32,
     Float64,
-    String,
     Array(Box<Array>),
     Object(Box<Object>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Object {
     fields: Vec<Field>,
 }
@@ -24,7 +23,7 @@ pub struct Field {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Array {
-    ty: Type,
+    elem_ty: Type,
     len: usize,
 }
 
@@ -37,30 +36,36 @@ impl Type {
             Type::Int64 => 8,
             Type::Float32 => 4,
             Type::Float64 => 8,
-            Type::String => std::mem::size_of::<isize>(),
-            Type::Array(ref array) => array.ty.size() * array.len,
+            Type::Array(ref array) => array.elem_ty.size() * array.len,
             Type::Object(ref object) => object.fields.iter().map(|field| field.ty.size()).sum(),
         }
     }
 }
 
 impl Array {
-    pub fn new(ty: impl Into<Type>, len: usize) -> Self {
-        Array { ty: ty.into(), len }
+    pub fn new(elem_ty: impl Into<Type>, len: usize) -> Self {
+        Array {
+            elem_ty: elem_ty.into(),
+            len,
+        }
     }
 
-    pub fn ty(&self) -> &Type {
-        &self.ty
+    pub fn elem_ty(&self) -> &Type {
+        &self.elem_ty
     }
 
     pub fn len(&self) -> usize {
         self.len
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 impl Object {
     pub fn new() -> Self {
-        Object { fields: Vec::new() }
+        Object::default()
     }
 
     pub fn add_field(&mut self, name: impl AsRef<str>, ty: impl Into<Type>) {
@@ -136,6 +141,15 @@ impl IsType for f64 {
     }
 }
 
+impl<T, const N: usize> IsType for [T; N]
+where
+    T: IsType,
+{
+    fn get_type() -> Type {
+        Type::Array(Box::new(Array::new(T::get_type(), N)))
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
 
@@ -144,4 +158,5 @@ mod sealed {
     impl Sealed for i64 {}
     impl Sealed for f32 {}
     impl Sealed for f64 {}
+    impl<T, const N: usize> Sealed for [T; N] {}
 }

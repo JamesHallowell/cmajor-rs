@@ -1,5 +1,5 @@
 use {
-    crate::{Object, Type},
+    crate::values::{Array, Object, Type},
     serde::{
         de::{value::MapAccessDeserializer, Visitor},
         Deserialize, Deserializer,
@@ -93,6 +93,12 @@ pub struct EndpointDataType {
     #[serde(rename = "members")]
     members: Option<JsonMap<String, JsonValue>>,
 
+    #[serde(rename = "element")]
+    element: Option<Box<Self>>,
+
+    #[serde(rename = "size")]
+    size: Option<usize>,
+
     #[serde(flatten)]
     _extra: JsonMap<String, JsonValue>,
 }
@@ -105,7 +111,6 @@ fn convert_type(value_type: EndpointDataType) -> Type {
         ValueType::Int64 => Type::Int64,
         ValueType::Float32 => Type::Float32,
         ValueType::Float64 => Type::Float64,
-        ValueType::String => Type::String,
         ValueType::Object => {
             let mut object = Object::new();
             for (name, value) in value_type.members.unwrap_or_default() {
@@ -115,7 +120,17 @@ fn convert_type(value_type: EndpointDataType) -> Type {
             }
             object.into()
         }
-        _ => unimplemented!("unsupported data type"),
+        ValueType::Array => {
+            let element = value_type
+                .element
+                .map(|t| convert_type(*t))
+                .expect("array has an element");
+            let size = value_type.size.expect("array has a size");
+            Array::new(element, size).into()
+        }
+        ValueType::String => {
+            unimplemented!("string types are not yet supported")
+        }
     }
 }
 

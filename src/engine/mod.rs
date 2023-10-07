@@ -118,7 +118,7 @@ pub struct Linked {
     endpoints: Arc<Endpoints>,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, Hash, PartialEq)]
 pub struct EndpointHandle(u32);
 
 impl From<u32> for EndpointHandle {
@@ -135,22 +135,22 @@ impl From<EndpointHandle> for u32 {
 
 #[derive(Debug)]
 pub struct Endpoint {
-    handle: EndpointHandle,
+    id: EndpointId,
     endpoint_type: EndpointType,
     value_type: Vec<Type>,
 }
 
 impl Endpoint {
-    fn new(handle: EndpointHandle, detail: EndpointDetails) -> Self {
+    fn new(detail: EndpointDetails) -> Self {
         Self {
-            handle,
+            id: detail.id,
             endpoint_type: detail.endpoint_type,
             value_type: detail.value_type,
         }
     }
 
-    pub fn handle(&self) -> EndpointHandle {
-        self.handle
+    pub fn id(&self) -> &EndpointId {
+        &self.id
     }
 
     pub fn endpoint_type(&self) -> EndpointType {
@@ -164,17 +164,39 @@ impl Endpoint {
 
 #[derive(Debug)]
 pub struct Endpoints {
-    inputs: HashMap<EndpointId, Endpoint>,
-    outputs: HashMap<EndpointId, Endpoint>,
+    inputs: HashMap<EndpointHandle, Endpoint>,
+    outputs: HashMap<EndpointHandle, Endpoint>,
 }
 
 impl Endpoints {
-    pub fn get_input(&self, id: impl AsRef<str>) -> Option<&Endpoint> {
-        self.inputs.get(id.as_ref())
+    pub fn get_input(&self, handle: EndpointHandle) -> Option<&Endpoint> {
+        self.inputs.get(&handle)
     }
 
-    pub fn get_output(&self, id: impl AsRef<str>) -> Option<&Endpoint> {
-        self.outputs.get(id.as_ref())
+    pub fn get_output(&self, handle: EndpointHandle) -> Option<&Endpoint> {
+        self.outputs.get(&handle)
+    }
+
+    fn find_matching<'a>(
+        id: impl AsRef<str>,
+    ) -> impl Fn((&EndpointHandle, &'a Endpoint)) -> Option<EndpointHandle> {
+        move |(handle, endpoint): (&EndpointHandle, &Endpoint)| {
+            (endpoint.id().as_ref() == id.as_ref()).then_some(*handle)
+        }
+    }
+
+    pub fn get_input_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+        self.inputs
+            .iter()
+            .find_map(Self::find_matching(id))
+            .and_then(|handle| self.get_input(handle).map(|endpoint| (handle, endpoint)))
+    }
+
+    pub fn get_output_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+        self.outputs
+            .iter()
+            .find_map(Self::find_matching(id))
+            .and_then(|handle| self.get_output(handle).map(|endpoint| (handle, endpoint)))
     }
 }
 
@@ -229,7 +251,7 @@ impl Engine<Loaded> {
             .into_iter()
             .map(|endpoint| {
                 let handle = self.get_endpoint_handle(&endpoint.id).unwrap();
-                (endpoint.id.clone(), Endpoint::new(handle, endpoint))
+                (handle, Endpoint::new(endpoint))
             })
             .collect();
 
@@ -238,7 +260,7 @@ impl Engine<Loaded> {
             .into_iter()
             .map(|endpoint| {
                 let handle = self.get_endpoint_handle(&endpoint.id).unwrap();
-                (endpoint.id.clone(), Endpoint::new(handle, endpoint))
+                (handle, Endpoint::new(endpoint))
             })
             .collect();
 

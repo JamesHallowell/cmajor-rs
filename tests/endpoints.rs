@@ -1,6 +1,9 @@
-use cmajor::{Cmajor, Complex32, EndpointsHandle, Performer, ValueRef, ValueView};
+use cmajor::{
+    values::{Complex32, Complex64, ValueView},
+    Cmajor, EndpointHandles, Performer,
+};
 
-fn setup(program: &str) -> (Performer, EndpointsHandle) {
+fn setup(program: &str) -> (Performer, EndpointHandles) {
     let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");
 
     let llvm = cmajor
@@ -85,16 +88,16 @@ fn cant_access_endpoints_with_wrong_type() {
 }
 
 #[test]
-fn can_read_and_write_complex_numbers() {
+fn can_read_and_write_complex32_numbers() {
     const PROGRAM: &str = r#"
-        processor P
+        processor Echo
         {
-            input value complex in32;
-            output value complex out32;
+            input value complex in;
+            output value complex out;
         
             void main()
             {
-                out32 <- in32;
+                out <- in;
                 advance();
             }
         }
@@ -104,7 +107,7 @@ fn can_read_and_write_complex_numbers() {
 
     endpoints
         .write_value(
-            "in32",
+            "in",
             Complex32 {
                 imag: 1.0,
                 real: 2.0,
@@ -114,11 +117,121 @@ fn can_read_and_write_complex_numbers() {
 
     performer.advance();
 
-    let result = performer.read_value("out32").unwrap();
+    let result = performer.read_value("out").unwrap();
     let object = result.object().unwrap();
 
     assert_eq!(object.field("imag").unwrap(), ValueView::Float32(1.0));
     assert_eq!(object.field("real").unwrap(), ValueView::Float32(2.0));
+}
+
+#[test]
+fn can_read_and_write_complex64_numbers() {
+    const PROGRAM: &str = r#"
+        processor Echo
+        {
+            input value complex64 in;
+            output value complex64 out;
+        
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, mut endpoints) = setup(PROGRAM);
+
+    endpoints
+        .write_value(
+            "in",
+            Complex64 {
+                imag: 1.0,
+                real: 2.0,
+            },
+        )
+        .unwrap();
+
+    performer.advance();
+
+    let result = performer.read_value("out").unwrap();
+    let object = result.object().unwrap();
+
+    assert_eq!(object.field("imag").unwrap(), ValueView::Float64(1.0));
+    assert_eq!(object.field("real").unwrap(), ValueView::Float64(2.0));
+}
+
+#[test]
+fn can_read_structs() {
+    const PROGRAM: &str = r#"
+        processor Echo
+        {
+            output value S out;
+            
+            struct S
+            {
+                bool a;
+                float b;
+                int c;
+            }
+        
+            void main()
+            {
+                out <- S (true, 7.0, 42);
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, _) = setup(PROGRAM);
+
+    performer.advance();
+
+    let result = performer.read_value("out").unwrap();
+    let object = result.object().unwrap();
+
+    assert_eq!(object.field("a").unwrap(), ValueView::Bool(true));
+    assert_eq!(object.field("b").unwrap(), ValueView::Float32(7.0));
+    assert_eq!(object.field("c").unwrap(), ValueView::Int32(42));
+}
+
+#[test]
+fn can_read_and_write_arrays() {
+    const PROGRAM: &str = r#"
+        processor Reverser
+        {
+            input value int[4] in;
+            output value int[4] out;
+        
+            void main()
+            {
+                out <- int[] (in[3], in[2], in[1], in[0]);
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, mut endpoints) = setup(PROGRAM);
+
+    let input = [1, 2, 3, 4];
+    endpoints.write_value("in", input).unwrap();
+
+    performer.advance();
+
+    let result = performer.read_value("out").unwrap();
+    let array = result.array().unwrap();
+    assert_eq!(array.len(), 4);
+
+    let output = array
+        .into_iter()
+        .map(|value| match value {
+            ValueView::Int32(value) => Some(value),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert_eq!(output, vec![4, 3, 2, 1]);
 }
 
 #[test]
@@ -163,4 +276,48 @@ fn can_post_events() {
         performer.read_value("out").unwrap().get(),
         ValueView::Int32(42)
     );
+}
+
+#[test]
+fn can_read_events() {
+    const PROGRAM: &str = r#"
+        processor Echo
+        {
+            input event (int, bool) in;
+            output event (int, bool) out;
+            
+            event in(int value)
+            {
+                out <- value;
+            }
+            
+            event in(bool value)
+            {
+                out <- value;
+            }
+        
+            void main()
+            {
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, mut endpoints) = setup(PROGRAM);
+
+    endpoints.post_event("in", 5_i32).unwrap();
+    endpoints.post_event("in", true).unwrap();
+
+    performer.advance();
+
+    let mut events = vec![];
+    performer
+        .read_events("out", |_, data| {
+            events.push(data.to_owned());
+        })
+        .unwrap();
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].get(), ValueView::Int32(5));
+    assert_eq!(events[1].get(), ValueView::Bool(true));
 }

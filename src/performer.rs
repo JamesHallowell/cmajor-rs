@@ -1,6 +1,6 @@
 use {
     crate::{
-        engine::{EndpointType, Endpoints},
+        engine::{EndpointHandle, EndpointType, Endpoints},
         ffi::PerformerPtr,
         spsc::{self, EndpointMessage, EndpointSender},
         value::{IsType, Value, ValueRef},
@@ -21,7 +21,7 @@ pub struct Performer {
     scratch_buffer: Vec<u8>,
 }
 
-pub struct EndpointsHandle {
+pub struct EndpointHandles {
     endpoints: Arc<Endpoints>,
     endpoint_tx: EndpointSender,
 }
@@ -46,7 +46,7 @@ impl PerformerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<(Performer, EndpointsHandle), BuilderError> {
+    pub fn build(self) -> Result<(Performer, EndpointHandles), BuilderError> {
         let block_size = self.block_size.ok_or(BuilderError::NoBlockSize)?;
         self.inner.set_block_size(block_size);
 
@@ -59,7 +59,7 @@ impl PerformerBuilder {
                 endpoint_rx,
                 scratch_buffer: vec![0; 512],
             },
-            EndpointsHandle {
+            EndpointHandles {
                 endpoints: self.endpoints,
                 endpoint_tx,
             },
@@ -86,7 +86,7 @@ impl Performer {
     pub fn advance(&mut self) {
         let result = self.endpoint_rx.read_messages(|message| match message {
             EndpointMessage::Value { handle, data } => {
-                self.inner.set_input_value(handle, data, 0);
+                unsafe { self.inner.set_input_value(handle, data.as_ptr(), 0) };
             }
             EndpointMessage::Event {
                 handle,
@@ -100,9 +100,9 @@ impl Performer {
     }
 
     pub fn read_value(&mut self, id: impl AsRef<str>) -> Result<ValueRef<'_>, EndpointError> {
-        let endpoint = self
+        let (handle, endpoint) = self
             .endpoints
-            .get_output(id.as_ref())
+            .get_output_by_id(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
@@ -111,10 +111,8 @@ impl Performer {
 
         let value_type = endpoint.value_type().first().unwrap();
 
-        unsafe {
-            self.inner
-                .copy_output_value(endpoint.handle(), self.scratch_buffer.as_mut_slice())
-        };
+        self.inner
+            .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
 
         Ok(ValueRef::from_bytes(value_type, &self.scratch_buffer))
     }
@@ -127,38 +125,63 @@ impl Performer {
     where
         T: IsType,
     {
-        let endpoint = self
+        let (handle, endpoint) = self
             .endpoints
-            .get_output(id.as_ref())
+            .get_output_by_id(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if !endpoint.value_type().contains(&T::get_type()) {
             return Err(EndpointError::DataTypeMismatch);
         }
 
-        let handle = endpoint.handle();
-
         self.inner.copy_output_frames(handle, frames);
+        Ok(())
+    }
+
+    pub fn read_events(
+        &mut self,
+        id: impl AsRef<str>,
+        mut callback: impl FnMut(EndpointHandle, ValueRef<'_>),
+    ) -> Result<(), EndpointError> {
+        let (handle, endpoint) = self
+            .endpoints
+            .get_output_by_id(id)
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.endpoint_type() != EndpointType::Event {
+            return Err(EndpointError::EndpointTypeMismatch);
+        }
+
+        self.inner
+            .iterate_output_events(handle, |e, type_index, data| {
+                let ty = endpoint
+                    .value_type()
+                    .iter()
+                    .nth(type_index as usize)
+                    .expect("type index out of bounds");
+
+                callback(e, ValueRef::from_bytes(ty, data))
+            });
+
         Ok(())
     }
 }
 
-impl EndpointsHandle {
-    pub fn write_value<'a>(
+impl EndpointHandles {
+    pub fn write_value(
         &mut self,
         id: impl AsRef<str>,
         value: impl Into<Value>,
     ) -> Result<(), EndpointError> {
-        let endpoint = self
+        let (handle, endpoint) = self
             .endpoints
-            .get_input(id.as_ref())
+            .get_input_by_id(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Value {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        let handle = endpoint.handle();
         let value = value.into();
 
         if !endpoint.value_type().contains(value.ty()) {
@@ -170,21 +193,20 @@ impl EndpointsHandle {
             .map_err(|_| EndpointError::FailedToSendValue)
     }
 
-    pub fn post_event<'a>(
+    pub fn post_event(
         &mut self,
         id: impl AsRef<str>,
         value: impl Into<Value>,
     ) -> Result<(), EndpointError> {
-        let endpoint = self
+        let (handle, endpoint) = self
             .endpoints
-            .get_input(id.as_ref())
+            .get_input_by_id(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Event {
             return Err(EndpointError::EndpointTypeMismatch);
         }
 
-        let handle = endpoint.handle();
         let value = value.into();
 
         let index = endpoint

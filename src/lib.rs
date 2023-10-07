@@ -10,7 +10,10 @@ mod value;
 pub use {
     engine::{Engine, EngineBuilder, EngineType},
     library::{Cmajor, Error},
-    performer::{EndpointError, EndpointsHandle, Performer},
+    performer::{EndpointError, EndpointHandles, Performer, PerformerBuilder},
     program::Program,
-    value::{Array, Complex32, Object, Type, Value, ValueRef, ValueView},
 };
+
+pub mod values {
+    pub use crate::value::{Array, Complex32, Complex64, Object, Type, Value, ValueRef, ValueView};
+}

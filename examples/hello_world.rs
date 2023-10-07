@@ -70,11 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let program = cmajor.parse(PLAY_A_TUNE)?;
 
-    let engine = engine.load(&program)?;
+    let engine = engine.load(&program)?.link()?;
 
-    let engine = engine.link()?;
-
-    let (mut performer, _endpoints) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
+    let (mut performer, _) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
 
     let stream = cpal::default_host()
         .default_output_device()

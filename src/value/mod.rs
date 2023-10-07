@@ -3,12 +3,15 @@ use {bytes::Buf, smallvec::SmallVec};
 mod types;
 pub use types::{Array, IsType, Object, Type};
 
+#[derive(Debug, Clone)]
 pub struct Value {
     ty: Type,
-    data: SmallVec<[u8; 8]>,
+    data: Data,
 }
 
-#[derive(Copy, Clone)]
+type Data = SmallVec<[u8; 8]>;
+
+#[derive(Debug, Copy, Clone)]
 pub struct ValueRef<'a> {
     ty: &'a Type,
     data: &'a [u8],
@@ -22,14 +25,8 @@ pub enum ValueView<'a> {
     Int64(i64),
     Float32(f32),
     Float64(f64),
-    String(&'a str),
     Array(ArrayView<'a>),
     Object(ObjectView<'a>),
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct StringView<'a> {
-    data: &'a str,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -45,10 +42,10 @@ pub struct ObjectView<'a> {
 }
 
 impl Value {
-    pub fn new(ty: impl Into<Type>, data: &[u8]) -> Self {
+    fn new(ty: impl Into<Type>, data: Data) -> Self {
         Value {
             ty: ty.into(),
-            data: SmallVec::from_slice(data),
+            data,
         }
     }
 
@@ -70,18 +67,9 @@ impl<'a> ValueRef<'a> {
     where
         'b: 'a,
     {
-        let size = match ty {
-            Type::String => data
-                .iter()
-                .enumerate()
-                .find_map(|(i, &b)| (b == b'\0').then_some(i + 1))
-                .unwrap_or(0),
-            _ => ty.size(),
-        };
-
         Self {
             ty,
-            data: &data[..size],
+            data: &data[..ty.size()],
         }
     }
 
@@ -103,6 +91,20 @@ impl<'a> ValueRef<'a> {
             _ => None,
         }
     }
+
+    pub fn array(&'a self) -> Option<ArrayView<'a>> {
+        match self.get() {
+            ValueView::Array(array) => Some(array),
+            _ => None,
+        }
+    }
+
+    pub fn to_owned(&self) -> Value {
+        Value {
+            ty: self.ty.clone(),
+            data: self.data.to_vec().into(),
+        }
+    }
 }
 
 impl<'a> ValueView<'a> {
@@ -118,24 +120,9 @@ impl<'a> ValueView<'a> {
             Type::Int64 => ValueView::Int64(data.get_i64_ne()),
             Type::Float32 => ValueView::Float32(data.get_f32_ne()),
             Type::Float64 => ValueView::Float64(data.get_f64_ne()),
-            Type::String => {
-                if data.is_empty() {
-                    return ValueView::String("");
-                }
-
-                let string = std::str::from_utf8(&data[..data.len() - 1])
-                    .expect("valid utf8 and null terminated");
-                ValueView::String(string)
-            }
             Type::Array(ref array) => ValueView::Array(ArrayView { array, data }),
             Type::Object(ref object) => ValueView::Object(ObjectView { object, data }),
         }
-    }
-}
-
-impl<'a> StringView<'a> {
-    pub fn to_str(&self) -> &str {
-        self.data
     }
 }
 
@@ -145,10 +132,18 @@ impl<'a> ArrayView<'a> {
             return None;
         }
 
-        let offset = self.array.ty().size() * index;
-        let data = &self.data[offset..offset + self.array.ty().size()];
+        let offset = self.array.elem_ty().size() * index;
+        let data = &self.data[offset..offset + self.array.elem_ty().size()];
 
-        Some(ValueView::new(self.array.ty(), data))
+        Some(ValueView::new(self.array.elem_ty(), data))
+    }
+
+    pub fn len(&self) -> usize {
+        self.array.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -239,22 +234,16 @@ impl From<f64> for Value {
     }
 }
 
-impl<'a> From<&'a str> for Value {
-    fn from(value: &'a str) -> Self {
-        let mut data = SmallVec::from(value.as_bytes());
-        data.push(b'\0');
-
-        Self {
-            ty: Type::String,
-            data,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Complex32 {
     pub imag: f32,
     pub real: f32,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Complex64 {
+    pub imag: f64,
+    pub real: f64,
 }
 
 impl From<Complex32> for Value {
@@ -263,10 +252,40 @@ impl From<Complex32> for Value {
             .with_field("imag", Type::Float32)
             .with_field("real", Type::Float32);
 
-        Self::new(
-            object,
-            &[value.imag.to_ne_bytes(), value.real.to_ne_bytes()].concat(),
-        )
+        let mut data = Data::new();
+        data.extend_from_slice(&value.imag.to_ne_bytes());
+        data.extend_from_slice(&value.real.to_ne_bytes());
+
+        Self::new(object, data)
+    }
+}
+
+impl From<Complex64> for Value {
+    fn from(value: Complex64) -> Self {
+        let object = Object::new()
+            .with_field("imag", Type::Float64)
+            .with_field("real", Type::Float64);
+
+        let mut data = Data::new();
+        data.extend_from_slice(&value.imag.to_ne_bytes());
+        data.extend_from_slice(&value.real.to_ne_bytes());
+
+        Self::new(object, data)
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for Value
+where
+    T: Into<Value> + IsType,
+{
+    fn from(value: [T; N]) -> Self {
+        let array = Array::new(T::get_type(), N);
+        let mut data = Data::new();
+        for value in value {
+            let value: Value = value.into();
+            data.extend_from_slice(value.data());
+        }
+        Self::new(array, data)
     }
 }
 
@@ -281,7 +300,7 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
 
 #[cfg(test)]
 mod test {
-    use {super::*, bytes::BufMut};
+    use super::*;
 
     #[test]
     fn bool_as_value() {
@@ -318,18 +337,17 @@ mod test {
         let array: Type = Array::new(Type::Int32, 3).into();
         assert_eq!(array.size(), 12);
 
-        let mut data = vec![0; array.size()];
-        let mut buf = data.as_mut_slice();
-        buf.put_i32_ne(5);
-        buf.put_i32_ne(6);
-        buf.put_i32_ne(7);
+        let values = [5, 6, 7];
 
-        let value = Value::new(array, &data);
+        let value: Value = values.into();
 
         let array_view = match value.get() {
             ValueView::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
+
+        assert_eq!(array_view.len(), 3);
+        assert!(!array_view.is_empty());
 
         let mut iter = array_view.into_iter();
         assert!(matches!(iter.next(), Some(ValueView::Int32(5))));
@@ -342,21 +360,16 @@ mod test {
         let array: Type = Array::new(Array::new(Type::Int32, 3), 2).into();
         assert_eq!(array.size(), 24);
 
-        let mut data = vec![0; array.size()];
-        let mut buf = data.as_mut_slice();
-        buf.put_i32_ne(5);
-        buf.put_i32_ne(6);
-        buf.put_i32_ne(7);
-        buf.put_i32_ne(8);
-        buf.put_i32_ne(9);
-        buf.put_i32_ne(10);
+        let multi_dimensional_array = [[5, 6, 7], [8, 9, 10]];
+        let value: Value = multi_dimensional_array.into();
 
-        let value = Value::new(array, &data);
-
-        let mut outer = match value.get() {
-            ValueView::Array(array_view) => array_view.into_iter(),
+        let array_view = match value.get() {
+            ValueView::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
+        assert_eq!(array_view.len(), 2);
+
+        let mut outer = array_view.into_iter();
 
         let mut inner = match outer.next() {
             Some(ValueView::Array(inner)) => inner.into_iter(),
@@ -388,13 +401,12 @@ mod test {
             .with_field("c", Object::new().with_field("d", Type::Bool))
             .into();
 
-        let mut data = vec![0; object.size()];
-        let mut buf = data.as_mut_slice();
-        buf.put_i32_ne(5);
-        buf.put_i64_ne(53);
-        buf.put_u32_ne(1);
+        let mut data = Data::new();
+        data.extend_from_slice(&5_i32.to_ne_bytes());
+        data.extend_from_slice(&53_i64.to_ne_bytes());
+        data.extend_from_slice(&1_i32.to_ne_bytes());
 
-        let value = Value::new(object, &data);
+        let value = Value::new(object, data);
 
         let object_view = match value.get() {
             ValueView::Object(object_view) => object_view,
@@ -410,34 +422,5 @@ mod test {
         };
 
         assert!(matches!(inner.field("d"), Some(ValueView::Bool(true))));
-    }
-
-    #[test]
-    fn strings_as_values() {
-        let s = "hello, world!";
-        let s: Value = s.into();
-
-        assert!(matches!(s.get(), ValueView::String("hello, world!")));
-    }
-
-    #[test]
-    fn string_data_is_null_terminated() {
-        let s = "hello, world!";
-        let s: Value = s.into();
-
-        assert_eq!(
-            s.data(),
-            b"hello, world!\0",
-            "strings should be null terminated"
-        );
-    }
-
-    #[test]
-    fn empty_strings() {
-        let s = "";
-        let s: Value = s.into();
-
-        assert_eq!(s.get(), ValueView::String(""));
-        assert_eq!(s.data(), b"\0", "strings should be null terminated");
     }
 }
