@@ -2,6 +2,7 @@ use {
     crate::{
         engine::{
             endpoint::{EventEndpoint, StreamEndpoint, ValueEndpoint},
+            program_details::ParseEndpointError::UnsupportedType,
             Endpoint, EndpointId,
         },
         value::types::{Array, Object, Type},
@@ -11,7 +12,7 @@ use {
         Deserialize, Deserializer,
     },
     serde_json::{Map as JsonMap, Value as JsonValue},
-    std::fmt::Formatter,
+    std::{borrow::Borrow, fmt::Formatter},
 };
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +28,7 @@ impl ProgramDetails {
         self.inputs
             .iter()
             .map(Endpoint::try_from)
+            .inspect(print_endpoint_error)
             .filter_map(|endpoint| endpoint.ok())
     }
 
@@ -34,31 +36,32 @@ impl ProgramDetails {
         self.outputs
             .iter()
             .map(Endpoint::try_from)
+            .inspect(print_endpoint_error)
             .filter_map(|endpoint| endpoint.ok())
     }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct EndpointDetails {
+struct EndpointDetails {
     #[serde(rename = "endpointID")]
-    pub id: EndpointId,
+    id: EndpointId,
 
     #[serde(rename = "endpointType")]
-    pub endpoint_type: EndpointType,
+    endpoint_type: EndpointType,
 
     #[serde(
         rename = "dataType",
         alias = "dataTypes",
         deserialize_with = "deserialize_data_type"
     )]
-    pub value_type: Vec<Type>,
+    value_type: Vec<Type>,
 
     #[serde(flatten)]
     _extra: JsonMap<String, JsonValue>,
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, PartialEq)]
-pub enum EndpointType {
+enum EndpointType {
     #[serde(rename = "stream")]
     Stream,
     #[serde(rename = "event")]
@@ -68,7 +71,7 @@ pub enum EndpointType {
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, PartialEq)]
-pub enum ValueType {
+enum ValueType {
     #[serde(rename = "void")]
     Void,
     #[serde(rename = "bool")]
@@ -90,9 +93,9 @@ pub enum ValueType {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct EndpointDataType {
+struct EndpointDataType {
     #[serde(rename = "type")]
-    r#type: ValueType,
+    ty: ValueType,
 
     #[serde(rename = "class")]
     class: Option<String>,
@@ -110,53 +113,103 @@ pub struct EndpointDataType {
     _extra: JsonMap<String, JsonValue>,
 }
 
-fn convert_type(value_type: EndpointDataType) -> Type {
-    match value_type.r#type {
-        ValueType::Void => Type::Void,
-        ValueType::Bool => Type::Bool,
-        ValueType::Int32 => Type::Int32,
-        ValueType::Int64 => Type::Int64,
-        ValueType::Float32 => Type::Float32,
-        ValueType::Float64 => Type::Float64,
-        ValueType::Object => {
-            let mut object = Object::new();
-            for (name, value) in value_type.members.unwrap_or_default() {
-                let value: EndpointDataType = serde_json::from_value(value).unwrap();
-                let field_type = convert_type(value);
-                object.add_field(name, field_type);
+#[derive(Debug, thiserror::Error)]
+pub enum ParseEndpointError {
+    #[error(transparent)]
+    InvalidJson(#[from] serde_json::Error),
+
+    #[error("unsupported type: {0:?}")]
+    UnsupportedType(String),
+
+    #[error("struct has no members")]
+    StructHasNoMembers,
+
+    #[error("array has no element")]
+    ArrayHasNoElement,
+
+    #[error("array has no size")]
+    ArrayHasNoSize,
+
+    #[error("endpoint has an unexpected number of types")]
+    UnexpectedNumberOfTypes,
+}
+
+fn print_endpoint_error(result: &Result<Endpoint, ParseEndpointError>) {
+    if let Err(err) = result {
+        eprintln!("failed to parse endpoint: {:?}", err);
+    }
+}
+
+impl TryFrom<&EndpointDataType> for Type {
+    type Error = ParseEndpointError;
+
+    fn try_from(
+        EndpointDataType {
+            ty,
+            members,
+            element,
+            size,
+            ..
+        }: &EndpointDataType,
+    ) -> Result<Self, Self::Error> {
+        match *ty {
+            ValueType::Void => Ok(Type::Void),
+            ValueType::Bool => Ok(Type::Bool),
+            ValueType::Int32 => Ok(Type::Int32),
+            ValueType::Int64 => Ok(Type::Int64),
+            ValueType::Float32 => Ok(Type::Float32),
+            ValueType::Float64 => Ok(Type::Float64),
+            ValueType::Object => {
+                let mut object = Object::new();
+                for (name, value) in members.as_ref().ok_or(Self::Error::StructHasNoMembers)? {
+                    let ty: Type = serde_json::from_value::<EndpointDataType>(value.clone())?
+                        .borrow()
+                        .try_into()?;
+                    object.add_field(name, ty);
+                }
+                Ok(object.into())
             }
-            object.into()
-        }
-        ValueType::Array => {
-            let element = value_type
-                .element
-                .map(|t| convert_type(*t))
-                .expect("array has an element");
-            let size = value_type.size.expect("array has a size");
-            Array::new(element, size).into()
-        }
-        ValueType::String => {
-            unimplemented!("string types are not yet supported")
+            ValueType::Array => {
+                let element_ty: Type = element
+                    .as_ref()
+                    .ok_or(ParseEndpointError::ArrayHasNoElement)?
+                    .as_ref()
+                    .try_into()?;
+                let size = size.ok_or(ParseEndpointError::ArrayHasNoSize)?;
+
+                Ok(Array::new(element_ty, size).into())
+            }
+            ty => Err(UnsupportedType(format!("{:?}", ty))),
         }
     }
 }
 
 impl TryFrom<&EndpointDetails> for Endpoint {
-    type Error = ();
+    type Error = ParseEndpointError;
 
-    fn try_from(value: &EndpointDetails) -> Result<Self, Self::Error> {
-        Ok(match value.endpoint_type {
+    fn try_from(
+        EndpointDetails {
+            id,
+            endpoint_type,
+            value_type,
+            ..
+        }: &EndpointDetails,
+    ) -> Result<Self, Self::Error> {
+        Ok(match endpoint_type {
             EndpointType::Stream => {
-                let value_type = value.value_type.first().ok_or(())?.clone();
-                StreamEndpoint::new(value.id.clone(), value_type).into()
+                if value_type.len() != 1 {
+                    return Err(ParseEndpointError::UnexpectedNumberOfTypes);
+                }
+
+                StreamEndpoint::new(id.clone(), value_type[0].clone()).into()
             }
-            EndpointType::Event => {
-                let value_type = value.value_type.clone();
-                EventEndpoint::new(value.id.clone(), value_type).into()
-            }
+            EndpointType::Event => EventEndpoint::new(id.clone(), value_type.clone()).into(),
             EndpointType::Value => {
-                let value_type = value.value_type.first().ok_or(())?.clone();
-                ValueEndpoint::new(value.id.clone(), value_type).into()
+                if value_type.len() != 1 {
+                    return Err(ParseEndpointError::UnexpectedNumberOfTypes);
+                }
+
+                ValueEndpoint::new(id.clone(), value_type[0].clone()).into()
             }
         })
     }
@@ -181,7 +234,7 @@ where
         {
             let mut data_types = Vec::new();
             while let Some(data_type) = seq.next_element::<EndpointDataType>()? {
-                let data_type = convert_type(data_type);
+                let data_type = Type::try_from(&data_type).map_err(serde::de::Error::custom)?;
                 data_types.push(data_type);
             }
 
@@ -195,7 +248,9 @@ where
             let data_type: EndpointDataType =
                 Deserialize::deserialize(MapAccessDeserializer::new(map))?;
 
-            Ok(vec![convert_type(data_type)])
+            let data_type = Type::try_from(&data_type).map_err(serde::de::Error::custom)?;
+
+            Ok(vec![data_type])
         }
     }
 
