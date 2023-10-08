@@ -12,33 +12,27 @@ pub struct Value {
 
 type Data = SmallVec<[u8; 8]>;
 
-#[derive(Debug, Copy, Clone)]
-pub struct ValueRef<'a> {
-    ty: &'a Type,
-    data: &'a [u8],
-}
-
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ValueView<'a> {
+pub enum ValueRef<'a> {
     Void,
     Bool(bool),
     Int32(i32),
     Int64(i64),
     Float32(f32),
     Float64(f64),
-    Array(ArrayView<'a>),
-    Object(ObjectView<'a>),
+    Array(ArrayRef<'a>),
+    Object(ObjectRef<'a>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct ArrayView<'a> {
-    array: &'a Array,
+pub struct ArrayRef<'a> {
+    ty: &'a Array,
     data: &'a [u8],
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct ObjectView<'a> {
-    object: &'a Object,
+pub struct ObjectRef<'a> {
+    ty: &'a Object,
     data: &'a [u8],
 }
 
@@ -50,8 +44,8 @@ impl Value {
         }
     }
 
-    pub fn get(&self) -> ValueView<'_> {
-        ValueView::new(&self.ty, &self.data)
+    pub fn get(&self) -> ValueRef<'_> {
+        ValueRef::new(&self.ty, &self.data)
     }
 
     pub fn ty(&self) -> &Type {
@@ -64,83 +58,75 @@ impl Value {
 }
 
 impl<'a> ValueRef<'a> {
-    pub fn from_bytes<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
+    pub fn new<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
     where
         'b: 'a,
     {
-        Self {
-            ty,
-            data: &data[..ty.size()],
+        let mut data = data;
+        match ty {
+            Type::Void => Self::Void,
+            Type::Bool => Self::Bool(data.get_u32_ne() != 0),
+            Type::Int32 => Self::Int32(data.get_i32_ne()),
+            Type::Int64 => Self::Int64(data.get_i64_ne()),
+            Type::Float32 => Self::Float32(data.get_f32_ne()),
+            Type::Float64 => Self::Float64(data.get_f64_ne()),
+            Type::Array(ref array) => Self::Array(ArrayRef {
+                ty: array.as_ref(),
+                data,
+            }),
+            Type::Object(ref object) => Self::Object(ObjectRef {
+                ty: object.as_ref(),
+                data,
+            }),
         }
     }
 
-    pub fn get(&self) -> ValueView<'_> {
-        ValueView::new(self.ty, self.data)
-    }
-
-    pub fn ty(&self) -> &Type {
-        self.ty
-    }
-
-    pub fn data(&self) -> &[u8] {
-        self.data
-    }
-
-    pub fn object(&'a self) -> Option<ObjectView<'a>> {
-        match self.get() {
-            ValueView::Object(object) => Some(object),
+    pub fn object(&'a self) -> Option<ObjectRef<'a>> {
+        match *self {
+            Self::Object(object) => Some(object),
             _ => None,
         }
     }
 
-    pub fn array(&'a self) -> Option<ArrayView<'a>> {
-        match self.get() {
-            ValueView::Array(array) => Some(array),
+    pub fn array(&'a self) -> Option<ArrayRef<'a>> {
+        match *self {
+            Self::Array(array) => Some(array),
             _ => None,
         }
     }
 
     pub fn to_owned(&self) -> Value {
-        Value {
-            ty: self.ty.clone(),
-            data: self.data.to_vec().into(),
+        match *self {
+            Self::Void => Value::from(()),
+            Self::Bool(value) => Value::from(value),
+            Self::Int32(value) => Value::from(value),
+            Self::Int64(value) => Value::from(value),
+            Self::Float32(value) => Value::from(value),
+            Self::Float64(value) => Value::from(value),
+            Self::Array(array) => Value::from(array),
+            Self::Object(object) => Value::from(object),
         }
     }
 }
-
-impl<'a> ValueView<'a> {
-    fn new<'b>(value_type: &'b Type, data: &'b [u8]) -> Self
-    where
-        'b: 'a,
-    {
-        let mut data = data;
-        match value_type {
-            Type::Void => ValueView::Void,
-            Type::Bool => ValueView::Bool(data.get_u32_ne() != 0),
-            Type::Int32 => ValueView::Int32(data.get_i32_ne()),
-            Type::Int64 => ValueView::Int64(data.get_i64_ne()),
-            Type::Float32 => ValueView::Float32(data.get_f32_ne()),
-            Type::Float64 => ValueView::Float64(data.get_f64_ne()),
-            Type::Array(ref array) => ValueView::Array(ArrayView { array, data }),
-            Type::Object(ref object) => ValueView::Object(ObjectView { object, data }),
-        }
-    }
-}
-
-impl<'a> ArrayView<'a> {
-    pub fn get(&self, index: usize) -> Option<ValueView<'a>> {
-        if index >= self.array.len() {
+impl<'a> ArrayRef<'a> {
+    pub fn get(&'a self, index: usize) -> Option<ValueRef<'a>> {
+        if index >= self.len() {
             return None;
         }
 
-        let offset = self.array.elem_ty().size() * index;
-        let data = &self.data[offset..offset + self.array.elem_ty().size()];
+        let ty = self.elem_ty();
+        let offset = ty.size() * index;
+        let data = &self.data[offset..offset + ty.size()];
 
-        Some(ValueView::new(self.array.elem_ty(), data))
+        Some(ValueRef::new(ty, data))
+    }
+
+    pub fn elem_ty(&self) -> &Type {
+        self.ty.elem_ty()
     }
 
     pub fn len(&self) -> usize {
-        self.array.len()
+        self.ty.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -148,44 +134,26 @@ impl<'a> ArrayView<'a> {
     }
 }
 
-pub struct ArrayViewIterator<'a> {
-    array: ArrayView<'a>,
-    index: usize,
-}
-
-impl<'a> Iterator for ArrayViewIterator<'a> {
-    type Item = ValueView<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let value = self.array.get(self.index);
-        self.index += 1;
-        value
-    }
-}
-
-impl<'a> IntoIterator for ArrayView<'a> {
-    type Item = ValueView<'a>;
-    type IntoIter = ArrayViewIterator<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        ArrayViewIterator {
-            array: self,
-            index: 0,
-        }
-    }
-}
-
-impl ObjectView<'_> {
-    pub fn field(&self, name: impl AsRef<str>) -> Option<ValueView<'_>> {
+impl ObjectRef<'_> {
+    pub fn field(&self, name: impl AsRef<str>) -> Option<ValueRef<'_>> {
         let name = name.as_ref();
         let mut offset = 0;
-        for field in self.object.fields() {
+        for field in self.ty.fields() {
             if field.name() == name {
-                return Some(ValueView::new(field.ty(), &self.data[offset..]));
+                return Some(ValueRef::new(field.ty(), &self.data[offset..]));
             }
             offset += field.ty().size();
         }
         None
+    }
+}
+
+impl From<()> for Value {
+    fn from(_: ()) -> Self {
+        Value {
+            ty: Type::Void,
+            data: Data::new(),
+        }
     }
 }
 
@@ -235,6 +203,18 @@ impl From<f64> for Value {
     }
 }
 
+impl From<ArrayRef<'_>> for Value {
+    fn from(array: ArrayRef<'_>) -> Self {
+        Value::new(array.ty.clone(), Data::from_slice(array.data))
+    }
+}
+
+impl From<ObjectRef<'_>> for Value {
+    fn from(object: ObjectRef<'_>) -> Self {
+        Value::new(object.ty.clone(), Data::from_slice(object.data))
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Complex32 {
     pub imag: f32,
@@ -265,9 +245,9 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
     type Error = ();
 
     fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
-        match value.get() {
-            ValueView::Object(object) => match (object.field("imag"), object.field("real")) {
-                (Some(ValueView::Float32(imag)), Some(ValueView::Float32(real))) => {
+        match value {
+            ValueRef::Object(object) => match (object.field("imag"), object.field("real")) {
+                (Some(ValueRef::Float32(imag)), Some(ValueRef::Float32(real))) => {
                     Ok(Self { imag, real })
                 }
                 _ => return Err(()),
@@ -295,9 +275,9 @@ impl TryFrom<ValueRef<'_>> for Complex64 {
     type Error = ();
 
     fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
-        match value.get() {
-            ValueView::Object(object) => match (object.field("imag"), object.field("real")) {
-                (Some(ValueView::Float64(imag)), Some(ValueView::Float64(real))) => {
+        match value {
+            ValueRef::Object(object) => match (object.field("imag"), object.field("real")) {
+                (Some(ValueRef::Float64(imag)), Some(ValueRef::Float64(real))) => {
                     Ok(Self { imag, real })
                 }
                 _ => return Err(()),
@@ -326,10 +306,7 @@ where
 
 impl<'a> From<&'a Value> for ValueRef<'a> {
     fn from(value: &'a Value) -> Self {
-        ValueRef {
-            ty: &value.ty,
-            data: &value.data,
-        }
+        Self::new(&value.ty, &value.data)
     }
 }
 
@@ -340,31 +317,31 @@ mod test {
     #[test]
     fn bool_as_value() {
         let value: Value = true.into();
-        assert!(matches!(value.get(), ValueView::Bool(true)));
+        assert!(matches!(value.get(), ValueRef::Bool(true)));
     }
 
     #[test]
     fn int32_as_value() {
         let value: Value = 5_i32.into();
-        assert!(matches!(value.get(), ValueView::Int32(5)));
+        assert!(matches!(value.get(), ValueRef::Int32(5)));
     }
 
     #[test]
     fn int64_as_value() {
         let value: Value = 5_i64.into();
-        assert!(matches!(value.get(), ValueView::Int64(5)));
+        assert!(matches!(value.get(), ValueRef::Int64(5)));
     }
 
     #[test]
     fn float32_as_value() {
         let value: Value = 5.0_f32.into();
-        assert!(matches!(value.get(), ValueView::Float32(value) if value == 5.0_f32));
+        assert!(matches!(value.get(), ValueRef::Float32(value) if value == 5.0_f32));
     }
 
     #[test]
     fn float64_as_value() {
         let value: Value = 5.0_f64.into();
-        assert!(matches!(value.get(), ValueView::Float64(value) if value == 5.0_f64));
+        assert!(matches!(value.get(), ValueRef::Float64(value) if value == 5.0_f64));
     }
 
     #[test]
@@ -377,17 +354,16 @@ mod test {
         let value: Value = values.into();
 
         let array_view = match value.get() {
-            ValueView::Array(array_view) => array_view,
+            ValueRef::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
 
         assert_eq!(array_view.len(), 3);
         assert!(!array_view.is_empty());
 
-        let mut iter = array_view.into_iter();
-        assert!(matches!(iter.next(), Some(ValueView::Int32(5))));
-        assert!(matches!(iter.next(), Some(ValueView::Int32(6))));
-        assert!(matches!(iter.next(), Some(ValueView::Int32(7))));
+        assert_eq!(array_view.get(0), Some(ValueRef::Int32(5)));
+        assert_eq!(array_view.get(1), Some(ValueRef::Int32(6)));
+        assert_eq!(array_view.get(2), Some(ValueRef::Int32(7)));
     }
 
     #[test]
@@ -398,34 +374,32 @@ mod test {
         let multi_dimensional_array = [[5, 6, 7], [8, 9, 10]];
         let value: Value = multi_dimensional_array.into();
 
-        let array_view = match value.get() {
-            ValueView::Array(array_view) => array_view,
+        let outer = match value.get() {
+            ValueRef::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
-        assert_eq!(array_view.len(), 2);
+        assert_eq!(outer.len(), 2);
 
-        let mut outer = array_view.into_iter();
-
-        let mut inner = match outer.next() {
-            Some(ValueView::Array(inner)) => inner.into_iter(),
+        let inner = match outer.get(0) {
+            Some(ValueRef::Array(inner)) => inner,
             _ => panic!("Expected array"),
         };
-        assert!(matches!(inner.next(), Some(ValueView::Int32(5))));
-        assert!(matches!(inner.next(), Some(ValueView::Int32(6))));
-        assert!(matches!(inner.next(), Some(ValueView::Int32(7))));
-        assert!(matches!(inner.next(), None));
+        assert_eq!(inner.get(0), Some(ValueRef::Int32(5)));
+        assert_eq!(inner.get(1), Some(ValueRef::Int32(6)));
+        assert_eq!(inner.get(2), Some(ValueRef::Int32(7)));
+        assert_eq!(inner.get(3), None);
 
-        let mut inner = match outer.next() {
-            Some(ValueView::Array(inner)) => inner.into_iter(),
+        let mut inner = match outer.get(1) {
+            Some(ValueRef::Array(inner)) => inner,
             _ => panic!("Expected array"),
         };
 
-        assert!(matches!(inner.next(), Some(ValueView::Int32(8))));
-        assert!(matches!(inner.next(), Some(ValueView::Int32(9))));
-        assert!(matches!(inner.next(), Some(ValueView::Int32(10))));
-        assert!(matches!(inner.next(), None));
+        assert_eq!(inner.get(0), Some(ValueRef::Int32(8)));
+        assert_eq!(inner.get(1), Some(ValueRef::Int32(9)));
+        assert_eq!(inner.get(2), Some(ValueRef::Int32(10)));
+        assert_eq!(inner.get(3), None);
 
-        assert!(matches!(outer.next(), None));
+        assert_eq!(outer.get(3), None);
     }
 
     #[test]
@@ -444,18 +418,18 @@ mod test {
         let value = Value::new(object, data);
 
         let object_view = match value.get() {
-            ValueView::Object(object_view) => object_view,
+            ValueRef::Object(object_view) => object_view,
             _ => panic!("Expected object"),
         };
 
-        assert!(matches!(object_view.field("a"), Some(ValueView::Int32(5))));
-        assert!(matches!(object_view.field("b"), Some(ValueView::Int64(53))));
+        assert!(matches!(object_view.field("a"), Some(ValueRef::Int32(5))));
+        assert!(matches!(object_view.field("b"), Some(ValueRef::Int64(53))));
 
         let inner = match object_view.field("c") {
-            Some(ValueView::Object(inner)) => inner,
+            Some(ValueRef::Object(inner)) => inner,
             _ => panic!("Expected object"),
         };
 
-        assert!(matches!(inner.field("d"), Some(ValueView::Bool(true))));
+        assert!(matches!(inner.field("d"), Some(ValueRef::Bool(true))));
     }
 }

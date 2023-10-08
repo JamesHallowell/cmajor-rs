@@ -3,7 +3,7 @@ use cmajor::{
     performer::{EndpointError, Performer, PerformerHandle},
     value::{
         types::{Object, Type},
-        Complex32, Complex64, ValueView,
+        Complex32, Complex64, ValueRef,
     },
     Cmajor,
 };
@@ -54,7 +54,7 @@ fn can_read_and_write_to_value_endpoint() {
 
     let result = performer.read_value(output).unwrap();
 
-    assert!(matches!(result.get(), ValueView::Int32(4)));
+    assert_eq!(result, ValueRef::Int32(4));
 }
 
 #[test]
@@ -207,9 +207,9 @@ fn can_read_structs() {
     let result = performer.read_value(output).unwrap();
     let object = result.object().unwrap();
 
-    assert_eq!(object.field("a").unwrap(), ValueView::Bool(true));
-    assert_eq!(object.field("b").unwrap(), ValueView::Float32(7.0));
-    assert_eq!(object.field("c").unwrap(), ValueView::Int32(42));
+    assert_eq!(object.field("a").unwrap(), ValueRef::Bool(true));
+    assert_eq!(object.field("b").unwrap(), ValueRef::Float32(7.0));
+    assert_eq!(object.field("c").unwrap(), ValueRef::Int32(42));
 }
 
 #[test]
@@ -241,16 +241,10 @@ fn can_read_and_write_arrays() {
     let array = result.array().unwrap();
     assert_eq!(array.len(), 4);
 
-    let output = array
-        .into_iter()
-        .map(|value| match value {
-            ValueView::Int32(value) => Some(value),
-            _ => None,
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    assert_eq!(output, vec![4, 3, 2, 1]);
+    assert_eq!(array.get(0), Some(ValueRef::Int32(4)));
+    assert_eq!(array.get(1), Some(ValueRef::Int32(3)));
+    assert_eq!(array.get(2), Some(ValueRef::Int32(2)));
+    assert_eq!(array.get(3), Some(ValueRef::Int32(1)));
 }
 
 #[test]
@@ -287,18 +281,12 @@ fn can_post_events() {
 
     performer.advance(1);
 
-    assert_eq!(
-        performer.read_value(output).unwrap().get(),
-        ValueView::Int32(16)
-    );
+    assert_eq!(performer.read_value(output).unwrap(), ValueRef::Int32(16));
 
     endpoints.post_event(input, true).unwrap();
     performer.advance(1);
 
-    assert_eq!(
-        performer.read_value(output).unwrap().get(),
-        ValueView::Int32(42)
-    );
+    assert_eq!(performer.read_value(output).unwrap(), ValueRef::Int32(42));
 }
 
 #[test]
@@ -347,8 +335,8 @@ fn can_read_events() {
         .unwrap();
 
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0].get(), ValueView::Int32(5));
-    assert_eq!(events[1].get(), ValueView::Bool(true));
+    assert_eq!(events[0].get(), ValueRef::Int32(5));
+    assert_eq!(events[1].get(), ValueRef::Bool(true));
 }
 
 #[test]
