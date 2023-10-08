@@ -87,12 +87,12 @@ impl Performer {
 
     pub fn read_events(
         &mut self,
-        id: impl AsRef<str>,
-        mut callback: impl FnMut(EndpointHandle, ValueRef<'_>),
+        handle: EndpointHandle,
+        mut callback: impl FnMut(usize, EndpointHandle, ValueRef<'_>),
     ) -> Result<(), EndpointError> {
-        let (handle, endpoint) = self
+        let endpoint = self
             .endpoints
-            .get_output_by_id(id)
+            .get_output(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         if endpoint.endpoint_type() != EndpointType::Event {
@@ -100,14 +100,12 @@ impl Performer {
         }
 
         self.inner
-            .iterate_output_events(handle, |e, type_index, data| {
+            .iterate_output_events(handle, |frame_offset, handle, type_index, data| {
                 let ty = endpoint
-                    .value_type()
-                    .iter()
-                    .nth(type_index as usize)
+                    .value_type_at_index(type_index)
                     .expect("type index out of bounds");
 
-                callback(e, ValueRef::from_bytes(ty, data))
+                callback(frame_offset, handle, ValueRef::from_bytes(ty, data))
             });
 
         Ok(())

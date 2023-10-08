@@ -120,23 +120,32 @@ impl PerformerPtr {
 
     pub fn iterate_output_events<F>(&self, endpoint: EndpointHandle, mut callback: F)
     where
-        F: FnMut(EndpointHandle, u32, &[u8]),
+        F: FnMut(usize, EndpointHandle, EndpointTypeIndex, &[u8]),
     {
-        unsafe extern "system" fn trampoline<F>(
+        extern "system" fn trampoline<F>(
             context: *mut c_void,
             endpoint: u32,
             type_index: u32,
-            _frame_offset: u32,
+            frame_offset: u32,
             value_data: *const c_void,
             value_data_size: u32,
         ) where
-            F: FnMut(EndpointHandle, u32, &[u8]),
+            F: FnMut(usize, EndpointHandle, EndpointTypeIndex, &[u8]),
         {
-            let callback: &mut F = &mut *(context.cast());
+            let _result = std::panic::catch_unwind(|| {
+                let callback: *mut F = context.cast();
+                let callback: &mut F = unsafe { &mut *callback };
 
-            let data = std::slice::from_raw_parts(value_data.cast(), value_data_size as usize);
-
-            callback(endpoint.into(), type_index, data);
+                let data = unsafe {
+                    std::slice::from_raw_parts(value_data.cast(), value_data_size as usize)
+                };
+                (*callback)(
+                    frame_offset as usize,
+                    endpoint.into(),
+                    type_index.into(),
+                    data,
+                );
+            });
         }
 
         let callback = std::ptr::addr_of_mut!(callback).cast();

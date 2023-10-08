@@ -143,6 +143,12 @@ pub struct Endpoint {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointTypeIndex(u32);
 
+impl From<u32> for EndpointTypeIndex {
+    fn from(index: u32) -> Self {
+        Self(index)
+    }
+}
+
 impl From<EndpointTypeIndex> for u32 {
     fn from(index: EndpointTypeIndex) -> Self {
         index.0
@@ -176,6 +182,10 @@ impl Endpoint {
             .position(|t| t == ty)
             .map(|index| index as u32)
             .map(EndpointTypeIndex)
+    }
+
+    pub fn value_type_at_index(&self, index: EndpointTypeIndex) -> Option<&Type> {
+        self.value_type.get(index.0 as usize)
     }
 }
 

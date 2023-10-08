@@ -334,6 +334,8 @@ fn can_read_events() {
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
     let input = endpoints.get_input("in").unwrap();
+    let output = performer.get_output("out").unwrap();
+
     endpoints.post_event(input, 5_i32).unwrap();
     endpoints.post_event(input, true).unwrap();
 
@@ -341,7 +343,10 @@ fn can_read_events() {
 
     let mut events = vec![];
     performer
-        .read_events("out", |_, data| {
+        .read_events(output, |frame, handle, data| {
+            assert_eq!(frame, 0);
+            assert_eq!(handle, output);
+
             events.push(data.to_owned());
         })
         .unwrap();
