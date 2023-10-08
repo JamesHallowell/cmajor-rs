@@ -50,19 +50,21 @@ impl PerformerHandle {
 
         let value = value.into();
 
-        if endpoint.ty() != value.ty() {
+        if endpoint.ty().as_ref() != value.ty() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
-        let message = EndpointMessage::Value {
-            handle,
-            data: value.data(),
-            num_frames_to_reach_value: 0,
-        };
+        value.with_bytes(|bytes| {
+            let message = EndpointMessage::Value {
+                handle,
+                data: bytes,
+                num_frames_to_reach_value: 0,
+            };
 
-        self.endpoint_tx
-            .send(message)
-            .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
+            self.endpoint_tx
+                .send(message)
+                .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
+        })
     }
 
     pub fn post_event(
@@ -87,14 +89,16 @@ impl PerformerHandle {
             .type_index(value.ty())
             .ok_or(EndpointError::DataTypeMismatch)?;
 
-        let message = EndpointMessage::Event {
-            handle,
-            type_index,
-            data: value.data(),
-        };
+        value.with_bytes(|bytes| {
+            let message = EndpointMessage::Event {
+                handle,
+                type_index,
+                data: bytes,
+            };
 
-        self.endpoint_tx
-            .send(message)
-            .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
+            self.endpoint_tx
+                .send(message)
+                .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
+        })
     }
 }

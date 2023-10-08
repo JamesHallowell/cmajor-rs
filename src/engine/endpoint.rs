@@ -1,5 +1,5 @@
 use {
-    crate::value::types::Type,
+    crate::value::types::{Type, TypeRef},
     serde::{Deserialize, Serialize},
     std::{borrow::Borrow, collections::HashMap},
 };
@@ -135,10 +135,10 @@ impl EventEndpoint {
         &self.ty
     }
 
-    pub fn type_index(&self, ty: &Type) -> Option<EndpointTypeIndex> {
+    pub fn type_index(&self, ty: TypeRef<'_>) -> Option<EndpointTypeIndex> {
         self.ty
             .iter()
-            .position(|t| t == ty)
+            .position(|t| t.as_ref() == ty)
             .map(|index| index as u32)
             .map(EndpointTypeIndex::from)
     }

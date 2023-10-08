@@ -1,16 +1,20 @@
 use {
-    crate::value::types::{Array, Object, Type},
+    crate::value::types::{Array, Object, Type, TypeRef},
     bytes::Buf,
     smallvec::SmallVec,
 };
 
 #[derive(Debug, Clone)]
-pub struct Value {
-    ty: Type,
-    data: Data,
+pub enum Value {
+    Void,
+    Bool(bool),
+    Int32(i32),
+    Int64(i64),
+    Float32(f32),
+    Float64(f64),
+    Array(Box<ArrayValue>),
+    Object(Box<ObjectValue>),
 }
-
-type Data = SmallVec<[u8; 8]>;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValueRef<'a> {
@@ -20,78 +24,94 @@ pub enum ValueRef<'a> {
     Int64(i64),
     Float32(f32),
     Float64(f64),
-    Array(ArrayRef<'a>),
-    Object(ObjectRef<'a>),
+    Array(ArrayValueRef<'a>),
+    Object(ObjectValueRef<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayValue {
+    ty: Array,
+    data: SmallVec<[u8; 16]>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct ArrayRef<'a> {
+pub struct ArrayValueRef<'a> {
     ty: &'a Array,
     data: &'a [u8],
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectValue {
+    ty: Object,
+    data: SmallVec<[u8; 16]>,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct ObjectRef<'a> {
+pub struct ObjectValueRef<'a> {
     ty: &'a Object,
     data: &'a [u8],
 }
 
 impl Value {
-    fn new(ty: impl Into<Type>, data: Data) -> Self {
-        Value {
-            ty: ty.into(),
-            data,
+    pub fn ty(&self) -> TypeRef<'_> {
+        match self {
+            Value::Void => TypeRef::Void,
+            Value::Bool(_) => TypeRef::Bool,
+            Value::Int32(_) => TypeRef::Int32,
+            Value::Int64(_) => TypeRef::Int64,
+            Value::Float32(_) => TypeRef::Float32,
+            Value::Float64(_) => TypeRef::Float64,
+            Value::Array(array) => TypeRef::Array(&array.ty),
+            Value::Object(object) => TypeRef::Object(&object.ty),
         }
     }
 
-    pub fn get(&self) -> ValueRef<'_> {
-        ValueRef::new(&self.ty, &self.data)
+    pub fn as_ref(&self) -> ValueRef<'_> {
+        match self {
+            Value::Void => ValueRef::Void,
+            Value::Bool(value) => ValueRef::Bool(*value),
+            Value::Int32(value) => ValueRef::Int32(*value),
+            Value::Int64(value) => ValueRef::Int64(*value),
+            Value::Float32(value) => ValueRef::Float32(*value),
+            Value::Float64(value) => ValueRef::Float64(*value),
+            Value::Array(ref array) => ValueRef::Array(array.as_ref().as_ref()),
+            Value::Object(object) => ValueRef::Object(object.as_ref().as_ref()),
+        }
     }
 
-    pub fn ty(&self) -> &Type {
-        &self.ty
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
+    pub fn with_bytes<R>(&self, callback: impl FnMut(&[u8]) -> R) -> R {
+        self.as_ref().with_bytes(callback)
     }
 }
 
 impl<'a> ValueRef<'a> {
-    pub fn new<'b>(ty: &'b Type, data: &'b [u8]) -> ValueRef<'a>
+    pub fn new_from_slice<'b>(ty: TypeRef<'b>, data: &'b [u8]) -> ValueRef<'a>
     where
         'b: 'a,
     {
         let mut data = data;
         match ty {
-            Type::Void => Self::Void,
-            Type::Bool => Self::Bool(data.get_u32_ne() != 0),
-            Type::Int32 => Self::Int32(data.get_i32_ne()),
-            Type::Int64 => Self::Int64(data.get_i64_ne()),
-            Type::Float32 => Self::Float32(data.get_f32_ne()),
-            Type::Float64 => Self::Float64(data.get_f64_ne()),
-            Type::Array(ref array) => Self::Array(ArrayRef {
-                ty: array.as_ref(),
-                data,
-            }),
-            Type::Object(ref object) => Self::Object(ObjectRef {
-                ty: object.as_ref(),
-                data,
-            }),
+            TypeRef::Void => Self::Void,
+            TypeRef::Bool => Self::Bool(data.get_u32_ne() != 0),
+            TypeRef::Int32 => Self::Int32(data.get_i32_ne()),
+            TypeRef::Int64 => Self::Int64(data.get_i64_ne()),
+            TypeRef::Float32 => Self::Float32(data.get_f32_ne()),
+            TypeRef::Float64 => Self::Float64(data.get_f64_ne()),
+            TypeRef::Array(array) => Self::Array(ArrayValueRef::new_from_slice(array, data)),
+            TypeRef::Object(object) => Self::Object(ObjectValueRef::new_from_slice(object, data)),
         }
     }
 
-    pub fn object(&'a self) -> Option<ObjectRef<'a>> {
-        match *self {
-            Self::Object(object) => Some(object),
-            _ => None,
-        }
-    }
-
-    pub fn array(&'a self) -> Option<ArrayRef<'a>> {
-        match *self {
-            Self::Array(array) => Some(array),
-            _ => None,
+    pub fn ty(&self) -> TypeRef<'_> {
+        match self {
+            Self::Void => TypeRef::Void,
+            Self::Bool(_) => TypeRef::Bool,
+            Self::Int32(_) => TypeRef::Int32,
+            Self::Int64(_) => TypeRef::Int64,
+            Self::Float32(_) => TypeRef::Float32,
+            Self::Float64(_) => TypeRef::Float64,
+            Self::Array(array) => TypeRef::Array(&array.ty),
+            Self::Object(object) => TypeRef::Object(&object.ty),
         }
     }
 
@@ -103,12 +123,45 @@ impl<'a> ValueRef<'a> {
             Self::Int64(value) => Value::from(value),
             Self::Float32(value) => Value::from(value),
             Self::Float64(value) => Value::from(value),
-            Self::Array(array) => Value::from(array),
-            Self::Object(object) => Value::from(object),
+            Self::Array(array) => Value::from(array.to_owned()),
+            Self::Object(object) => Value::from(object.to_owned()),
+        }
+    }
+
+    pub fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
+        match *self {
+            Self::Void => callback(&[]),
+            Self::Bool(value) => callback((value as u32).to_ne_bytes().as_slice()),
+            Self::Int32(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::Int64(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::Float32(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::Float64(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::Array(array) => callback(array.data),
+            Self::Object(object) => callback(object.data),
         }
     }
 }
-impl<'a> ArrayRef<'a> {
+
+impl ArrayValue {
+    pub fn as_ref(&self) -> ArrayValueRef<'_> {
+        ArrayValueRef {
+            ty: &self.ty,
+            data: &self.data,
+        }
+    }
+}
+
+impl<'a> ArrayValueRef<'a> {
+    pub fn new_from_slice<'b>(ty: &'b Array, data: &'b [u8]) -> ArrayValueRef<'a>
+    where
+        'b: 'a,
+    {
+        Self {
+            ty,
+            data: &data[..ty.size()],
+        }
+    }
+
     pub fn get(&'a self, index: usize) -> Option<ValueRef<'a>> {
         if index >= self.len() {
             return None;
@@ -118,7 +171,7 @@ impl<'a> ArrayRef<'a> {
         let offset = ty.size() * index;
         let data = &self.data[offset..offset + ty.size()];
 
-        Some(ValueRef::new(ty, data))
+        Some(ValueRef::new_from_slice(ty.as_ref(), data))
     }
 
     pub fn elem_ty(&self) -> &Type {
@@ -132,86 +185,103 @@ impl<'a> ArrayRef<'a> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn to_owned(&self) -> ArrayValue {
+        ArrayValue {
+            ty: self.ty.clone(),
+            data: SmallVec::from_slice(self.data),
+        }
+    }
 }
 
-impl ObjectRef<'_> {
+impl ObjectValue {
+    pub fn as_ref(&self) -> ObjectValueRef<'_> {
+        ObjectValueRef {
+            ty: &self.ty,
+            data: &self.data,
+        }
+    }
+}
+
+impl<'a> ObjectValueRef<'a> {
+    pub fn new_from_slice<'b>(ty: &'b Object, data: &'b [u8]) -> ObjectValueRef<'a>
+    where
+        'b: 'a,
+    {
+        Self {
+            ty,
+            data: &data[..ty.size()],
+        }
+    }
+
     pub fn field(&self, name: impl AsRef<str>) -> Option<ValueRef<'_>> {
         let name = name.as_ref();
         let mut offset = 0;
         for field in self.ty.fields() {
             if field.name() == name {
-                return Some(ValueRef::new(field.ty(), &self.data[offset..]));
+                return Some(ValueRef::new_from_slice(
+                    field.ty().as_ref(),
+                    &self.data[offset..],
+                ));
             }
             offset += field.ty().size();
         }
         None
     }
+
+    pub fn to_owned(&self) -> ObjectValue {
+        ObjectValue {
+            ty: self.ty.clone(),
+            data: SmallVec::from_slice(self.data),
+        }
+    }
 }
 
 impl From<()> for Value {
     fn from(_: ()) -> Self {
-        Value {
-            ty: Type::Void,
-            data: Data::new(),
-        }
+        Self::Void
     }
 }
 
 impl From<bool> for Value {
     fn from(value: bool) -> Self {
-        let value: u32 = if value { 1 } else { 0 };
-        Value {
-            ty: Type::Bool,
-            data: Data::from_slice(&value.to_ne_bytes()),
-        }
+        Self::Bool(value)
     }
 }
 
 impl From<i32> for Value {
     fn from(value: i32) -> Self {
-        Value {
-            ty: Type::Int32,
-            data: Data::from_slice(&value.to_ne_bytes()),
-        }
+        Self::Int32(value)
     }
 }
 
 impl From<i64> for Value {
     fn from(value: i64) -> Self {
-        Value {
-            ty: Type::Int64,
-            data: Data::from_slice(&value.to_ne_bytes()),
-        }
+        Self::Int64(value)
     }
 }
 
 impl From<f32> for Value {
     fn from(value: f32) -> Self {
-        Value {
-            ty: Type::Float32,
-            data: Data::from_slice(&value.to_ne_bytes()),
-        }
+        Self::Float32(value)
     }
 }
 
 impl From<f64> for Value {
     fn from(value: f64) -> Self {
-        Value {
-            ty: Type::Float64,
-            data: Data::from_slice(&value.to_ne_bytes()),
-        }
+        Self::Float64(value)
     }
 }
 
-impl From<ArrayRef<'_>> for Value {
-    fn from(array: ArrayRef<'_>) -> Self {
-        Value::new(array.ty.clone(), Data::from_slice(array.data))
+impl From<ArrayValue> for Value {
+    fn from(array: ArrayValue) -> Self {
+        Self::Array(Box::new(array))
     }
 }
 
-impl From<ObjectRef<'_>> for Value {
-    fn from(object: ObjectRef<'_>) -> Self {
-        Value::new(object.ty.clone(), Data::from_slice(object.data))
+impl From<ObjectValue> for Value {
+    fn from(object: ObjectValue) -> Self {
+        Self::Object(Box::new(object))
     }
 }
 
@@ -233,11 +303,11 @@ impl From<Complex32> for Value {
             .with_field("imag", Type::Float32)
             .with_field("real", Type::Float32);
 
-        let mut data = Data::new();
+        let mut data = SmallVec::new();
         data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
 
-        Self::new(object, data)
+        ObjectValue { ty: object, data }.into()
     }
 }
 
@@ -263,11 +333,11 @@ impl From<Complex64> for Value {
             .with_field("imag", Type::Float64)
             .with_field("real", Type::Float64);
 
-        let mut data = Data::new();
+        let mut data = SmallVec::new();
         data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
 
-        Self::new(object, data)
+        ObjectValue { ty: object, data }.into()
     }
 }
 
@@ -292,21 +362,33 @@ where
     T: Into<Value> + Default,
 {
     fn from(value: [T; N]) -> Self {
-        let ty = T::default().into().ty().clone();
+        let v = T::default().into();
+        let ty = v.ty();
 
-        let array = Array::new(ty, N);
-        let mut data = Data::new();
+        let array = Array::new(ty.to_owned(), N);
+        let mut data = SmallVec::new();
         for value in value {
             let value: Value = value.into();
-            data.extend_from_slice(value.data());
+            value.with_bytes(|bytes| {
+                data.extend_from_slice(bytes);
+            });
         }
-        Self::new(array, data)
+        ArrayValue { ty: array, data }.into()
     }
 }
 
 impl<'a> From<&'a Value> for ValueRef<'a> {
     fn from(value: &'a Value) -> Self {
-        Self::new(&value.ty, &value.data)
+        match value {
+            Value::Void => Self::Void,
+            Value::Bool(value) => Self::Bool(*value),
+            Value::Int32(value) => Self::Int32(*value),
+            Value::Int64(value) => Self::Int64(*value),
+            Value::Float32(value) => Self::Float32(*value),
+            Value::Float64(value) => Self::Float64(*value),
+            Value::Array(array) => Self::Array(array.as_ref().as_ref()),
+            Value::Object(object) => Self::Object(object.as_ref().as_ref()),
+        }
     }
 }
 
@@ -317,31 +399,31 @@ mod test {
     #[test]
     fn bool_as_value() {
         let value: Value = true.into();
-        assert!(matches!(value.get(), ValueRef::Bool(true)));
+        assert!(matches!(value.as_ref(), ValueRef::Bool(true)));
     }
 
     #[test]
     fn int32_as_value() {
         let value: Value = 5_i32.into();
-        assert!(matches!(value.get(), ValueRef::Int32(5)));
+        assert!(matches!(value.as_ref(), ValueRef::Int32(5)));
     }
 
     #[test]
     fn int64_as_value() {
         let value: Value = 5_i64.into();
-        assert!(matches!(value.get(), ValueRef::Int64(5)));
+        assert!(matches!(value.as_ref(), ValueRef::Int64(5)));
     }
 
     #[test]
     fn float32_as_value() {
         let value: Value = 5.0_f32.into();
-        assert!(matches!(value.get(), ValueRef::Float32(value) if value == 5.0_f32));
+        assert!(matches!(value.as_ref(), ValueRef::Float32(value) if value == 5.0_f32));
     }
 
     #[test]
     fn float64_as_value() {
         let value: Value = 5.0_f64.into();
-        assert!(matches!(value.get(), ValueRef::Float64(value) if value == 5.0_f64));
+        assert!(matches!(value.as_ref(), ValueRef::Float64(value) if value == 5.0_f64));
     }
 
     #[test]
@@ -353,7 +435,7 @@ mod test {
 
         let value: Value = values.into();
 
-        let array_view = match value.get() {
+        let array_view = match value.as_ref() {
             ValueRef::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
@@ -374,7 +456,7 @@ mod test {
         let multi_dimensional_array = [[5, 6, 7], [8, 9, 10]];
         let value: Value = multi_dimensional_array.into();
 
-        let outer = match value.get() {
+        let outer = match value.as_ref() {
             ValueRef::Array(array_view) => array_view,
             _ => panic!("Expected array"),
         };
@@ -389,7 +471,7 @@ mod test {
         assert_eq!(inner.get(2), Some(ValueRef::Int32(7)));
         assert_eq!(inner.get(3), None);
 
-        let mut inner = match outer.get(1) {
+        let inner = match outer.get(1) {
             Some(ValueRef::Array(inner)) => inner,
             _ => panic!("Expected array"),
         };
@@ -404,32 +486,31 @@ mod test {
 
     #[test]
     fn object_as_value() {
-        let object: Type = Object::new()
+        let ty = Object::new()
             .with_field("a", Type::Int32)
             .with_field("b", Type::Int64)
-            .with_field("c", Object::new().with_field("d", Type::Bool))
-            .into();
+            .with_field("c", Object::new().with_field("d", Type::Bool));
 
-        let mut data = Data::new();
+        let mut data = Vec::new();
         data.extend_from_slice(&5_i32.to_ne_bytes());
         data.extend_from_slice(&53_i64.to_ne_bytes());
         data.extend_from_slice(&1_i32.to_ne_bytes());
 
-        let value = Value::new(object, data);
+        let object = ObjectValueRef::new_from_slice(&ty, &data);
 
-        let object_view = match value.get() {
-            ValueRef::Object(object_view) => object_view,
-            _ => panic!("Expected object"),
-        };
+        assert_eq!(object.field("a"), Some(ValueRef::Int32(5)));
+        assert_eq!(object.field("b"), Some(ValueRef::Int64(53)));
 
-        assert!(matches!(object_view.field("a"), Some(ValueRef::Int32(5))));
-        assert!(matches!(object_view.field("b"), Some(ValueRef::Int64(53))));
-
-        let inner = match object_view.field("c") {
+        let inner = match object.field("c") {
             Some(ValueRef::Object(inner)) => inner,
             _ => panic!("Expected object"),
         };
 
-        assert!(matches!(inner.field("d"), Some(ValueRef::Bool(true))));
+        assert_eq!(inner.field("d"), Some(ValueRef::Bool(true)));
+    }
+
+    #[test]
+    fn value_is_16_bytes() {
+        assert_eq!(std::mem::size_of::<Value>(), 16);
     }
 }

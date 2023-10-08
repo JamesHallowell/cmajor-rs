@@ -205,7 +205,11 @@ fn can_read_structs() {
     performer.advance(1);
 
     let result = performer.read_value(output).unwrap();
-    let object = result.object().unwrap();
+    let object = if let ValueRef::Object(object) = result {
+        object
+    } else {
+        panic!("expected an object")
+    };
 
     assert_eq!(object.field("a").unwrap(), ValueRef::Bool(true));
     assert_eq!(object.field("b").unwrap(), ValueRef::Float32(7.0));
@@ -238,7 +242,11 @@ fn can_read_and_write_arrays() {
     performer.advance(1);
 
     let result = performer.read_value(output).unwrap();
-    let array = result.array().unwrap();
+    let array = if let ValueRef::Array(array) = result {
+        array
+    } else {
+        panic!("expected an array")
+    };
     assert_eq!(array.len(), 4);
 
     assert_eq!(array.get(0), Some(ValueRef::Int32(4)));
@@ -335,8 +343,8 @@ fn can_read_events() {
         .unwrap();
 
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0].get(), ValueRef::Int32(5));
-    assert_eq!(events[1].get(), ValueRef::Bool(true));
+    assert_eq!(events[0].as_ref(), ValueRef::Int32(5));
+    assert_eq!(events[1].as_ref(), ValueRef::Bool(true));
 }
 
 #[test]

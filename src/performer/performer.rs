@@ -68,7 +68,10 @@ impl Performer {
         self.inner
             .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
 
-        Ok(ValueRef::new(endpoint.ty(), &self.scratch_buffer))
+        Ok(ValueRef::new_from_slice(
+            endpoint.ty().as_ref(),
+            &self.scratch_buffer,
+        ))
     }
 
     /// Reads the output frames of an endpoint into the given slice.
@@ -109,7 +112,11 @@ impl Performer {
                 debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
 
                 if let Some(ty) = endpoint.get_type(type_index) {
-                    callback(frame_offset, handle, ValueRef::new(ty, data))
+                    callback(
+                        frame_offset,
+                        handle,
+                        ValueRef::new_from_slice(ty.as_ref(), data),
+                    )
                 }
             });
 
