@@ -1,7 +1,7 @@
 use {bytes::Buf, smallvec::SmallVec};
 
 mod types;
-pub use types::{Array, IsType, Object, Type};
+pub use types::{Array, Object, Type};
 
 #[derive(Debug, Clone)]
 pub struct Value {
@@ -308,10 +308,12 @@ impl TryFrom<ValueRef<'_>> for Complex64 {
 
 impl<T, const N: usize> From<[T; N]> for Value
 where
-    T: Into<Value> + IsType,
+    T: Into<Value> + Default,
 {
     fn from(value: [T; N]) -> Self {
-        let array = Array::new(T::get_type(), N);
+        let ty = T::default().into().ty().clone();
+
+        let array = Array::new(ty, N);
         let mut data = Data::new();
         for value in value {
             let value: Value = value.into();

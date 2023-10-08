@@ -17,6 +17,8 @@ use {
 mod program_details;
 pub use program_details::{EndpointId, EndpointType, ProgramDetails};
 
+use crate::{EndpointHandles, Performer};
+
 pub struct EngineTypes<'a> {
     engine_types: Split<'a, u8, fn(&u8) -> bool>,
 }
@@ -307,11 +309,12 @@ impl Engine<Loaded> {
 }
 
 impl Engine<Linked> {
-    pub fn performer(&self) -> PerformerBuilder {
+    pub fn performer(&self) -> (Performer, EndpointHandles) {
         PerformerBuilder::new(
             self.inner.create_performer(),
             Arc::clone(&self._state.endpoints),
         )
+        .build()
     }
 }
 

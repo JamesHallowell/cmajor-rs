@@ -159,6 +159,18 @@ impl PerformerPtr {
             )
         };
     }
+
+    pub fn get_xruns(&self) -> usize {
+        unsafe { ((*(*self.performer).vtable).get_xruns)(self.performer) as usize }
+    }
+
+    pub fn get_max_block_size(&self) -> u32 {
+        unsafe { ((*(*self.performer).vtable).get_max_block_size)(self.performer) }
+    }
+
+    pub fn get_latency(&self) -> f64 {
+        unsafe { ((*(*self.performer).vtable).get_latency)(self.performer) }
+    }
 }
 
 impl Drop for PerformerPtr {

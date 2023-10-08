@@ -18,11 +18,7 @@ fn setup(program: &str) -> (Performer, EndpointHandles) {
     let engine = engine.load(&program).expect("failed to load program");
     let engine = engine.link().expect("failed to link program");
 
-    let (performer, endpoints) = engine
-        .performer()
-        .with_block_size(256)
-        .build()
-        .expect("failed to build performer");
+    let (performer, endpoints) = engine.performer();
 
     (performer, endpoints)
 }
@@ -49,7 +45,7 @@ fn can_read_and_write_to_value_endpoint() {
     let output = performer.get_output("out").unwrap();
 
     endpoints.write_value(input, 2).unwrap();
-    performer.advance();
+    performer.advance(1);
 
     let result = performer.read_value(output).unwrap();
 
@@ -59,15 +55,14 @@ fn can_read_and_write_to_value_endpoint() {
 #[test]
 fn cant_access_endpoints_with_wrong_type() {
     const PROGRAM: &str = r#"
-        processor P
+        processor AddOne
         {
             input value float in;
-            output stream float out;
+            output event float out;
         
             void main()
             {
                 out <- in + 1;
-                out <- 1.0;
                 advance();
             }
         }
@@ -80,11 +75,6 @@ fn cant_access_endpoints_with_wrong_type() {
 
     assert!(matches!(
         endpoints.write_value(input, 5),
-        Err(cmajor::EndpointError::DataTypeMismatch)
-    ));
-
-    assert!(matches!(
-        performer.read_stream(output, &mut [0_i32; 512]),
         Err(cmajor::EndpointError::DataTypeMismatch)
     ));
 
@@ -125,7 +115,7 @@ fn can_read_and_write_complex32_numbers() {
         )
         .unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     let result: Complex32 = performer.read_value(output).unwrap().try_into().unwrap();
 
@@ -169,7 +159,7 @@ fn can_read_and_write_complex64_numbers() {
         )
         .unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     let result: Complex64 = performer.read_value(output).unwrap().try_into().unwrap();
 
@@ -207,7 +197,7 @@ fn can_read_structs() {
     let (mut performer, _) = setup(PROGRAM);
     let output = performer.get_output("out").unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     let result = performer.read_value(output).unwrap();
     let object = result.object().unwrap();
@@ -240,7 +230,7 @@ fn can_read_and_write_arrays() {
 
     endpoints.write_value(input, [1, 2, 3, 4]).unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     let result = performer.read_value(output).unwrap();
     let array = result.array().unwrap();
@@ -290,7 +280,7 @@ fn can_post_events() {
 
     endpoints.post_event(input, 4).unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     assert_eq!(
         performer.read_value(output).unwrap().get(),
@@ -298,7 +288,7 @@ fn can_post_events() {
     );
 
     endpoints.post_event(input, true).unwrap();
-    performer.advance();
+    performer.advance(1);
 
     assert_eq!(
         performer.read_value(output).unwrap().get(),
@@ -339,7 +329,7 @@ fn can_read_events() {
     endpoints.post_event(input, 5_i32).unwrap();
     endpoints.post_event(input, true).unwrap();
 
-    performer.advance();
+    performer.advance(1);
 
     let mut events = vec![];
     performer
@@ -354,4 +344,42 @@ fn can_read_events() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].get(), ValueView::Int32(5));
     assert_eq!(events[1].get(), ValueView::Bool(true));
+}
+
+#[test]
+fn can_read_streams() {
+    const PROGRAM: &str = r#"
+        processor Iota
+        {
+            output stream int out;
+        
+            void main()
+            {
+                int i = 0;
+                loop {
+                    out <- i;
+                    i += 1;
+                    advance();
+                }
+            }
+        }
+    "#;
+
+    let (mut performer, _) = setup(PROGRAM);
+
+    let output = performer.get_output("out").unwrap();
+
+    performer.advance(8);
+
+    let mut buffer = [0_i32; 8];
+
+    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+    assert_eq!(buffer, [0, 1, 2, 3, 4, 5, 6, 7]);
+
+    performer.advance(8);
+
+    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+    assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
+
+    assert_eq!(performer.get_xruns(), 0);
 }

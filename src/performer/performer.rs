@@ -3,7 +3,7 @@ use {
         engine::{EndpointHandle, EndpointType, Endpoints},
         ffi::PerformerPtr,
         performer::{spsc, spsc::EndpointMessage},
-        value::{IsType, ValueRef},
+        value::ValueRef,
         EndpointError,
     },
     std::sync::Arc,
@@ -14,10 +14,17 @@ pub struct Performer {
     pub(super) endpoints: Arc<Endpoints>,
     pub(super) endpoint_rx: spsc::EndpointReceiver,
     pub(super) scratch_buffer: Vec<u8>,
+    pub(super) block_size: Option<u32>,
 }
 
 impl Performer {
-    pub fn advance(&mut self) {
+    /// Renders the next block of frames.
+    pub fn advance(&mut self, num_frames: u32) {
+        if self.block_size != Some(num_frames) {
+            self.inner.set_block_size(num_frames);
+            self.block_size.replace(num_frames);
+        }
+
         let result = self.endpoint_rx.read_messages(|message| match message {
             EndpointMessage::Value {
                 handle,
@@ -64,25 +71,20 @@ impl Performer {
         Ok(ValueRef::from_bytes(value_type, &self.scratch_buffer))
     }
 
-    pub fn read_stream<T>(
-        &mut self,
-        handle: EndpointHandle,
-        frames: &mut [T],
-    ) -> Result<(), EndpointError>
+    /// Reads the output frames of an endpoint into the given slice.
+    ///
+    /// # Safety
+    ///
+    /// To avoid overhead in the real-time audio thread this function does not perform any checks
+    /// against the inputs and passes them directly to the Cmajor library.
+    ///
+    /// The caller is responsible for ensuring that the type of the endpoint matches the type of the
+    /// given slice.
+    pub unsafe fn read_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &mut [T])
     where
-        T: IsType,
+        T: Copy,
     {
-        let endpoint = self
-            .endpoints
-            .get_output(handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        if !endpoint.value_type().contains(&T::get_type()) {
-            return Err(EndpointError::DataTypeMismatch);
-        }
-
         self.inner.copy_output_frames(handle, frames);
-        Ok(())
     }
 
     pub fn read_events(
@@ -109,5 +111,20 @@ impl Performer {
             });
 
         Ok(())
+    }
+
+    /// Returns the number of times the performer has over/under-run.
+    pub fn get_xruns(&self) -> usize {
+        self.inner.get_xruns()
+    }
+
+    /// Returns the maximum number of frames that can be processed in a single call to `advance`.
+    pub fn get_max_block_size(&self) -> u32 {
+        self.inner.get_max_block_size()
+    }
+
+    /// Returns the performers internal latency in frames.
+    pub fn get_latency(&self) -> f64 {
+        self.inner.get_latency()
     }
 }

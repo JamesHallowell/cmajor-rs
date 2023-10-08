@@ -72,7 +72,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let engine = engine.load(&program)?.link()?;
 
-    let (mut performer, _) = engine.performer().with_block_size(BLOCK_SIZE).build()?;
+    let (mut performer, _) = engine.performer();
+
+    assert!(
+        BLOCK_SIZE <= performer.get_max_block_size(),
+        "Block size too large"
+    );
 
     let output = performer.get_output("out").unwrap();
 
@@ -86,8 +91,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 buffer_size: cpal::BufferSize::Fixed(BLOCK_SIZE),
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                performer.advance();
-                performer.read_stream(output, data).unwrap();
+                performer.advance(data.len() as u32);
+                unsafe { performer.read_stream_unchecked(output, data) };
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,
