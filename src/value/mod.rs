@@ -1,4 +1,4 @@
 pub mod types;
-mod value;
+mod values;
 
-pub use value::{ArrayValueRef, Complex32, Complex64, ObjectValueRef, Value, ValueRef};
+pub use values::{ArrayValueRef, Complex32, Complex64, ObjectValueRef, Value, ValueRef};

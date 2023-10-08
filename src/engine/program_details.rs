@@ -147,18 +147,15 @@ impl TryFrom<&EndpointDetails> for Endpoint {
     fn try_from(value: &EndpointDetails) -> Result<Self, Self::Error> {
         Ok(match value.endpoint_type {
             EndpointType::Stream => {
-                let value_type = value.value_type.first().ok_or(())?;
-                let value_type = value_type.clone();
+                let value_type = value.value_type.first().ok_or(())?.clone();
                 StreamEndpoint::new(value.id.clone(), value_type).into()
             }
             EndpointType::Event => {
                 let value_type = value.value_type.clone();
-                let value_type = value_type.iter().cloned().collect();
                 EventEndpoint::new(value.id.clone(), value_type).into()
             }
             EndpointType::Value => {
-                let value_type = value.value_type.first().ok_or(())?;
-                let value_type = value_type.clone();
+                let value_type = value.value_type.first().ok_or(())?.clone();
                 ValueEndpoint::new(value.id.clone(), value_type).into()
             }
         })

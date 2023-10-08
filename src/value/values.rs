@@ -85,11 +85,10 @@ impl Value {
 }
 
 impl<'a> ValueRef<'a> {
-    pub fn new_from_slice<'b>(ty: TypeRef<'b>, data: &'b [u8]) -> ValueRef<'a>
+    pub fn new_from_slice<'b>(ty: TypeRef<'b>, mut data: &'b [u8]) -> ValueRef<'a>
     where
         'b: 'a,
     {
-        let mut data = data;
         match ty {
             TypeRef::Void => Self::Void,
             TypeRef::Bool => Self::Bool(data.get_u32_ne() != 0),
@@ -110,8 +109,8 @@ impl<'a> ValueRef<'a> {
             Self::Int64(_) => TypeRef::Int64,
             Self::Float32(_) => TypeRef::Float32,
             Self::Float64(_) => TypeRef::Float64,
-            Self::Array(array) => TypeRef::Array(&array.ty),
-            Self::Object(object) => TypeRef::Object(&object.ty),
+            Self::Array(array) => TypeRef::Array(array.ty),
+            Self::Object(object) => TypeRef::Object(object.ty),
         }
     }
 
@@ -152,7 +151,7 @@ impl ArrayValue {
 }
 
 impl<'a> ArrayValueRef<'a> {
-    pub fn new_from_slice<'b>(ty: &'b Array, data: &'b [u8]) -> ArrayValueRef<'a>
+    pub(crate) fn new_from_slice<'b>(ty: &'b Array, data: &'b [u8]) -> ArrayValueRef<'a>
     where
         'b: 'a,
     {
@@ -204,7 +203,7 @@ impl ObjectValue {
 }
 
 impl<'a> ObjectValueRef<'a> {
-    pub fn new_from_slice<'b>(ty: &'b Object, data: &'b [u8]) -> ObjectValueRef<'a>
+    pub(crate) fn new_from_slice<'b>(ty: &'b Object, data: &'b [u8]) -> ObjectValueRef<'a>
     where
         'b: 'a,
     {
@@ -215,18 +214,20 @@ impl<'a> ObjectValueRef<'a> {
     }
 
     pub fn field(&self, name: impl AsRef<str>) -> Option<ValueRef<'_>> {
-        let name = name.as_ref();
         let mut offset = 0;
-        for field in self.ty.fields() {
-            if field.name() == name {
-                return Some(ValueRef::new_from_slice(
-                    field.ty().as_ref(),
-                    &self.data[offset..],
-                ));
-            }
-            offset += field.ty().size();
-        }
-        None
+        self.ty
+            .fields()
+            .find_map(|field| {
+                (field.name() == name.as_ref())
+                    .then_some((field, offset))
+                    .or_else(|| {
+                        offset += field.ty().size();
+                        None
+                    })
+            })
+            .map(|(field, offset)| {
+                ValueRef::new_from_slice(field.ty().as_ref(), &self.data[offset..])
+            })
     }
 
     pub fn to_owned(&self) -> ObjectValue {
@@ -320,7 +321,7 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
                 (Some(ValueRef::Float32(imag)), Some(ValueRef::Float32(real))) => {
                     Ok(Self { imag, real })
                 }
-                _ => return Err(()),
+                _ => Err(()),
             },
             _ => Err(()),
         }
@@ -350,7 +351,7 @@ impl TryFrom<ValueRef<'_>> for Complex64 {
                 (Some(ValueRef::Float64(imag)), Some(ValueRef::Float64(real))) => {
                     Ok(Self { imag, real })
                 }
-                _ => return Err(()),
+                _ => Err(()),
             },
             _ => Err(()),
         }
