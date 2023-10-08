@@ -19,8 +19,15 @@ pub struct Performer {
 impl Performer {
     pub fn advance(&mut self) {
         let result = self.endpoint_rx.read_messages(|message| match message {
-            EndpointMessage::Value { handle, data } => {
-                unsafe { self.inner.set_input_value(handle, data.as_ptr(), 0) };
+            EndpointMessage::Value {
+                handle,
+                data,
+                num_frames_to_reach_value,
+            } => {
+                unsafe {
+                    self.inner
+                        .set_input_value(handle, data.as_ptr(), num_frames_to_reach_value)
+                };
             }
             EndpointMessage::Event {
                 handle,

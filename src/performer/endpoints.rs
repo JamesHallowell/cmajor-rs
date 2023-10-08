@@ -1,7 +1,7 @@
 use {
     crate::{
         engine::{EndpointHandle, EndpointType, Endpoints},
-        performer::spsc,
+        performer::{spsc, spsc::EndpointMessage},
         value::Value,
     },
     std::sync::Arc,
@@ -23,8 +23,8 @@ pub enum EndpointError {
     #[error("data type mismatch")]
     DataTypeMismatch,
 
-    #[error("failed to send value")]
-    FailedToSendValue,
+    #[error("failed to send message to performer")]
+    FailedToSendMessageToPerformer,
 }
 
 impl EndpointHandles {
@@ -52,9 +52,15 @@ impl EndpointHandles {
             return Err(EndpointError::DataTypeMismatch);
         }
 
+        let message = EndpointMessage::Value {
+            handle,
+            data: value.data(),
+            num_frames_to_reach_value: 0,
+        };
+
         self.endpoint_tx
-            .send_value(handle, value.data())
-            .map_err(|_| EndpointError::FailedToSendValue)
+            .send(message)
+            .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
     }
 
     pub fn post_event(
@@ -73,15 +79,18 @@ impl EndpointHandles {
 
         let value = value.into();
 
-        let index = endpoint
-            .value_type()
-            .iter()
-            .enumerate()
-            .find_map(|(index, ty)| (ty == value.ty()).then_some(index))
+        let type_index = endpoint
+            .index_of_value_type(value.ty())
             .ok_or(EndpointError::DataTypeMismatch)?;
 
+        let message = EndpointMessage::Event {
+            handle,
+            type_index,
+            data: value.data(),
+        };
+
         self.endpoint_tx
-            .send_event(handle, index as u32, value.data())
-            .map_err(|_| EndpointError::FailedToSendValue)
+            .send(message)
+            .map_err(|_| EndpointError::FailedToSendMessageToPerformer)
     }
 }

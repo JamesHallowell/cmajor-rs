@@ -140,6 +140,15 @@ pub struct Endpoint {
     value_type: Vec<Type>,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EndpointTypeIndex(u32);
+
+impl From<EndpointTypeIndex> for u32 {
+    fn from(index: EndpointTypeIndex) -> Self {
+        index.0
+    }
+}
+
 impl Endpoint {
     fn new(detail: EndpointDetails) -> Self {
         Self {
@@ -159,6 +168,14 @@ impl Endpoint {
 
     pub fn value_type(&self) -> &[Type] {
         self.value_type.as_slice()
+    }
+
+    pub fn index_of_value_type(&self, ty: &Type) -> Option<EndpointTypeIndex> {
+        self.value_type
+            .iter()
+            .position(|t| t == ty)
+            .map(|index| index as u32)
+            .map(EndpointTypeIndex)
     }
 }
 

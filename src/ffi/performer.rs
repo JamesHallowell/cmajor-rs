@@ -1,5 +1,5 @@
 use {
-    crate::engine::EndpointHandle,
+    crate::engine::{EndpointHandle, EndpointTypeIndex},
     std::{
         ffi::{c_char, c_double, c_int, c_void},
         ptr::null_mut,
@@ -74,14 +74,19 @@ impl PerformerPtr {
         };
     }
 
-    pub fn add_input_event(&self, handle: EndpointHandle, type_index: u32, data: &[u8]) {
+    pub fn add_input_event(
+        &self,
+        handle: EndpointHandle,
+        type_index: EndpointTypeIndex,
+        data: &[u8],
+    ) {
         let data_ptr = data.as_ptr().cast();
 
         unsafe {
             ((*(*self.performer).vtable).add_input_event)(
                 self.performer,
                 handle.into(),
-                type_index,
+                type_index.into(),
                 data_ptr,
             )
         };

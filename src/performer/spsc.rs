@@ -1,5 +1,5 @@
 use {
-    crate::engine::EndpointHandle,
+    crate::engine::{EndpointHandle, EndpointTypeIndex},
     serde::{Deserialize, Serialize},
     std::io::Read,
 };
@@ -9,10 +9,11 @@ pub enum EndpointMessage<'a> {
     Value {
         handle: EndpointHandle,
         data: &'a [u8],
+        num_frames_to_reach_value: u32,
     },
     Event {
         handle: EndpointHandle,
-        type_index: u32,
+        type_index: EndpointTypeIndex,
         data: &'a [u8],
     },
 }
@@ -49,24 +50,8 @@ pub fn channel(capacity: usize) -> (EndpointSender, EndpointReceiver) {
 }
 
 impl EndpointSender {
-    pub fn send_value(&mut self, endpoint: EndpointHandle, data: &[u8]) -> Result<(), Error> {
-        self.write(&EndpointMessage::Value {
-            handle: endpoint,
-            data,
-        })
-    }
-
-    pub fn send_event(
-        &mut self,
-        endpoint: EndpointHandle,
-        type_index: u32,
-        data: &[u8],
-    ) -> Result<(), Error> {
-        self.write(&EndpointMessage::Event {
-            handle: endpoint,
-            type_index,
-            data,
-        })
+    pub fn send(&mut self, message: EndpointMessage) -> Result<(), Error> {
+        self.write(&message)
     }
 
     fn write<T>(&mut self, value: &T) -> Result<(), Error>
