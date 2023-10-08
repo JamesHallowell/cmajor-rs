@@ -1,10 +1,8 @@
-mod buffer;
 mod engine;
 mod ffi;
 mod library;
 mod performer;
 mod program;
-mod spsc;
 mod value;
 
 pub use {
