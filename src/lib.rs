@@ -1,17 +1,11 @@
-mod engine;
+pub mod engine;
 mod ffi;
 mod library;
-mod performer;
+pub mod performer;
 mod program;
-mod value;
+pub mod value;
 
 pub use {
-    engine::{Engine, EngineBuilder, EngineType},
-    library::{Cmajor, Error},
-    performer::{EndpointError, EndpointHandles, Performer, PerformerBuilder},
-    program::Program,
+    library::{Cmajor, LibraryError},
+    program::{Program, ProgramError},
 };
-
-pub mod values {
-    pub use crate::value::{Array, Complex32, Complex64, Object, Type, Value, ValueRef, ValueView};
-}

@@ -2,14 +2,14 @@ use {
     crate::{
         engine::{Engine, EngineBuilder, EngineType, EngineTypes},
         ffi::Library,
-        program::{Error as ProgramError, Program},
+        program::{Program, ProgramError},
     },
     serde_json::{Map, Value},
     std::{ffi::CString, path::Path},
 };
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum LibraryError {
     #[error("Failed to load library")]
     FailedToLoadLibrary(#[from] libloading::Error),
 
@@ -22,7 +22,7 @@ pub struct Cmajor {
 }
 
 impl Cmajor {
-    pub fn new(path_to_library: impl AsRef<Path>) -> Result<Self, Error> {
+    pub fn new(path_to_library: impl AsRef<Path>) -> Result<Self, LibraryError> {
         let library = Library::load(path_to_library)?;
         Ok(Self { library })
     }

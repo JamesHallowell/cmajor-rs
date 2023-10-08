@@ -1,33 +1,40 @@
 use {
-    crate::values::{Array, Object, Type},
+    crate::{
+        engine::{
+            endpoint::{EventEndpoint, StreamEndpoint, ValueEndpoint},
+            Endpoint, EndpointId,
+        },
+        value::types::{Array, Object, Type},
+    },
     serde::{
         de::{value::MapAccessDeserializer, Visitor},
         Deserialize, Deserializer,
     },
     serde_json::{Map as JsonMap, Value as JsonValue},
-    std::{borrow::Borrow, fmt::Formatter},
+    std::fmt::Formatter,
 };
 
 #[derive(Debug, Deserialize)]
 pub struct ProgramDetails {
-    pub inputs: Vec<EndpointDetails>,
-    pub outputs: Vec<EndpointDetails>,
+    inputs: Vec<EndpointDetails>,
+    outputs: Vec<EndpointDetails>,
     #[serde(flatten)]
     _extra: JsonMap<String, JsonValue>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
-pub struct EndpointId(String);
-
-impl AsRef<str> for EndpointId {
-    fn as_ref(&self) -> &str {
-        &self.0
+impl ProgramDetails {
+    pub fn inputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
+        self.inputs
+            .iter()
+            .map(Endpoint::try_from)
+            .filter_map(|endpoint| endpoint.ok())
     }
-}
 
-impl Borrow<str> for EndpointId {
-    fn borrow(&self) -> &str {
-        &self.0
+    pub fn outputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
+        self.outputs
+            .iter()
+            .map(Endpoint::try_from)
+            .filter_map(|endpoint| endpoint.ok())
     }
 }
 
@@ -131,6 +138,30 @@ fn convert_type(value_type: EndpointDataType) -> Type {
         ValueType::String => {
             unimplemented!("string types are not yet supported")
         }
+    }
+}
+
+impl TryFrom<&EndpointDetails> for Endpoint {
+    type Error = ();
+
+    fn try_from(value: &EndpointDetails) -> Result<Self, Self::Error> {
+        Ok(match value.endpoint_type {
+            EndpointType::Stream => {
+                let value_type = value.value_type.first().ok_or(())?;
+                let value_type = value_type.clone();
+                StreamEndpoint::new(value.id.clone(), value_type).into()
+            }
+            EndpointType::Event => {
+                let value_type = value.value_type.clone();
+                let value_type = value_type.iter().cloned().collect();
+                EventEndpoint::new(value.id.clone(), value_type).into()
+            }
+            EndpointType::Value => {
+                let value_type = value.value_type.first().ok_or(())?;
+                let value_type = value_type.clone();
+                ValueEndpoint::new(value.id.clone(), value_type).into()
+            }
+        })
     }
 }
 

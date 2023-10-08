@@ -1,10 +1,9 @@
-mod builder;
-mod endpoints;
+pub(crate) mod builder;
+mod handle;
 mod performer;
 mod spsc;
 
 pub use {
-    builder::PerformerBuilder,
-    endpoints::{EndpointError, EndpointHandles},
+    handle::{EndpointError, PerformerHandle},
     performer::Performer,
 };

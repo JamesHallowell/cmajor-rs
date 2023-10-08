@@ -1,13 +1,13 @@
 use {
     crate::{
-        engine::{EndpointHandle, EndpointType, Endpoints},
+        engine::{endpoint::Endpoints, Endpoint, EndpointHandle},
         performer::{spsc, spsc::EndpointMessage},
         value::Value,
     },
     std::sync::Arc,
 };
 
-pub struct EndpointHandles {
+pub struct PerformerHandle {
     pub(super) endpoints: Arc<Endpoints>,
     pub(super) endpoint_tx: spsc::EndpointSender,
 }
@@ -27,9 +27,9 @@ pub enum EndpointError {
     FailedToSendMessageToPerformer,
 }
 
-impl EndpointHandles {
-    pub fn get_input(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
-        self.endpoints.get_input_by_id(id).map(|(handle, _)| handle)
+impl PerformerHandle {
+    pub fn get_input(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+        self.endpoints.get_input_by_id(id)
     }
 
     pub fn write_value(
@@ -42,13 +42,15 @@ impl EndpointHandles {
             .get_input(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.endpoint_type() != EndpointType::Value {
+        let endpoint = if let Endpoint::Value(value) = endpoint {
+            value
+        } else {
             return Err(EndpointError::EndpointTypeMismatch);
-        }
+        };
 
         let value = value.into();
 
-        if !endpoint.value_type().contains(value.ty()) {
+        if endpoint.ty() != value.ty() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
@@ -73,14 +75,16 @@ impl EndpointHandles {
             .get_input(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.endpoint_type() != EndpointType::Event {
+        let endpoint = if let Endpoint::Event(endpoint) = endpoint {
+            endpoint
+        } else {
             return Err(EndpointError::EndpointTypeMismatch);
-        }
+        };
 
         let value = value.into();
 
         let type_index = endpoint
-            .index_of_value_type(value.ty())
+            .type_index(value.ty())
             .ok_or(EndpointError::DataTypeMismatch)?;
 
         let message = EndpointMessage::Event {

@@ -1,8 +1,8 @@
 use {
     crate::{
-        engine::Endpoints,
+        engine::endpoint::Endpoints,
         ffi,
-        performer::{spsc, EndpointHandles, Performer},
+        performer::{spsc, Performer, PerformerHandle},
     },
     std::sync::Arc,
 };
@@ -20,7 +20,7 @@ impl PerformerBuilder {
         }
     }
 
-    pub fn build(self) -> (Performer, EndpointHandles) {
+    pub fn build(self) -> (Performer, PerformerHandle) {
         let (endpoint_tx, endpoint_rx) = spsc::channel(8192);
         const SCRATCH_BUFFER_SIZE: usize = 512;
         (
@@ -31,7 +31,7 @@ impl PerformerBuilder {
                 scratch_buffer: vec![0; SCRATCH_BUFFER_SIZE],
                 block_size: None,
             },
-            EndpointHandles {
+            PerformerHandle {
                 endpoints: self.endpoints,
                 endpoint_tx,
             },

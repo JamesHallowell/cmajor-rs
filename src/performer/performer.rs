@@ -1,10 +1,12 @@
 use {
     crate::{
-        engine::{EndpointHandle, EndpointType, Endpoints},
+        engine::{endpoint::Endpoints, Endpoint, EndpointHandle},
         ffi::PerformerPtr,
-        performer::{spsc, spsc::EndpointMessage},
+        performer::{
+            spsc::{self, EndpointMessage},
+            EndpointError,
+        },
         value::ValueRef,
-        EndpointError,
     },
     std::sync::Arc,
 };
@@ -47,10 +49,8 @@ impl Performer {
         self.inner.advance();
     }
 
-    pub fn get_output(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
-        self.endpoints
-            .get_output_by_id(id)
-            .map(|(handle, _)| handle)
+    pub fn get_output(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+        self.endpoints.get_output_by_id(id)
     }
 
     pub fn read_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
@@ -59,16 +59,16 @@ impl Performer {
             .get_output(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.endpoint_type() != EndpointType::Value {
+        let endpoint = if let Endpoint::Value(endpoint) = endpoint {
+            endpoint
+        } else {
             return Err(EndpointError::EndpointTypeMismatch);
-        }
-
-        let value_type = endpoint.value_type().first().unwrap();
+        };
 
         self.inner
             .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
 
-        Ok(ValueRef::from_bytes(value_type, &self.scratch_buffer))
+        Ok(ValueRef::from_bytes(endpoint.ty(), &self.scratch_buffer))
     }
 
     /// Reads the output frames of an endpoint into the given slice.
@@ -97,17 +97,20 @@ impl Performer {
             .get_output(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.endpoint_type() != EndpointType::Event {
+        let endpoint = if let Endpoint::Event(endpoint) = endpoint {
+            endpoint
+        } else {
             return Err(EndpointError::EndpointTypeMismatch);
-        }
+        };
 
         self.inner
             .iterate_output_events(handle, |frame_offset, handle, type_index, data| {
-                let ty = endpoint
-                    .value_type_at_index(type_index)
-                    .expect("type index out of bounds");
+                let ty = endpoint.get_type(type_index);
+                debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
 
-                callback(frame_offset, handle, ValueRef::from_bytes(ty, data))
+                if let Some(ty) = endpoint.get_type(type_index) {
+                    callback(frame_offset, handle, ValueRef::from_bytes(ty, data))
+                }
             });
 
         Ok(())

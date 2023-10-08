@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Block size too large"
     );
 
-    let output = performer.get_output("out").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     let stream = cpal::default_host()
         .default_output_device()

@@ -1,9 +1,14 @@
 use cmajor::{
-    values::{Complex32, Complex64, ValueView},
-    Cmajor, EndpointHandles, Performer,
+    engine::Endpoint,
+    performer::{EndpointError, Performer, PerformerHandle},
+    value::{
+        types::{Object, Type},
+        Complex32, Complex64, ValueView,
+    },
+    Cmajor,
 };
 
-fn setup(program: &str) -> (Performer, EndpointHandles) {
+fn setup(program: &str) -> (Performer, PerformerHandle) {
     let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");
 
     let llvm = cmajor
@@ -41,8 +46,8 @@ fn can_read_and_write_to_value_endpoint() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.write_value(input, 2).unwrap();
     performer.advance(1);
@@ -70,17 +75,17 @@ fn cant_access_endpoints_with_wrong_type() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     assert!(matches!(
         endpoints.write_value(input, 5),
-        Err(cmajor::EndpointError::DataTypeMismatch)
+        Err(EndpointError::DataTypeMismatch)
     ));
 
     assert!(matches!(
         performer.read_value(output),
-        Err(cmajor::EndpointError::EndpointTypeMismatch)
+        Err(EndpointError::EndpointTypeMismatch)
     ));
 }
 
@@ -102,8 +107,8 @@ fn can_read_and_write_complex32_numbers() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints
         .write_value(
@@ -146,8 +151,8 @@ fn can_read_and_write_complex64_numbers() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints
         .write_value(
@@ -195,7 +200,7 @@ fn can_read_structs() {
     "#;
 
     let (mut performer, _) = setup(PROGRAM);
-    let output = performer.get_output("out").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     performer.advance(1);
 
@@ -225,8 +230,8 @@ fn can_read_and_write_arrays() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.write_value(input, [1, 2, 3, 4]).unwrap();
 
@@ -275,8 +280,8 @@ fn can_post_events() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.post_event(input, 4).unwrap();
 
@@ -323,8 +328,8 @@ fn can_read_events() {
 
     let (mut performer, mut endpoints) = setup(PROGRAM);
 
-    let input = endpoints.get_input("in").unwrap();
-    let output = performer.get_output("out").unwrap();
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.post_event(input, 5_i32).unwrap();
     endpoints.post_event(input, true).unwrap();
@@ -367,7 +372,7 @@ fn can_read_streams() {
 
     let (mut performer, _) = setup(PROGRAM);
 
-    let output = performer.get_output("out").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
 
     performer.advance(8);
 
@@ -382,4 +387,57 @@ fn can_read_streams() {
     assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
 
     assert_eq!(performer.get_xruns(), 0);
+}
+
+#[test]
+fn can_query_endpoint_information() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            input stream int a;
+            input value float b;
+            output event (int, S) c;
+        
+            struct S {
+                bool d;
+            }
+        
+            void main()
+            {
+                advance();
+            }
+        }
+    "#;
+
+    let (performer, endpoints) = setup(PROGRAM);
+
+    let a = match endpoints.get_input("a").unwrap() {
+        (_, Endpoint::Stream(endpoint)) => endpoint,
+        _ => panic!("expected a stream"),
+    };
+
+    assert_eq!(a.id(), "a");
+    assert_eq!(a.ty(), &Type::Int32);
+
+    let b = match endpoints.get_input("b").unwrap() {
+        (_, Endpoint::Value(endpoint)) => endpoint,
+        _ => panic!("expected a value"),
+    };
+
+    assert_eq!(b.id(), "b");
+    assert_eq!(b.ty(), &Type::Float32);
+
+    let c = match performer.get_output("c").unwrap() {
+        (_, Endpoint::Event(endpoint)) => endpoint,
+        _ => panic!("expected an event"),
+    };
+
+    assert_eq!(c.id(), "c");
+    assert_eq!(
+        c.types(),
+        vec![
+            Type::Int32,
+            Object::new().with_field("d", Type::Bool).into()
+        ]
+    );
 }
