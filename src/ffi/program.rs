@@ -34,6 +34,7 @@ pub struct Program {
     vtable: *const ProgramVTable,
 }
 
+#[derive(Debug)]
 pub struct ProgramPtr {
     program: *mut Program,
 }

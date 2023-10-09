@@ -1,3 +1,4 @@
+pub mod diagnostic;
 pub mod engine;
 mod ffi;
 mod library;
@@ -7,5 +8,5 @@ pub mod value;
 
 pub use {
     library::{Cmajor, LibraryError},
-    program::{Program, ProgramError},
+    program::{ParseError, Program},
 };

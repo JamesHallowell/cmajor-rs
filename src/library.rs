@@ -2,7 +2,8 @@ use {
     crate::{
         engine::{Engine, EngineBuilder, EngineType, EngineTypes},
         ffi::Library,
-        program::{Program, ProgramError},
+        program::Program,
+        ParseError,
     },
     serde_json::{Map, Value},
     std::{ffi::CString, path::Path},
@@ -37,7 +38,7 @@ impl Cmajor {
         }
     }
 
-    pub fn parse(&self, cmajor_program: impl AsRef<str>) -> Result<Program, ProgramError> {
+    pub fn parse(&self, cmajor_program: impl AsRef<str>) -> Result<Program, ParseError> {
         let mut program = self.create_program();
         program.parse(cmajor_program)?;
         Ok(program)

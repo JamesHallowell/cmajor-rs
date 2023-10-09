@@ -1,19 +1,30 @@
-use crate::ffi::ProgramPtr;
+use crate::{diagnostic::DiagnosticMessage, ffi::ProgramPtr};
 
+#[derive(Debug)]
 pub struct Program {
     pub(crate) inner: ProgramPtr,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ProgramError {
-    #[error("Failed to parse program {:?}", .0)]
-    FailedToParse(String),
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Error parsing program: {0:?}")]
+    ParserError(DiagnosticMessage),
+
+    #[error(transparent)]
+    FailedToParseError(#[from] serde_json::Error),
 }
 
 impl Program {
-    pub(crate) fn parse(&mut self, program: impl AsRef<str>) -> Result<(), ProgramError> {
-        self.inner
-            .parse(None, program.as_ref())
-            .map_err(|error| ProgramError::FailedToParse(error.to_string().into_owned()))
+    pub(crate) fn parse(&mut self, program: impl AsRef<str>) -> Result<(), ParseError> {
+        let result = self.inner.parse(None, program.as_ref());
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let parser_error: DiagnosticMessage =
+                    serde_json::from_str(error.to_string().as_ref())?;
+                Err(ParseError::ParserError(parser_error))
+            }
+        }
     }
 }
