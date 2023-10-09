@@ -16,6 +16,9 @@ pub enum LibraryError {
 
     #[error("Engine not found")]
     EngineNotFound,
+
+    #[error("CMAJOR_LIB_PATH environment variable not set")]
+    EnvVarNotSet,
 }
 
 pub struct Cmajor {
@@ -26,6 +29,12 @@ impl Cmajor {
     pub fn new(path_to_library: impl AsRef<Path>) -> Result<Self, LibraryError> {
         let library = Library::load(path_to_library)?;
         Ok(Self { library })
+    }
+
+    pub fn new_from_env() -> Result<Self, LibraryError> {
+        std::env::var("CMAJOR_LIB_PATH")
+            .map_err(|_| LibraryError::EnvVarNotSet)
+            .and_then(|path| Self::new(path))
     }
 
     pub fn version(&self) -> &str {
