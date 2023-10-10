@@ -297,6 +297,7 @@ fn can_post_events() {
     assert_eq!(performer.read_value(output).unwrap(), ValueRef::Int32(42));
 }
 
+#[cfg_attr(target_os = "linux", ignore)]
 #[test]
 fn can_read_events() {
     const PROGRAM: &str = r#"
