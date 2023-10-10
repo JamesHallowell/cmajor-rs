@@ -116,7 +116,7 @@ impl Performer {
         &mut self,
         handle: EndpointHandle,
         mut callback: impl FnMut(usize, EndpointHandle, ValueRef<'_>),
-    ) -> Result<(), EndpointError> {
+    ) -> Result<usize, EndpointError> {
         let endpoint = self
             .endpoints
             .get_output(handle)
@@ -128,6 +128,7 @@ impl Performer {
             return Err(EndpointError::EndpointTypeMismatch);
         };
 
+        let mut events = 0;
         self.inner
             .iterate_output_events(handle, |frame_offset, handle, type_index, data| {
                 let ty = endpoint.get_type(type_index);
@@ -138,11 +139,12 @@ impl Performer {
                         frame_offset,
                         handle,
                         ValueRef::new_from_slice(ty.as_ref(), data),
-                    )
+                    );
+                    events += 1;
                 }
             });
 
-        Ok(())
+        Ok(events)
     }
 
     /// Returns the number of times the performer has over/under-run.
