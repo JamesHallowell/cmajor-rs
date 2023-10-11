@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install dependencies
+      run: sudo apt-get install libasound2-dev
+    - name: Fetch Cmajor
+      run: scripts/fetch-cmajor.py 0.9.2170 linux --arch x64
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: CMAJOR_LIB_PATH=${PWD}/cmaj/linux/x64/libCmajPerformer.so cargo test --verbose
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Fetch Cmajor
+      run: scripts/fetch-cmajor.py 0.9.2170 macos
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: CMAJOR_LIB_PATH=${PWD}/cmaj/macos/libCmajPerformer.dylib cargo test --verbose

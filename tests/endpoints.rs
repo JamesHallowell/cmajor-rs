@@ -9,7 +9,7 @@ use cmajor::{
 };
 
 fn setup(program: &str) -> (Performer, PerformerHandle) {
-    let cmajor = Cmajor::new("libCmajPerformer.dylib").expect("failed to load library");
+    let cmajor = Cmajor::new_from_env().expect("failed to load library");
 
     let llvm = cmajor
         .engine_types()
@@ -328,23 +328,30 @@ fn can_read_events() {
     let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.post_event(input, 5_i32).unwrap();
-    endpoints.post_event(input, true).unwrap();
-
     performer.advance(1);
+    assert_eq!(
+        performer
+            .read_events(output, |frame, handle, data| {
+                assert_eq!(frame, 0);
+                assert_eq!(handle, output);
+                assert_eq!(data, ValueRef::Int32(5));
+            })
+            .unwrap(),
+        1
+    );
 
-    let mut events = vec![];
-    performer
-        .read_events(output, |frame, handle, data| {
-            assert_eq!(frame, 0);
-            assert_eq!(handle, output);
-
-            events.push(data.to_owned());
-        })
-        .unwrap();
-
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].as_ref(), ValueRef::Int32(5));
-    assert_eq!(events[1].as_ref(), ValueRef::Bool(true));
+    endpoints.post_event(input, true).unwrap();
+    performer.advance(1);
+    assert_eq!(
+        performer
+            .read_events(output, |frame, handle, data| {
+                assert_eq!(frame, 0);
+                assert_eq!(handle, output);
+                assert_eq!(data, ValueRef::Bool(true));
+            })
+            .unwrap(),
+        1
+    );
 }
 
 #[test]

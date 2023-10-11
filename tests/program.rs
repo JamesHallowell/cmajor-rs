@@ -15,7 +15,7 @@ fn compile_error() {
         }
     "#;
 
-    let cmajor = Cmajor::new("libCmajPerformer.dylib").unwrap();
+    let cmajor = Cmajor::new_from_env().unwrap();
 
     let error = match cmajor.parse(program).unwrap_err() {
         cmajor::ParseError::ParserError(parser_error) => parser_error,
