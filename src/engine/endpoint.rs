@@ -4,6 +4,7 @@ use {
     std::{borrow::Borrow, collections::HashMap},
 };
 
+/// An endpoint identifier.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 pub struct EndpointId(String);
 
@@ -25,6 +26,7 @@ impl PartialEq<str> for EndpointId {
     }
 }
 
+/// A handle used to reference an endpoint.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, Hash, PartialEq)]
 pub struct EndpointHandle(u32);
 
@@ -40,13 +42,20 @@ impl From<EndpointHandle> for u32 {
     }
 }
 
+/// An endpoint.
 #[derive(Debug)]
 pub enum Endpoint {
+    /// A stream endpoint.
     Stream(StreamEndpoint),
+
+    /// An event endpoint.
     Event(EventEndpoint),
+
+    /// A value endpoint.
     Value(ValueEndpoint),
 }
 
+/// A stream endpoint.
 #[derive(Debug)]
 pub struct StreamEndpoint {
     id: EndpointId,
@@ -59,6 +68,7 @@ impl From<StreamEndpoint> for Endpoint {
     }
 }
 
+/// An event endpoint.
 #[derive(Debug)]
 pub struct EventEndpoint {
     id: EndpointId,
@@ -71,6 +81,7 @@ impl From<EventEndpoint> for Endpoint {
     }
 }
 
+/// A value endpoint.
 #[derive(Debug)]
 pub struct ValueEndpoint {
     id: EndpointId,
@@ -84,6 +95,7 @@ impl From<ValueEndpoint> for Endpoint {
 }
 
 impl Endpoint {
+    /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         match self {
             Self::Stream(endpoint) => &endpoint.id,
@@ -98,10 +110,12 @@ impl ValueEndpoint {
         Self { id, ty }
     }
 
+    /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         &self.id
     }
 
+    /// The type of the endpoint's value.
     pub fn ty(&self) -> &Type {
         &self.ty
     }
@@ -112,10 +126,12 @@ impl StreamEndpoint {
         Self { id, ty }
     }
 
+    /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         &self.id
     }
 
+    /// The type of the endpoint's value.
     pub fn ty(&self) -> &Type {
         &self.ty
     }
@@ -127,14 +143,17 @@ impl EventEndpoint {
         Self { id, ty }
     }
 
+    /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         &self.id
     }
 
+    /// The types of the endpoint's events.
     pub fn types(&self) -> &[Type] {
         &self.ty
     }
 
+    /// The index of the given type in the endpoint's type list.
     pub fn type_index(&self, ty: TypeRef<'_>) -> Option<EndpointTypeIndex> {
         self.ty
             .iter()
@@ -143,11 +162,13 @@ impl EventEndpoint {
             .map(EndpointTypeIndex::from)
     }
 
+    /// The type at the given index in the endpoint's type list.
     pub fn get_type(&self, index: EndpointTypeIndex) -> Option<&Type> {
         self.ty.get(index.0 as usize)
     }
 }
 
+/// An index into an event endpoint's type list.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointTypeIndex(u32);
 

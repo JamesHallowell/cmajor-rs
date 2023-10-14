@@ -1,3 +1,5 @@
+//! The Cmajor performer for running programs.
+
 mod handle;
 mod spsc;
 
@@ -12,6 +14,7 @@ use {
     std::sync::Arc,
 };
 
+/// A Cmajor performer.
 pub struct Performer {
     pub(super) inner: PerformerPtr,
     pub(super) endpoints: Arc<Endpoints>,
@@ -71,10 +74,12 @@ impl Performer {
         self.inner.advance();
     }
 
+    /// Returns the [`EndpointHandle`] for the endpoint with the given ID.
     pub fn get_output(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
         self.endpoints.get_output_by_id(id)
     }
 
+    /// Reads the value of an endpoint.
     pub fn read_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
         let endpoint = self
             .endpoints
@@ -112,6 +117,7 @@ impl Performer {
         self.inner.copy_output_frames(handle, frames);
     }
 
+    /// Iterates over the events of an endpoint.
     pub fn read_events(
         &mut self,
         handle: EndpointHandle,

@@ -1,7 +1,12 @@
+//! The Cmajor engine for compiling programs.
+
 pub(crate) mod endpoint;
 mod program_details;
 
-pub use endpoint::{Endpoint, EndpointHandle, EndpointId, EndpointTypeIndex};
+pub use endpoint::{
+    Endpoint, EndpointHandle, EndpointId, EndpointTypeIndex, EventEndpoint, StreamEndpoint,
+    ValueEndpoint,
+};
 use {
     crate::{
         engine::{endpoint::Endpoints, program_details::ProgramDetails},
@@ -18,6 +23,7 @@ use {
     },
 };
 
+/// The set of supported engine types.
 pub struct EngineTypes<'a> {
     engine_types: Split<'a, u8, fn(&u8) -> bool>,
 }
@@ -42,6 +48,7 @@ impl<'a> Iterator for EngineTypes<'a> {
     }
 }
 
+/// An engine type.
 #[derive(Clone)]
 pub struct EngineType(String);
 
@@ -63,12 +70,14 @@ impl std::fmt::Debug for EngineType {
     }
 }
 
+/// A builder for a [`Engine`].
 pub struct EngineBuilder {
     pub(crate) build_settings: JsonMap<String, JsonValue>,
     pub(crate) engine: Engine<Idle>,
 }
 
 impl EngineBuilder {
+    /// Set the sample rate (in Hertz) to use.
     pub fn with_sample_rate(mut self, sample_rate: impl Into<JsonNumber>) -> Self {
         self.build_settings.insert(
             "frequency".to_string(),
@@ -77,6 +86,7 @@ impl EngineBuilder {
         self
     }
 
+    /// Build the engine.
     pub fn build(self) -> Engine {
         let Self {
             build_settings,
@@ -93,27 +103,34 @@ impl EngineBuilder {
     }
 }
 
+/// A Cmajor engine.
 #[derive(Debug)]
 pub struct Engine<State = Idle> {
     inner: EnginePtr,
     _state: State,
 }
 
+/// An error from the engine.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The engine failed to load the program.
     #[error("Failed to load program: {:#?}", .0)]
     FailedToLoad(Engine<Idle>, String),
 
+    /// The engine failed to link the program.
     #[error("Failed to link program: {:#?}", .0)]
     FailedToLink(Engine<Loaded>, String),
 }
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct Idle;
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct Loaded;
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
     endpoints: Arc<Endpoints>,
@@ -127,6 +144,7 @@ impl Engine<Idle> {
         }
     }
 
+    /// Load a program into the engine.
     pub fn load(self, program: &Program) -> Result<Engine<Loaded>, Error> {
         match self.inner.load(&program.inner) {
             Ok(_) => Ok(Engine {
@@ -145,6 +163,7 @@ impl Engine<Loaded> {
         self.inner.get_endpoint_handle(id.as_c_str())
     }
 
+    /// Returns the details of the program loaded into the engine.
     pub fn program_details(&self) -> Result<ProgramDetails, serde_json::Error> {
         let program_details = self
             .inner
@@ -154,6 +173,7 @@ impl Engine<Loaded> {
         serde_json::from_str(program_details.to_string().as_ref())
     }
 
+    /// Link the program loaded into the engine.
     pub fn link(self) -> Result<Engine<Linked>, Error> {
         let program_details = match self.program_details() {
             Ok(program_details) => program_details,
@@ -195,6 +215,7 @@ impl Engine<Loaded> {
 }
 
 impl Engine<Linked> {
+    /// Create a performer for the linked program.
     pub fn performer(&self) -> (Performer, PerformerHandle) {
         Performer::new(
             self.inner.create_performer(),
@@ -204,6 +225,7 @@ impl Engine<Linked> {
 }
 
 impl<T> Engine<T> {
+    /// Unload the program, resetting the engine.
     pub fn unload(self) -> Engine<Idle> {
         self.inner.unload();
 

@@ -100,6 +100,7 @@ impl EndpointReceiver {
     }
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 

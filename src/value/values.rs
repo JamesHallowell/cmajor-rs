@@ -4,48 +4,84 @@ use {
     smallvec::SmallVec,
 };
 
+/// A Cmajor value.
 #[derive(Debug, Clone)]
 pub enum Value {
+    /// A void value.
     Void,
+
+    /// A boolean value.
     Bool(bool),
+
+    /// A 32-bit signed integer value.
     Int32(i32),
+
+    /// A 64-bit signed integer value.
     Int64(i64),
+
+    /// A 32-bit floating-point value.
     Float32(f32),
+
+    /// A 64-bit floating-point value.
     Float64(f64),
+
+    /// An array value.
     Array(Box<ArrayValue>),
+
+    /// An object value.
     Object(Box<ObjectValue>),
 }
 
+/// A reference to a [`Value`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValueRef<'a> {
+    /// A void value.
     Void,
+
+    /// A boolean value.
     Bool(bool),
+
+    /// A 32-bit signed integer value.
     Int32(i32),
+
+    /// A 64-bit signed integer value.
     Int64(i64),
+
+    /// A 32-bit floating-point value.
     Float32(f32),
+
+    /// A 64-bit floating-point value.
     Float64(f64),
+
+    /// An array value.
     Array(ArrayValueRef<'a>),
+
+    /// An object value.
     Object(ObjectValueRef<'a>),
 }
 
+/// An array value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayValue {
     ty: Array,
     data: SmallVec<[u8; 16]>,
 }
 
+/// A reference to an [`ArrayValue`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ArrayValueRef<'a> {
     ty: &'a Array,
     data: &'a [u8],
 }
 
+/// An object value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectValue {
     ty: Object,
     data: SmallVec<[u8; 16]>,
 }
 
+/// A reference to an [`ObjectValue`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ObjectValueRef<'a> {
     ty: &'a Object,
@@ -53,6 +89,7 @@ pub struct ObjectValueRef<'a> {
 }
 
 impl Value {
+    /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {
             Value::Void => TypeRef::Void,
@@ -66,6 +103,7 @@ impl Value {
         }
     }
 
+    /// Get a reference to the value.
     pub fn as_ref(&self) -> ValueRef<'_> {
         match self {
             Value::Void => ValueRef::Void,
@@ -79,13 +117,13 @@ impl Value {
         }
     }
 
-    pub fn with_bytes<R>(&self, callback: impl FnMut(&[u8]) -> R) -> R {
+    pub(crate) fn with_bytes<R>(&self, callback: impl FnMut(&[u8]) -> R) -> R {
         self.as_ref().with_bytes(callback)
     }
 }
 
 impl<'a> ValueRef<'a> {
-    pub fn new_from_slice<'b>(ty: TypeRef<'b>, mut data: &'b [u8]) -> ValueRef<'a>
+    pub(crate) fn new_from_slice<'b>(ty: TypeRef<'b>, mut data: &'b [u8]) -> ValueRef<'a>
     where
         'b: 'a,
     {
@@ -101,6 +139,7 @@ impl<'a> ValueRef<'a> {
         }
     }
 
+    /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {
             Self::Void => TypeRef::Void,
@@ -114,6 +153,7 @@ impl<'a> ValueRef<'a> {
         }
     }
 
+    /// Clone the value into an owned [`Value`].
     pub fn to_owned(&self) -> Value {
         match *self {
             Self::Void => Value::from(()),
@@ -127,7 +167,7 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
+    pub(crate) fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
         match *self {
             Self::Void => callback(&[]),
             Self::Bool(value) => callback((value as u32).to_ne_bytes().as_slice()),
@@ -142,6 +182,7 @@ impl<'a> ValueRef<'a> {
 }
 
 impl ArrayValue {
+    /// Get a reference to the array.
     pub fn as_ref(&self) -> ArrayValueRef<'_> {
         ArrayValueRef {
             ty: &self.ty,
@@ -161,6 +202,17 @@ impl<'a> ArrayValueRef<'a> {
         }
     }
 
+    /// Get the value at the given index. Returns `None` if the index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// let array: ArrayValue = [1, 2, 3].into();
+    /// let array_ref = array.as_ref();
+    ///
+    /// assert_eq!(array_ref.get(0), Some(ValueRef::Int32(1)));
+    /// ```
     pub fn get(&'a self, index: usize) -> Option<ValueRef<'a>> {
         if index >= self.len() {
             return None;
@@ -173,18 +225,58 @@ impl<'a> ArrayValueRef<'a> {
         Some(ValueRef::new_from_slice(ty.as_ref(), data))
     }
 
+    /// Returns an iterator over the array's elements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// let array: ArrayValue = [1, 2, 3].into();
+    /// let array_ref = array.as_ref();
+    ///
+    /// let mut iter = array_ref.elems();
+    /// assert_eq!(iter.next(), Some(ValueRef::Int32(1)));
+    /// assert_eq!(iter.next(), Some(ValueRef::Int32(2)));
+    /// assert_eq!(iter.next(), Some(ValueRef::Int32(3)));
+    /// assert_eq!(iter.next(), None);
+    pub fn elems(&self) -> impl Iterator<Item = ValueRef<'_>> + '_ {
+        (0..self.len()).filter_map(move |index| self.get(index))
+    }
+
+    /// Get the type of the array's elements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cmajor::value::{ArrayValue, types::Type};
+    /// let array: ArrayValue = [1, 2, 3].into();
+    /// let array_ref = array.as_ref();
+    ///
+    /// assert_eq!(array_ref.elem_ty(), &Type::Int32);
     pub fn elem_ty(&self) -> &Type {
         self.ty.elem_ty()
     }
 
+    /// The number of elements in the array.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// let array: ArrayValue = [1, 2, 3].into();
+    /// let array_ref = array.as_ref();
+    ///
+    /// assert_eq!(array_ref.len(), 3);
     pub fn len(&self) -> usize {
         self.ty.len()
     }
 
+    /// Whether the array is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Clone into an owned [`ArrayValue`].
     pub fn to_owned(&self) -> ArrayValue {
         ArrayValue {
             ty: self.ty.clone(),
@@ -194,6 +286,7 @@ impl<'a> ArrayValueRef<'a> {
 }
 
 impl ObjectValue {
+    /// Get a reference to the object.
     pub fn as_ref(&self) -> ObjectValueRef<'_> {
         ObjectValueRef {
             ty: &self.ty,
@@ -213,6 +306,7 @@ impl<'a> ObjectValueRef<'a> {
         }
     }
 
+    /// Get the value of the given field. Returns `None` if the field does not exist.
     pub fn field(&self, name: impl AsRef<str>) -> Option<ValueRef<'_>> {
         let mut offset = 0;
         self.ty
@@ -230,6 +324,14 @@ impl<'a> ObjectValueRef<'a> {
             })
     }
 
+    /// Returns an iterator over the object's fields.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, ValueRef<'_>)> + '_ {
+        self.ty
+            .fields()
+            .flat_map(|field| self.field(field.name()).map(|value| (field.name(), value)))
+    }
+
+    /// Clone into an owned [`ObjectValue`].
     pub fn to_owned(&self) -> ObjectValue {
         ObjectValue {
             ty: self.ty.clone(),
@@ -286,15 +388,23 @@ impl From<ObjectValue> for Value {
     }
 }
 
+/// A 32-bit complex number.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Complex32 {
+    /// The imaginary part.
     pub imag: f32,
+
+    /// The real part.
     pub real: f32,
 }
 
+/// A 64-bit complex number.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Complex64 {
+    /// The imaginary part.
     pub imag: f64,
+
+    /// The real part.
     pub real: f64,
 }
 
@@ -358,7 +468,7 @@ impl TryFrom<ValueRef<'_>> for Complex64 {
     }
 }
 
-impl<T, const N: usize> From<[T; N]> for Value
+impl<T, const N: usize> From<[T; N]> for ArrayValue
 where
     T: Into<Value> + Default,
 {
@@ -374,7 +484,16 @@ where
                 data.extend_from_slice(bytes);
             });
         }
-        ArrayValue { ty: array, data }.into()
+        ArrayValue { ty: array, data }
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for Value
+where
+    T: Into<Value> + Default,
+{
+    fn from(value: [T; N]) -> Self {
+        ArrayValue::from(value).into()
     }
 }
 

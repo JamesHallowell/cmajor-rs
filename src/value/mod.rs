@@ -1,4 +1,8 @@
+//! Support for Cmajor values.
+
 pub mod types;
 mod values;
 
-pub use values::{ArrayValueRef, Complex32, Complex64, ObjectValueRef, Value, ValueRef};
+pub use values::{
+    ArrayValue, ArrayValueRef, Complex32, Complex64, ObjectValue, ObjectValueRef, Value, ValueRef,
+};

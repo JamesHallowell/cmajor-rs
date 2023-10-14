@@ -257,6 +257,7 @@ where
     deserializer.deserialize_any(DataTypesVisitor)
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 

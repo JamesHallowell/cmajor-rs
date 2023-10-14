@@ -1,15 +1,19 @@
 use crate::{diagnostic::DiagnosticMessage, ffi::ProgramPtr};
 
+/// A Cmajor program.
 #[derive(Debug)]
 pub struct Program {
     pub(crate) inner: ProgramPtr,
 }
 
+/// An error that can occur when parsing a Cmajor program.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
+    /// An error occurred while parsing a program.
     #[error("Error parsing program: {0:?}")]
     ParserError(DiagnosticMessage),
 
+    /// An error occurred whilst parsing the error from the library.
     #[error(transparent)]
     FailedToParseError(#[from] serde_json::Error),
 }

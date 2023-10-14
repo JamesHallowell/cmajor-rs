@@ -1,40 +1,77 @@
+//! Types of Cmajor values.
+
 use smallvec::SmallVec;
 
+/// The type of a Cmajor value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    /// A void type.
     Void,
+
+    /// A boolean type.
     Bool,
+
+    /// A 32-bit signed integer type.
     Int32,
+
+    /// A 64-bit signed integer type.
     Int64,
+
+    /// A 32-bit floating-point type.
     Float32,
+
+    /// A 64-bit floating-point type.
     Float64,
+
+    /// An array type.
     Array(Box<Array>),
+
+    /// An object type.
     Object(Box<Object>),
 }
 
+/// A reference to a Cmajor [`Type`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TypeRef<'a> {
+    /// A void type.
     Void,
+
+    /// A boolean type.
     Bool,
+
+    /// A 32-bit signed integer type.
     Int32,
+
+    /// A 64-bit signed integer type.
     Int64,
+
+    /// A 32-bit floating-point type.
     Float32,
+
+    /// A 64-bit floating-point type.
     Float64,
+
+    /// An array type.
     Array(&'a Array),
+
+    /// An object type.
     Object(&'a Object),
 }
 
+/// An object type.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Object {
     fields: SmallVec<[Field; 2]>,
 }
 
+/// A field of an [`Object`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     name: String,
     ty: Type,
 }
 
+/// An array type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Array {
     elem_ty: Type,
@@ -42,10 +79,12 @@ pub struct Array {
 }
 
 impl Type {
+    /// The size of the type in bytes.
     pub fn size(&self) -> usize {
         self.as_ref().size()
     }
 
+    /// Get a reference to the type.
     pub fn as_ref(&self) -> TypeRef<'_> {
         match self {
             Type::Void => TypeRef::Void,
@@ -61,6 +100,7 @@ impl Type {
 }
 
 impl TypeRef<'_> {
+    /// The size of the type in bytes.
     pub fn size(&self) -> usize {
         match self {
             TypeRef::Void => 0,
@@ -74,6 +114,7 @@ impl TypeRef<'_> {
         }
     }
 
+    /// Convert the type reference into an owned [`Type`].
     pub fn to_owned(&self) -> Type {
         match *self {
             TypeRef::Void => Type::Void,
@@ -89,6 +130,7 @@ impl TypeRef<'_> {
 }
 
 impl Array {
+    /// Create a new array type.
     pub fn new(elem_ty: impl Into<Type>, len: usize) -> Self {
         Array {
             elem_ty: elem_ty.into(),
@@ -96,32 +138,39 @@ impl Array {
         }
     }
 
+    /// The size of the array in bytes.
     pub fn size(&self) -> usize {
         self.elem_ty.size() * self.len
     }
 
+    /// The type of the array's elements.
     pub fn elem_ty(&self) -> &Type {
         &self.elem_ty
     }
 
+    /// The number of elements in the array.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Whether the array is empty.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
 
 impl Object {
+    /// Create a new object type.
     pub fn new() -> Self {
         Object::default()
     }
 
+    /// The size of the object in bytes.
     pub fn size(&self) -> usize {
         self.fields.iter().map(|field| field.ty.size()).sum()
     }
 
+    /// Add a [`Field`] to the object.
     pub fn add_field(&mut self, name: impl AsRef<str>, ty: impl Into<Type>) {
         self.fields.push(Field {
             name: name.as_ref().to_owned(),
@@ -129,11 +178,13 @@ impl Object {
         });
     }
 
+    /// Add a [`Field`] to the object.
     pub fn with_field(mut self, name: impl AsRef<str>, ty: impl Into<Type>) -> Self {
         self.add_field(name, ty.into());
         self
     }
 
+    /// The fields of the object.
     pub fn fields(&self) -> impl Iterator<Item = &Field> {
         self.fields.iter()
     }
@@ -152,10 +203,12 @@ impl From<Object> for Type {
 }
 
 impl Field {
+    /// The name of the field.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// The type of the field.
     pub fn ty(&self) -> &Type {
         &self.ty
     }
