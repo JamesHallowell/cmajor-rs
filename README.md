@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cmajor = "0.1"
+cmajor = "0.2"
 ```
 
 You will also need to [download the Cmajor library](https://github.com/SoundStacks/cmajor/releases) and tell the crate
