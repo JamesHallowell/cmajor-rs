@@ -39,9 +39,11 @@ impl Cmajor {
 
     /// Load the Cmajor library from the path specified at the `CMAJOR_LIB_PATH` environment variable.
     pub fn new_from_env() -> Result<Self, LibraryError> {
+        let _ = dotenvy::dotenv();
+
         std::env::var("CMAJOR_LIB_PATH")
             .map_err(|_| LibraryError::EnvVarNotSet)
-            .and_then(|path| Self::new(path))
+            .and_then(Self::new)
     }
 
     /// Returns the version of the Cmajor library.

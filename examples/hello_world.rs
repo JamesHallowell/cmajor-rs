@@ -54,7 +54,7 @@ const SAMPLE_RATE: u32 = 44_100;
 const BLOCK_SIZE: u32 = 256;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cmajor = Cmajor::new("libCmajPerformer.dylib")?;
+    let cmajor = Cmajor::new_from_env()?;
 
     println!("Cmajor v{}", cmajor.version());
 
