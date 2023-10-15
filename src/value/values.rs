@@ -92,28 +92,28 @@ impl Value {
     /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {
-            Value::Void => TypeRef::Void,
-            Value::Bool(_) => TypeRef::Bool,
-            Value::Int32(_) => TypeRef::Int32,
-            Value::Int64(_) => TypeRef::Int64,
-            Value::Float32(_) => TypeRef::Float32,
-            Value::Float64(_) => TypeRef::Float64,
-            Value::Array(array) => TypeRef::Array(&array.ty),
-            Value::Object(object) => TypeRef::Object(&object.ty),
+            Self::Void => TypeRef::Void,
+            Self::Bool(_) => TypeRef::Bool,
+            Self::Int32(_) => TypeRef::Int32,
+            Self::Int64(_) => TypeRef::Int64,
+            Self::Float32(_) => TypeRef::Float32,
+            Self::Float64(_) => TypeRef::Float64,
+            Self::Array(array) => TypeRef::Array(&array.ty),
+            Self::Object(object) => TypeRef::Object(&object.ty),
         }
     }
 
     /// Get a reference to the value.
     pub fn as_ref(&self) -> ValueRef<'_> {
         match self {
-            Value::Void => ValueRef::Void,
-            Value::Bool(value) => ValueRef::Bool(*value),
-            Value::Int32(value) => ValueRef::Int32(*value),
-            Value::Int64(value) => ValueRef::Int64(*value),
-            Value::Float32(value) => ValueRef::Float32(*value),
-            Value::Float64(value) => ValueRef::Float64(*value),
-            Value::Array(ref array) => ValueRef::Array(array.as_ref().as_ref()),
-            Value::Object(object) => ValueRef::Object(object.as_ref().as_ref()),
+            Self::Void => ValueRef::Void,
+            Self::Bool(value) => ValueRef::Bool(*value),
+            Self::Int32(value) => ValueRef::Int32(*value),
+            Self::Int64(value) => ValueRef::Int64(*value),
+            Self::Float32(value) => ValueRef::Float32(*value),
+            Self::Float64(value) => ValueRef::Float64(*value),
+            Self::Array(ref array) => ValueRef::Array(array.as_ref().as_ref()),
+            Self::Object(object) => ValueRef::Object(object.as_ref().as_ref()),
         }
     }
 
@@ -170,7 +170,7 @@ impl<'a> ValueRef<'a> {
     pub(crate) fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
         match *self {
             Self::Void => callback(&[]),
-            Self::Bool(value) => callback((value as u32).to_ne_bytes().as_slice()),
+            Self::Bool(value) => callback(u32::from(value).to_ne_bytes().as_slice()),
             Self::Int32(value) => callback(value.to_ne_bytes().as_slice()),
             Self::Int64(value) => callback(value.to_ne_bytes().as_slice()),
             Self::Float32(value) => callback(value.to_ne_bytes().as_slice()),
@@ -328,7 +328,7 @@ impl<'a> ObjectValueRef<'a> {
     pub fn fields(&self) -> impl Iterator<Item = (&str, ValueRef<'_>)> + '_ {
         self.ty
             .fields()
-            .flat_map(|field| self.field(field.name()).map(|value| (field.name(), value)))
+            .filter_map(|field| self.field(field.name()).map(|value| (field.name(), value)))
     }
 
     /// Clone into an owned [`ObjectValue`].

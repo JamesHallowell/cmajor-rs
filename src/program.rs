@@ -23,7 +23,7 @@ impl Program {
         let result = self.inner.parse(None, program.as_ref());
 
         match result {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(error) => {
                 let parser_error: DiagnosticMessage =
                     serde_json::from_str(error.to_string().as_ref())?;
