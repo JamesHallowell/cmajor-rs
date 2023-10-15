@@ -56,11 +56,15 @@ def fetch_cmajor(version, platform, arch):
     if platform == "linux":
         if arch is None:
             raise Exception("Arch must be specified for Linux")
-        fetch_linux(f"{version}/cmajor.linux.{arch}.zip", f"cmaj/linux/{arch}")
+
+        fetch_linux(f"{version}/cmajor.linux.{arch}.zip", f"cmaj/{version}/linux/{arch}")
     elif platform == "macos":
-        fetch_macos(f"{version}/cmajor.dmg", "cmaj/macos")
+        if arch != "universal2":
+            raise Exception(f"Arch must be universal2 for macOS")
+
+        fetch_macos(f"{version}/cmajor.dmg", f"cmaj/{version}/macos/universal2")
     else:
-        raise Exception(f"Unsupported platform {platform} {arch}")
+        raise Exception(f"Unsupported platform: {platform} ({arch})")
 
 
 if __name__ == "__main__":
@@ -69,7 +73,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("version", help="The version of cmajor to fetch")
     parser.add_argument("platform", help="The platform to fetch")
-    parser.add_argument("--arch", help="An optional arch", required=False)
+    parser.add_argument("arch", help="The architecture to fetch")
     args = parser.parse_args()
 
     fetch_cmajor(args.version, args.platform, args.arch)
