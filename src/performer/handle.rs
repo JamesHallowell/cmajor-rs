@@ -1,6 +1,6 @@
 use {
     crate::{
-        engine::{endpoint::Endpoints, Endpoint, EndpointHandle},
+        endpoint::{Endpoint, EndpointHandle, Endpoints},
         performer::{spsc, spsc::EndpointMessage},
         value::Value,
     },

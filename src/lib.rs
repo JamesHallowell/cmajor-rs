@@ -8,6 +8,7 @@ pub use {
 };
 
 pub mod diagnostic;
+pub mod endpoint;
 pub mod engine;
 mod ffi;
 mod library;

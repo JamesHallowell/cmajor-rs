@@ -1,10 +1,7 @@
 use {
     crate::{
-        engine::{
-            endpoint::{EventEndpoint, StreamEndpoint, ValueEndpoint},
-            program_details::ParseEndpointError::UnsupportedType,
-            Endpoint, EndpointId,
-        },
+        endpoint::{Endpoint, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint},
+        engine::program_details::ParseEndpointError::UnsupportedType,
         value::types::{Array, Object, Type},
     },
     serde::{

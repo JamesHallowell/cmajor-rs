@@ -1,5 +1,5 @@
 use {
-    crate::engine::{EndpointHandle, EndpointTypeIndex},
+    crate::endpoint::{EndpointHandle, EndpointTypeIndex},
     serde::{Deserialize, Serialize},
     std::io::Read,
 };

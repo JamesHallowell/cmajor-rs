@@ -1,6 +1,6 @@
 use {
     crate::{
-        engine::EndpointHandle,
+        endpoint::EndpointHandle,
         ffi::{
             performer::{Performer, PerformerPtr},
             program::{Program, ProgramPtr},

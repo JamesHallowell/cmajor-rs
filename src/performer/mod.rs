@@ -6,7 +6,7 @@ mod spsc;
 pub use handle::{EndpointError, PerformerHandle};
 use {
     crate::{
-        engine::{endpoint::Endpoints, Endpoint, EndpointHandle},
+        endpoint::{Endpoint, EndpointHandle, Endpoints},
         ffi::PerformerPtr,
         performer::spsc::EndpointMessage,
         value::ValueRef,

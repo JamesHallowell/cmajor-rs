@@ -1,6 +1,8 @@
+//! Endpoints for passing data between a program and its host.
+
 use {
     crate::{
-        engine::annotation::Annotation,
+        engine::Annotation,
         value::types::{Type, TypeRef},
     },
     serde::{Deserialize, Serialize},
@@ -214,14 +216,22 @@ impl From<EndpointTypeIndex> for u32 {
     }
 }
 
-#[derive(Debug, Default)]
+/// A collection of endpoints.
+#[derive(Debug)]
 pub struct Endpoints {
     inputs: HashMap<EndpointHandle, Endpoint>,
     outputs: HashMap<EndpointHandle, Endpoint>,
 }
 
 impl Endpoints {
-    pub fn with_inputs(
+    pub(crate) fn new() -> Self {
+        Self {
+            inputs: HashMap::default(),
+            outputs: HashMap::default(),
+        }
+    }
+
+    pub(crate) fn with_inputs(
         mut self,
         inputs: impl IntoIterator<Item = (EndpointHandle, Endpoint)>,
     ) -> Self {
@@ -229,7 +239,7 @@ impl Endpoints {
         self
     }
 
-    pub fn with_outputs(
+    pub(crate) fn with_outputs(
         mut self,
         outputs: impl IntoIterator<Item = (EndpointHandle, Endpoint)>,
     ) -> Self {
@@ -237,10 +247,12 @@ impl Endpoints {
         self
     }
 
+    /// Get an input endpoint by its handle.
     pub fn get_input(&self, handle: EndpointHandle) -> Option<&Endpoint> {
         self.inputs.get(&handle)
     }
 
+    /// Get an output endpoint by its handle.
     pub fn get_output(&self, handle: EndpointHandle) -> Option<&Endpoint> {
         self.outputs.get(&handle)
     }
@@ -253,6 +265,7 @@ impl Endpoints {
         }
     }
 
+    /// Get an input endpoint by its identifier.
     pub fn get_input_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
         self.inputs
             .iter()
@@ -260,6 +273,7 @@ impl Endpoints {
             .and_then(|handle| self.get_input(handle).map(|endpoint| (handle, endpoint)))
     }
 
+    /// Get an output endpoint by its identifier.
     pub fn get_output_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
         self.outputs
             .iter()

@@ -1,5 +1,5 @@
 use {
-    crate::engine::{EndpointHandle, EndpointTypeIndex},
+    crate::endpoint::{EndpointHandle, EndpointTypeIndex},
     std::{
         ffi::{c_char, c_double, c_int, c_void},
         ptr::null_mut,

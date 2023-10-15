@@ -1,5 +1,5 @@
 use cmajor::{
-    engine::Endpoint,
+    endpoint::Endpoint,
     performer::{EndpointError, Performer, PerformerHandle},
     value::{
         types::{Object, Type},
