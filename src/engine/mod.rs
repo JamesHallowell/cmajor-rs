@@ -1,12 +1,9 @@
 //! The Cmajor engine for compiling programs.
 
+mod annotation;
 pub(crate) mod endpoint;
 mod program_details;
 
-pub use endpoint::{
-    Endpoint, EndpointHandle, EndpointId, EndpointTypeIndex, EventEndpoint, StreamEndpoint,
-    ValueEndpoint,
-};
 use {
     crate::{
         engine::{endpoint::Endpoints, program_details::ProgramDetails},
@@ -20,6 +17,13 @@ use {
         ffi::{CStr, CString},
         slice::Split,
         sync::Arc,
+    },
+};
+pub use {
+    annotation::Annotation,
+    endpoint::{
+        Endpoint, EndpointHandle, EndpointId, EndpointTypeIndex, EventEndpoint, StreamEndpoint,
+        ValueEndpoint,
     },
 };
 

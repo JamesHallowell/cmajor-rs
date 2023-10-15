@@ -523,3 +523,34 @@ fn read_and_write_vectors() {
         ]
     );
 }
+
+#[test]
+fn endpoints_with_annotations() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            input value float a [[ name: "foo", min: 0.5, max: 10.0, hidden: true ]];
+            output value int b [[ name: "bar", min: 1, max: 5, hidden: false ]];
+        
+            void main()
+            {
+                advance();
+            }
+        }
+    "#;
+
+    let (performer, endpoints) = setup(PROGRAM);
+
+    let (_, a) = endpoints.get_input("a").unwrap();
+
+    assert_eq!(a.annotation().get_str("name"), Some("foo"));
+    assert_eq!(a.annotation().get_f64("min"), Some(0.5));
+    assert_eq!(a.annotation().get_f64("max"), Some(10.0));
+    assert_eq!(a.annotation().get_bool("hidden"), Some(true));
+
+    let (_, b) = performer.get_output("b").unwrap();
+    assert_eq!(b.annotation().get_str("name"), Some("bar"));
+    assert_eq!(b.annotation().get_i64("min"), Some(1));
+    assert_eq!(b.annotation().get_i64("max"), Some(5));
+    assert_eq!(b.annotation().get_bool("hidden"), Some(false));
+}

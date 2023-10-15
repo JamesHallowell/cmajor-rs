@@ -1,5 +1,8 @@
 use {
-    crate::value::types::{Type, TypeRef},
+    crate::{
+        engine::annotation::Annotation,
+        value::types::{Type, TypeRef},
+    },
     serde::{Deserialize, Serialize},
     std::{borrow::Borrow, collections::HashMap},
 };
@@ -60,6 +63,7 @@ pub enum Endpoint {
 pub struct StreamEndpoint {
     id: EndpointId,
     ty: Type,
+    annotation: Annotation,
 }
 
 impl From<StreamEndpoint> for Endpoint {
@@ -73,6 +77,7 @@ impl From<StreamEndpoint> for Endpoint {
 pub struct EventEndpoint {
     id: EndpointId,
     ty: Vec<Type>,
+    annotation: Annotation,
 }
 
 impl From<EventEndpoint> for Endpoint {
@@ -86,6 +91,7 @@ impl From<EventEndpoint> for Endpoint {
 pub struct ValueEndpoint {
     id: EndpointId,
     ty: Type,
+    annotation: Annotation,
 }
 
 impl From<ValueEndpoint> for Endpoint {
@@ -103,11 +109,20 @@ impl Endpoint {
             Self::Value(endpoint) => &endpoint.id,
         }
     }
+
+    /// The endpoint's annotation.
+    pub fn annotation(&self) -> &Annotation {
+        match self {
+            Self::Stream(endpoint) => &endpoint.annotation,
+            Self::Event(endpoint) => &endpoint.annotation,
+            Self::Value(endpoint) => &endpoint.annotation,
+        }
+    }
 }
 
 impl ValueEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Type) -> Self {
-        Self { id, ty }
+    pub(crate) fn new(id: EndpointId, ty: Type, annotation: Annotation) -> Self {
+        Self { id, ty, annotation }
     }
 
     /// The endpoint's identifier (or name).
@@ -118,12 +133,17 @@ impl ValueEndpoint {
     /// The type of the endpoint's value.
     pub fn ty(&self) -> &Type {
         &self.ty
+    }
+
+    /// The endpoint's annotation.
+    pub fn annotation(&self) -> &Annotation {
+        &self.annotation
     }
 }
 
 impl StreamEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Type) -> Self {
-        Self { id, ty }
+    pub(crate) fn new(id: EndpointId, ty: Type, annotation: Annotation) -> Self {
+        Self { id, ty, annotation }
     }
 
     /// The endpoint's identifier (or name).
@@ -135,12 +155,17 @@ impl StreamEndpoint {
     pub fn ty(&self) -> &Type {
         &self.ty
     }
+
+    /// The endpoint's annotation.
+    pub fn annotation(&self) -> &Annotation {
+        &self.annotation
+    }
 }
 
 impl EventEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Vec<Type>) -> Self {
+    pub(crate) fn new(id: EndpointId, ty: Vec<Type>, annotation: Annotation) -> Self {
         assert!(!ty.is_empty());
-        Self { id, ty }
+        Self { id, ty, annotation }
     }
 
     /// The endpoint's identifier (or name).
@@ -151,6 +176,11 @@ impl EventEndpoint {
     /// The types of the endpoint's events.
     pub fn types(&self) -> &[Type] {
         &self.ty
+    }
+
+    /// The endpoint's annotation.
+    pub fn annotation(&self) -> &Annotation {
+        &self.annotation
     }
 
     /// The index of the given type in the endpoint's type list.

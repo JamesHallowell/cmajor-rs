@@ -56,6 +56,9 @@ struct EndpointDetails {
     )]
     value_type: Vec<Type>,
 
+    #[serde(rename = "annotation")]
+    annotation: Option<JsonMap<String, JsonValue>>,
+
     #[serde(flatten)]
     _extra: JsonMap<String, JsonValue>,
 }
@@ -203,24 +206,29 @@ impl TryFrom<&EndpointDetails> for Endpoint {
             id,
             endpoint_type,
             value_type,
+            annotation,
             ..
         }: &EndpointDetails,
     ) -> Result<Self, Self::Error> {
+        let annotation = annotation.clone().unwrap_or_default().into();
+
         Ok(match endpoint_type {
             EndpointType::Stream => {
                 if value_type.len() != 1 {
                     return Err(ParseEndpointError::UnexpectedNumberOfTypes);
                 }
 
-                StreamEndpoint::new(id.clone(), value_type[0].clone()).into()
+                StreamEndpoint::new(id.clone(), value_type[0].clone(), annotation).into()
             }
-            EndpointType::Event => EventEndpoint::new(id.clone(), value_type.clone()).into(),
+            EndpointType::Event => {
+                EventEndpoint::new(id.clone(), value_type.clone(), annotation).into()
+            }
             EndpointType::Value => {
                 if value_type.len() != 1 {
                     return Err(ParseEndpointError::UnexpectedNumberOfTypes);
                 }
 
-                ValueEndpoint::new(id.clone(), value_type[0].clone()).into()
+                ValueEndpoint::new(id.clone(), value_type[0].clone(), annotation).into()
             }
         })
     }
