@@ -96,18 +96,34 @@ impl PerformerPtr {
         unsafe { ((*(*self.performer).vtable).advance)(self.performer) };
     }
 
-    pub fn copy_output_frames<T>(&self, handle: EndpointHandle, frames: &mut [T]) {
+    pub unsafe fn set_input_frames<T>(&self, handle: EndpointHandle, frames: &[T])
+    where
+        T: Copy,
+    {
+        let num_frames = frames.len() as u32;
+        let frames = frames.as_ptr().cast();
+
+        ((*(*self.performer).vtable).set_input_frames)(
+            self.performer,
+            handle.into(),
+            frames,
+            num_frames,
+        );
+    }
+
+    pub unsafe fn copy_output_frames<T>(&self, handle: EndpointHandle, frames: &mut [T])
+    where
+        T: Copy,
+    {
         let num_frames = frames.len() as u32;
         let frames = frames.as_mut_ptr().cast();
 
-        unsafe {
-            ((*(*self.performer).vtable).copy_output_frames)(
-                self.performer,
-                handle.into(),
-                frames,
-                num_frames,
-            )
-        };
+        ((*(*self.performer).vtable).copy_output_frames)(
+            self.performer,
+            handle.into(),
+            frames,
+            num_frames,
+        );
     }
 
     pub fn copy_output_value(&self, handle: EndpointHandle, buffer: &mut [u8]) {

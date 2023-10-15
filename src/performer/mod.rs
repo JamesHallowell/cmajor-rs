@@ -20,7 +20,6 @@ pub struct Performer {
     pub(super) endpoints: Arc<Endpoints>,
     pub(super) endpoint_rx: spsc::EndpointReceiver,
     pub(super) scratch_buffer: Vec<u8>,
-    pub(super) block_size: Option<u32>,
 }
 
 impl Performer {
@@ -36,7 +35,6 @@ impl Performer {
                 endpoints: Arc::clone(&endpoints),
                 endpoint_rx,
                 scratch_buffer: vec![0; 512],
-                block_size: None,
             },
             PerformerHandle {
                 endpoints,
@@ -45,13 +43,13 @@ impl Performer {
         )
     }
 
-    /// Renders the next block of frames.
-    pub fn advance(&mut self, num_frames: u32) {
-        if self.block_size != Some(num_frames) {
-            self.inner.set_block_size(num_frames);
-            self.block_size.replace(num_frames);
-        }
+    /// Sets the block size of the performer.
+    pub fn set_block_size(&mut self, num_frames: u32) {
+        self.inner.set_block_size(num_frames);
+    }
 
+    /// Renders the next block of frames.
+    pub fn advance(&mut self) {
         let result = self.endpoint_rx.read_messages(|message| match message {
             EndpointMessage::Value {
                 handle,
@@ -115,6 +113,22 @@ impl Performer {
         T: Copy,
     {
         self.inner.copy_output_frames(handle, frames);
+    }
+
+    /// Writes the input frames to an endpoint from the given slice.
+    ///
+    /// # Safety
+    ///
+    /// To avoid overhead in the real-time audio thread this function does not perform any checks
+    /// against the inputs and passes them directly to the Cmajor library.
+    ///
+    /// The caller is responsible for ensuring that the type of the endpoint matches the type of the
+    /// given slice.
+    pub unsafe fn write_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &[T])
+    where
+        T: Copy,
+    {
+        self.inner.set_input_frames(handle, frames);
     }
 
     /// Iterates over the events of an endpoint.

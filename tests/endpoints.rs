@@ -23,8 +23,8 @@ fn setup(program: &str) -> (Performer, PerformerHandle) {
     let engine = engine.load(&program).expect("failed to load program");
     let engine = engine.link().expect("failed to link program");
 
-    let (performer, endpoints) = engine.performer();
-
+    let (mut performer, endpoints) = engine.performer();
+    performer.set_block_size(128);
     (performer, endpoints)
 }
 
@@ -50,7 +50,7 @@ fn can_read_and_write_to_value_endpoint() {
     let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.write_value(input, 2).unwrap();
-    performer.advance(1);
+    performer.advance();
 
     let result = performer.read_value(output).unwrap();
 
@@ -120,7 +120,7 @@ fn can_read_and_write_complex32_numbers() {
         )
         .unwrap();
 
-    performer.advance(1);
+    performer.advance();
 
     let result: Complex32 = performer.read_value(output).unwrap().try_into().unwrap();
 
@@ -164,7 +164,7 @@ fn can_read_and_write_complex64_numbers() {
         )
         .unwrap();
 
-    performer.advance(1);
+    performer.advance();
 
     let result: Complex64 = performer.read_value(output).unwrap().try_into().unwrap();
 
@@ -202,7 +202,7 @@ fn can_read_structs() {
     let (mut performer, _) = setup(PROGRAM);
     let (output, _) = performer.get_output("out").unwrap();
 
-    performer.advance(1);
+    performer.advance();
 
     let result = performer.read_value(output).unwrap();
     let object = if let ValueRef::Object(object) = result {
@@ -239,7 +239,7 @@ fn can_read_and_write_arrays() {
 
     endpoints.write_value(input, [1, 2, 3, 4]).unwrap();
 
-    performer.advance(1);
+    performer.advance();
 
     let result = performer.read_value(output).unwrap();
     let array = if let ValueRef::Array(array) = result {
@@ -287,12 +287,12 @@ fn can_post_events() {
 
     endpoints.post_event(input, 4).unwrap();
 
-    performer.advance(1);
+    performer.advance();
 
     assert_eq!(performer.read_value(output).unwrap(), ValueRef::Int32(16));
 
     endpoints.post_event(input, true).unwrap();
-    performer.advance(1);
+    performer.advance();
 
     assert_eq!(performer.read_value(output).unwrap(), ValueRef::Int32(42));
 }
@@ -328,7 +328,7 @@ fn can_read_events() {
     let (output, _) = performer.get_output("out").unwrap();
 
     endpoints.post_event(input, 5_i32).unwrap();
-    performer.advance(1);
+    performer.advance();
     assert_eq!(
         performer
             .read_events(output, |frame, handle, data| {
@@ -341,7 +341,7 @@ fn can_read_events() {
     );
 
     endpoints.post_event(input, true).unwrap();
-    performer.advance(1);
+    performer.advance();
     assert_eq!(
         performer
             .read_events(output, |frame, handle, data| {
@@ -374,17 +374,18 @@ fn can_read_streams() {
     "#;
 
     let (mut performer, _) = setup(PROGRAM);
+    performer.set_block_size(8);
 
     let (output, _) = performer.get_output("out").unwrap();
 
-    performer.advance(8);
+    performer.advance();
 
     let mut buffer = [0_i32; 8];
 
     unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
     assert_eq!(buffer, [0, 1, 2, 3, 4, 5, 6, 7]);
 
-    performer.advance(8);
+    performer.advance();
 
     unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
     assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
@@ -443,4 +444,39 @@ fn can_query_endpoint_information() {
             Object::new().with_field("d", Type::Bool).into()
         ]
     );
+}
+
+#[test]
+fn can_write_streams() {
+    const PROGRAM: &str = r#"
+        processor Doubler
+        {
+            input stream int in;
+            output stream int out;
+        
+            void main()
+            {
+                loop {
+                    out <- in * 2;
+                    advance();
+                }
+            }
+        }
+    "#;
+
+    let (mut performer, endpoints) = setup(PROGRAM);
+
+    let mut buffer = [1, 2, 3, 4, 5, 6, 7, 8];
+    performer.set_block_size(buffer.len() as u32);
+
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
+
+    unsafe {
+        performer.write_stream_unchecked(input, buffer.as_mut_slice());
+    }
+    performer.advance();
+    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+
+    assert_eq!(buffer, [2, 4, 6, 8, 10, 12, 14, 16]);
 }
