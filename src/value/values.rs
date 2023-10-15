@@ -139,6 +139,22 @@ impl<'a> ValueRef<'a> {
         }
     }
 
+    /// If the value is an array, get a reference to it. Otherwise returns `None`.
+    pub fn as_array(&self) -> Option<ArrayValueRef<'_>> {
+        match self {
+            Self::Array(array) => Some(*array),
+            _ => None,
+        }
+    }
+
+    /// If the value is an object, get a reference to it. Otherwise returns `None`.
+    pub fn as_object(&self) -> Option<ObjectValueRef<'_>> {
+        match self {
+            Self::Object(object) => Some(*object),
+            _ => None,
+        }
+    }
+
     /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {

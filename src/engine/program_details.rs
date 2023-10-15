@@ -74,22 +74,33 @@ enum EndpointType {
 enum ValueType {
     #[serde(rename = "void")]
     Void,
+
     #[serde(rename = "bool")]
     Bool,
+
     #[serde(rename = "int32")]
     Int32,
+
     #[serde(rename = "int64")]
     Int64,
+
     #[serde(rename = "float32")]
     Float32,
+
     #[serde(rename = "float64")]
     Float64,
+
     #[serde(rename = "string")]
     String,
+
     #[serde(rename = "array")]
     Array,
+
     #[serde(rename = "object")]
     Object,
+
+    #[serde(rename = "vector")]
+    Vector,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -169,7 +180,7 @@ impl TryFrom<&EndpointDataType> for Type {
                 }
                 Ok(object.into())
             }
-            ValueType::Array => {
+            ValueType::Array | ValueType::Vector => {
                 let element_ty: Type = element
                     .as_ref()
                     .ok_or(ParseEndpointError::ArrayHasNoElement)?

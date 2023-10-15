@@ -20,8 +20,10 @@ fn setup(program: &str) -> (Performer, PerformerHandle) {
 
     let program = cmajor.parse(program).expect("failed to parse program");
 
-    let engine = engine.load(&program).expect("failed to load program");
-    let engine = engine.link().expect("failed to link program");
+    let engine = engine
+        .load(&program)
+        .and_then(|engine| engine.link())
+        .expect("failed to load and link program");
 
     let (mut performer, endpoints) = engine.performer();
     performer.set_block_size(128);
@@ -479,4 +481,45 @@ fn can_write_streams() {
     unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
 
     assert_eq!(buffer, [2, 4, 6, 8, 10, 12, 14, 16]);
+}
+
+#[test]
+fn read_and_write_vectors() {
+    const PROGRAM: &str = r#"
+        processor Echo
+        {
+            input value int<4> in;
+            output value int<4> out;
+        
+            void main()
+            {
+                loop {
+                    out <- in;
+                    advance();
+                }
+            }
+        }
+    "#;
+
+    let (mut performer, mut endpoints) = setup(PROGRAM);
+
+    let (input, _) = endpoints.get_input("in").unwrap();
+    let (output, _) = performer.get_output("out").unwrap();
+
+    endpoints.write_value(input, [1, 2, 3, 4]).unwrap();
+    performer.advance();
+
+    let value = performer.read_value(output).unwrap();
+    let array = value.as_array().expect("expected an array");
+
+    let elems: Vec<_> = array.elems().collect();
+    assert_eq!(
+        elems,
+        vec![
+            ValueRef::Int32(1),
+            ValueRef::Int32(2),
+            ValueRef::Int32(3),
+            ValueRef::Int32(4)
+        ]
+    );
 }
