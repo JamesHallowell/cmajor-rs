@@ -31,8 +31,26 @@ pub struct Cmajor {
 }
 
 impl Cmajor {
+    /// Create a new instance of the Cmajor library.
+    #[cfg(feature = "static")]
+    pub fn new() -> Self {
+        Self {
+            library: Library::new(),
+        }
+    }
+
+    /// Create a new instance of the Cmajor library.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the library fails to load.
+    #[cfg(not(feature = "static"))]
+    pub fn new() -> Self {
+        Self::new_from_env().unwrap()
+    }
+
     /// Load the Cmajor library at the given path.
-    pub fn new(path_to_library: impl AsRef<Path>) -> Result<Self, LibraryError> {
+    pub fn new_from_path(path_to_library: impl AsRef<Path>) -> Result<Self, LibraryError> {
         let library = Library::load(path_to_library)?;
         Ok(Self { library })
     }
@@ -43,7 +61,7 @@ impl Cmajor {
 
         std::env::var("CMAJOR_LIB_PATH")
             .map_err(|_| LibraryError::EnvVarNotSet)
-            .and_then(Self::new)
+            .and_then(Self::new_from_path)
     }
 
     /// Returns the version of the Cmajor library.

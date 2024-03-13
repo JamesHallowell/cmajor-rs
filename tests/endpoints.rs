@@ -9,7 +9,7 @@ use cmajor::{
 };
 
 fn setup(program: &str) -> (Performer, PerformerHandle) {
-    let cmajor = Cmajor::new_from_env().expect("failed to load library");
+    let cmajor = Cmajor::new();
 
     let llvm = cmajor
         .engine_types()
