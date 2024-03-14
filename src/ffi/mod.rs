@@ -4,7 +4,6 @@ use {
     std::{
         ffi::{c_char, c_void, CStr},
         path::Path,
-        sync::Arc,
     },
 };
 
@@ -20,14 +19,23 @@ pub use {
 };
 
 pub struct Library {
-    // TODO: Do we need to hold on to libloading::Library? It doesn't implement Drop...?
-    _library: Arc<libloading::Library>,
     entry_points: *mut EntryPoints,
 }
 
 type CMajorGetEntryPointsV9 = unsafe extern "C" fn() -> *mut c_void;
 
+#[cfg(feature = "static")]
+extern "C" {
+    fn cmajor_getEntryPointsV9() -> *mut c_void;
+}
+
 impl Library {
+    #[cfg(feature = "static")]
+    pub fn new() -> Self {
+        let entry_points = unsafe { cmajor_getEntryPointsV9() }.cast();
+        Self { entry_points }
+    }
+
     pub fn load(path_to_library: impl AsRef<Path>) -> Result<Self, libloading::Error> {
         const LIBRARY_ENTRY_POINT: &[u8] = b"cmajor_getEntryPointsV9";
 
@@ -37,10 +45,7 @@ impl Library {
 
         let entry_points = unsafe { entry_point_fn() }.cast();
 
-        Ok(Self {
-            _library: Arc::new(library),
-            entry_points,
-        })
+        Ok(Self { entry_points })
     }
 
     pub fn version(&self) -> &CStr {
