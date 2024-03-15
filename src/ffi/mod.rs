@@ -14,9 +14,7 @@ mod program;
 
 mod string;
 
-pub use {
-    engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr, string::CmajorStringPtr,
-};
+pub use {engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr};
 
 pub struct Library {
     entry_points: *mut EntryPoints,
