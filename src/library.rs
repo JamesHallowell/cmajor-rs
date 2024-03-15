@@ -30,6 +30,12 @@ pub struct Cmajor {
     library: Library,
 }
 
+impl Default for Cmajor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cmajor {
     /// Create a new instance of the Cmajor library.
     #[cfg(feature = "static")]
