@@ -4,16 +4,23 @@ use {
     crate::{
         endpoint::{Endpoint, EndpointDirection, EndpointHandle, Endpoints},
         ffi::PerformerPtr,
-        value::{types::IsScalar, Value, ValueRef},
+        value::{
+            types::{IsScalar, Type},
+            Value, ValueRef,
+        },
     },
     std::sync::Arc,
 };
 
 /// A Cmajor performer.
 pub struct Performer {
-    pub(super) inner: PerformerPtr,
-    pub(super) endpoints: Arc<Endpoints>,
-    pub(super) scratch_buffer: Vec<u8>,
+    inner: PerformerPtr,
+    endpoints: Arc<Endpoints>,
+    value_read_buffer: ValueReadBuffer,
+}
+
+struct ValueReadBuffer {
+    buffer: Vec<u8>,
 }
 
 impl Performer {
@@ -21,7 +28,7 @@ impl Performer {
         Performer {
             inner: performer,
             endpoints: Arc::clone(&endpoints),
-            scratch_buffer: vec![0; 512],
+            value_read_buffer: ValueReadBuffer::new(&endpoints),
         }
     }
 
@@ -47,27 +54,20 @@ impl Performer {
             .get(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        if endpoint.direction() != EndpointDirection::Output {
-            return Err(EndpointError::DirectionMismatch);
-        }
-
         let endpoint = if let Endpoint::Value(endpoint) = endpoint {
             endpoint
         } else {
             return Err(EndpointError::EndpointTypeMismatch);
         };
 
-        if endpoint.ty().size() > self.scratch_buffer.len() {
-            return Err(EndpointError::TypeTooLargeForBuffer);
+        if endpoint.direction() != EndpointDirection::Output {
+            return Err(EndpointError::DirectionMismatch);
         }
 
-        self.inner
-            .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
+        let buffer = self.value_read_buffer.get_buffer_for_type(endpoint.ty());
+        self.inner.copy_output_value(handle, buffer);
 
-        Ok(ValueRef::new_from_slice(
-            endpoint.ty().as_ref(),
-            &self.scratch_buffer,
-        ))
+        Ok(ValueRef::new_from_slice(endpoint.ty().as_ref(), buffer))
     }
 
     /// Set the value of an endpoint.
@@ -249,8 +249,32 @@ pub enum EndpointError {
     /// Failed to send a message to the performer.
     #[error("failed to send message to performer")]
     FailedToSendMessageToPerformer,
+}
 
-    /// The data type is too large for the buffer.
-    #[error("data type too large for buffer")]
-    TypeTooLargeForBuffer,
+impl ValueReadBuffer {
+    fn new(endpoints: &Endpoints) -> Self {
+        let largest_output_value_size = endpoints
+            .outputs()
+            .filter_map(|endpoint| {
+                if let Endpoint::Value(endpoint) = endpoint {
+                    Some(endpoint.ty().size())
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or(0);
+
+        Self {
+            buffer: vec![0; largest_output_value_size],
+        }
+    }
+
+    fn get_buffer_for_type(&mut self, ty: &Type) -> &mut [u8] {
+        assert!(
+            self.buffer.len() >= ty.size(),
+            "value type too large for buffer"
+        );
+        &mut self.buffer[..ty.size()]
+    }
 }
