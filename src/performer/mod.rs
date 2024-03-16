@@ -45,14 +45,21 @@ impl Performer {
         let endpoint = self
             .endpoints
             .get(handle)
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Output)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Output {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Value(endpoint) = endpoint {
             endpoint
         } else {
             return Err(EndpointError::EndpointTypeMismatch);
         };
+
+        if endpoint.ty().size() > self.scratch_buffer.len() {
+            return Err(EndpointError::TypeTooLargeForBuffer);
+        }
 
         self.inner
             .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
@@ -72,8 +79,11 @@ impl Performer {
         let endpoint = self
             .endpoints
             .get(handle)
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Input)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Input {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Value(value) = endpoint {
             value
@@ -135,8 +145,11 @@ impl Performer {
         let endpoint = self
             .endpoints
             .get(handle)
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Input)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Input {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Event(endpoint) = endpoint {
             endpoint
@@ -167,8 +180,11 @@ impl Performer {
         let endpoint = self
             .endpoints
             .get(handle)
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Output)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Output {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Event(endpoint) = endpoint {
             endpoint
@@ -233,4 +249,8 @@ pub enum EndpointError {
     /// Failed to send a message to the performer.
     #[error("failed to send message to performer")]
     FailedToSendMessageToPerformer,
+
+    /// The data type is too large for the buffer.
+    #[error("data type too large for buffer")]
+    TypeTooLargeForBuffer,
 }

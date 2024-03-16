@@ -164,6 +164,11 @@ impl ValueEndpoint {
         &self.id
     }
 
+    /// The endpoint's direction.
+    pub fn direction(&self) -> EndpointDirection {
+        self.direction
+    }
+
     /// The type of the endpoint's value.
     pub fn ty(&self) -> &Type {
         &self.ty
@@ -193,6 +198,11 @@ impl StreamEndpoint {
     /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         &self.id
+    }
+
+    /// The endpoint's direction.
+    pub fn direction(&self) -> EndpointDirection {
+        self.direction
     }
 
     /// The type of the endpoint's value.
@@ -225,6 +235,11 @@ impl EventEndpoint {
     /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         &self.id
+    }
+
+    /// The endpoint's direction.
+    pub fn direction(&self) -> EndpointDirection {
+        self.direction
     }
 
     /// The types of the endpoint's events.
