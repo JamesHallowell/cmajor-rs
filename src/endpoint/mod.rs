@@ -60,6 +60,16 @@ pub enum Endpoint {
     Value(ValueEndpoint),
 }
 
+/// The direction of an endpoint.
+#[derive(Debug, Copy, Clone)]
+pub enum EndpointDirection {
+    /// An input endpoint.
+    Input,
+
+    /// An output endpoint.
+    Output,
+}
+
 /// A stream endpoint.
 #[derive(Debug)]
 pub struct StreamEndpoint {
@@ -219,65 +229,50 @@ impl From<EndpointTypeIndex> for u32 {
 /// A collection of endpoints.
 #[derive(Debug)]
 pub struct Endpoints {
-    inputs: HashMap<EndpointHandle, Endpoint>,
-    outputs: HashMap<EndpointHandle, Endpoint>,
+    endpoints: HashMap<EndpointHandle, (EndpointDirection, Endpoint)>,
+    ids: HashMap<EndpointId, EndpointHandle>,
 }
 
 impl Endpoints {
-    pub(crate) fn new() -> Self {
-        Self {
-            inputs: HashMap::default(),
-            outputs: HashMap::default(),
-        }
-    }
-
-    pub(crate) fn with_inputs(
-        mut self,
-        inputs: impl IntoIterator<Item = (EndpointHandle, Endpoint)>,
+    pub(crate) fn new(
+        endpoints: impl IntoIterator<Item = (EndpointHandle, (EndpointDirection, Endpoint))>,
     ) -> Self {
-        self.inputs = inputs.into_iter().collect();
-        self
-    }
+        let endpoints: HashMap<_, _> = endpoints.into_iter().collect();
+        let ids = endpoints
+            .iter()
+            .map(|(handle, (_, endpoint))| (endpoint.id().clone(), *handle))
+            .collect();
 
-    pub(crate) fn with_outputs(
-        mut self,
-        outputs: impl IntoIterator<Item = (EndpointHandle, Endpoint)>,
-    ) -> Self {
-        self.outputs = outputs.into_iter().collect();
-        self
+        Self { endpoints, ids }
     }
 
     /// Get an input endpoint by its handle.
     pub fn get_input(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.inputs.get(&handle)
+        self.endpoints
+            .get(&handle)
+            .and_then(|(direction, endpoint)| {
+                matches!(direction, EndpointDirection::Input).then(|| endpoint)
+            })
     }
 
     /// Get an output endpoint by its handle.
     pub fn get_output(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.outputs.get(&handle)
-    }
-
-    fn find_matching<'a>(
-        id: impl AsRef<str>,
-    ) -> impl Fn((&EndpointHandle, &'a Endpoint)) -> Option<EndpointHandle> {
-        move |(handle, endpoint): (&EndpointHandle, &Endpoint)| {
-            (endpoint.id().as_ref() == id.as_ref()).then_some(*handle)
-        }
+        self.endpoints
+            .get(&handle)
+            .and_then(|(direction, endpoint)| {
+                matches!(direction, EndpointDirection::Output).then(|| endpoint)
+            })
     }
 
     /// Get an input endpoint by its identifier.
     pub fn get_input_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
-        self.inputs
-            .iter()
-            .find_map(Self::find_matching(id))
-            .and_then(|handle| self.get_input(handle).map(|endpoint| (handle, endpoint)))
+        let handle = self.ids.get(id.as_ref()).copied()?;
+        self.get_input(handle).map(|endpoint| (handle, endpoint))
     }
 
     /// Get an output endpoint by its identifier.
     pub fn get_output_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
-        self.outputs
-            .iter()
-            .find_map(Self::find_matching(id))
-            .and_then(|handle| self.get_output(handle).map(|endpoint| (handle, endpoint)))
+        let handle = self.ids.get(id.as_ref()).copied()?;
+        self.get_output(handle).map(|endpoint| (handle, endpoint))
     }
 }

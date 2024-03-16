@@ -1,6 +1,8 @@
 use {
     crate::{
-        endpoint::{Endpoint, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint},
+        endpoint::{
+            Endpoint, EndpointDirection, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint,
+        },
         engine::program_details::ParseEndpointError::UnsupportedType,
         value::types::{Array, Object, Type},
     },
@@ -9,7 +11,7 @@ use {
         Deserialize, Deserializer,
     },
     serde_json::{Map as JsonMap, Value as JsonValue},
-    std::{borrow::Borrow, fmt::Formatter},
+    std::{borrow::Borrow, fmt::Formatter, iter::repeat},
 };
 
 #[derive(Debug, Deserialize)]
@@ -21,20 +23,19 @@ pub struct ProgramDetails {
 }
 
 impl ProgramDetails {
-    pub fn inputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
-        self.inputs
-            .iter()
-            .map(Endpoint::try_from)
-            .inspect(print_endpoint_error)
-            .filter_map(|endpoint| endpoint.ok())
-    }
+    pub fn endpoints(&self) -> impl Iterator<Item = (EndpointDirection, Endpoint)> + '_ {
+        let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
+        let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));
 
-    pub fn outputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
-        self.outputs
-            .iter()
-            .map(Endpoint::try_from)
-            .inspect(print_endpoint_error)
-            .filter_map(|endpoint| endpoint.ok())
+        inputs.chain(outputs).filter_map(|(details, direction)| {
+            match Endpoint::try_from(details).map(|endpoint| (direction, endpoint)) {
+                Ok(endpoint) => Some(endpoint),
+                Err(err) => {
+                    eprintln!("failed to parse endpoint: {:?}", err);
+                    None
+                }
+            }
+        })
     }
 }
 
@@ -64,8 +65,10 @@ struct EndpointDetails {
 enum EndpointType {
     #[serde(rename = "stream")]
     Stream,
+
     #[serde(rename = "event")]
     Event,
+
     #[serde(rename = "value")]
     Value,
 }
@@ -143,12 +146,6 @@ pub enum ParseEndpointError {
 
     #[error("endpoint has an unexpected number of types")]
     UnexpectedNumberOfTypes,
-}
-
-fn print_endpoint_error(result: &Result<Endpoint, ParseEndpointError>) {
-    if let Err(err) = result {
-        eprintln!("failed to parse endpoint: {:?}", err);
-    }
 }
 
 impl TryFrom<&EndpointDataType> for Type {

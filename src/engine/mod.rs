@@ -183,17 +183,14 @@ impl Engine<Loaded> {
             }
         };
 
-        let inputs = program_details.inputs().map(|endpoint| {
-            let handle = self.get_endpoint_handle(endpoint.id()).unwrap();
-            (handle, endpoint)
-        });
+        let endpoints = program_details
+            .endpoints()
+            .filter_map(|(direction, endpoint)| {
+                self.get_endpoint_handle(endpoint.id())
+                    .map(|handle| (handle, (direction, endpoint)))
+            });
 
-        let outputs = program_details.outputs().map(|endpoint| {
-            let handle = self.get_endpoint_handle(endpoint.id()).unwrap();
-            (handle, endpoint)
-        });
-
-        let endpoints = Endpoints::new().with_inputs(inputs).with_outputs(outputs);
+        let endpoints = Endpoints::new(endpoints);
 
         match self.inner.link() {
             Ok(_) => {
