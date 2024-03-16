@@ -1,6 +1,8 @@
 use {
     crate::{
-        endpoint::{Endpoint, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint},
+        endpoint::{
+            Endpoint, EndpointDirection, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint,
+        },
         engine::program_details::ParseEndpointError::UnsupportedType,
         value::types::{Array, Object, Type},
     },
@@ -9,7 +11,7 @@ use {
         Deserialize, Deserializer,
     },
     serde_json::{Map as JsonMap, Value as JsonValue},
-    std::{borrow::Borrow, fmt::Formatter},
+    std::{borrow::Borrow, fmt::Formatter, iter::repeat},
 };
 
 #[derive(Debug, Deserialize)]
@@ -21,20 +23,19 @@ pub struct ProgramDetails {
 }
 
 impl ProgramDetails {
-    pub fn inputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
-        self.inputs
-            .iter()
-            .map(Endpoint::try_from)
-            .inspect(print_endpoint_error)
-            .filter_map(|endpoint| endpoint.ok())
-    }
+    pub fn endpoints(&self) -> impl Iterator<Item = Endpoint> + '_ {
+        let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
+        let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));
 
-    pub fn outputs(&self) -> impl Iterator<Item = Endpoint> + '_ {
-        self.outputs
-            .iter()
-            .map(Endpoint::try_from)
-            .inspect(print_endpoint_error)
-            .filter_map(|endpoint| endpoint.ok())
+        inputs.chain(outputs).filter_map(|(details, direction)| {
+            match try_make_endpoint(details, direction) {
+                Ok(endpoint) => Some(endpoint),
+                Err(err) => {
+                    eprintln!("failed to parse endpoint: {:?}", err);
+                    None
+                }
+            }
+        })
     }
 }
 
@@ -64,8 +65,10 @@ struct EndpointDetails {
 enum EndpointType {
     #[serde(rename = "stream")]
     Stream,
+
     #[serde(rename = "event")]
     Event,
+
     #[serde(rename = "value")]
     Value,
 }
@@ -145,12 +148,6 @@ pub enum ParseEndpointError {
     UnexpectedNumberOfTypes,
 }
 
-fn print_endpoint_error(result: &Result<Endpoint, ParseEndpointError>) {
-    if let Err(err) = result {
-        eprintln!("failed to parse endpoint: {:?}", err);
-    }
-}
-
 impl TryFrom<&EndpointDataType> for Type {
     type Error = ParseEndpointError;
 
@@ -195,40 +192,37 @@ impl TryFrom<&EndpointDataType> for Type {
     }
 }
 
-impl TryFrom<&EndpointDetails> for Endpoint {
-    type Error = ParseEndpointError;
+fn try_make_endpoint(
+    EndpointDetails {
+        id,
+        endpoint_type,
+        value_type,
+        annotation,
+        ..
+    }: &EndpointDetails,
+    direction: EndpointDirection,
+) -> Result<Endpoint, ParseEndpointError> {
+    let annotation = annotation.clone().unwrap_or_default().into();
 
-    fn try_from(
-        EndpointDetails {
-            id,
-            endpoint_type,
-            value_type,
-            annotation,
-            ..
-        }: &EndpointDetails,
-    ) -> Result<Self, Self::Error> {
-        let annotation = annotation.clone().unwrap_or_default().into();
-
-        Ok(match endpoint_type {
-            EndpointType::Stream => {
-                if value_type.len() != 1 {
-                    return Err(ParseEndpointError::UnexpectedNumberOfTypes);
-                }
-
-                StreamEndpoint::new(id.clone(), value_type[0].clone(), annotation).into()
+    Ok(match endpoint_type {
+        EndpointType::Stream => {
+            if value_type.len() != 1 {
+                return Err(ParseEndpointError::UnexpectedNumberOfTypes);
             }
-            EndpointType::Event => {
-                EventEndpoint::new(id.clone(), value_type.clone(), annotation).into()
-            }
-            EndpointType::Value => {
-                if value_type.len() != 1 {
-                    return Err(ParseEndpointError::UnexpectedNumberOfTypes);
-                }
 
-                ValueEndpoint::new(id.clone(), value_type[0].clone(), annotation).into()
+            StreamEndpoint::new(id.clone(), direction, value_type[0].clone(), annotation).into()
+        }
+        EndpointType::Event => {
+            EventEndpoint::new(id.clone(), direction, value_type.clone(), annotation).into()
+        }
+        EndpointType::Value => {
+            if value_type.len() != 1 {
+                return Err(ParseEndpointError::UnexpectedNumberOfTypes);
             }
-        })
-    }
+
+            ValueEndpoint::new(id.clone(), direction, value_type[0].clone(), annotation).into()
+        }
+    })
 }
 
 fn deserialize_data_type<'de, D>(deserializer: D) -> Result<Vec<Type>, D::Error>

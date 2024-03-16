@@ -1,15 +1,10 @@
 //! The Cmajor performer for running programs.
 
-mod handle;
-mod spsc;
-
-pub use handle::{EndpointError, PerformerHandle};
 use {
     crate::{
-        endpoint::{Endpoint, EndpointHandle, Endpoints},
+        endpoint::{Endpoint, EndpointDirection, EndpointHandle, Endpoints},
         ffi::PerformerPtr,
-        performer::spsc::EndpointMessage,
-        value::ValueRef,
+        value::{Value, ValueRef},
     },
     std::sync::Arc,
 };
@@ -18,29 +13,21 @@ use {
 pub struct Performer {
     pub(super) inner: PerformerPtr,
     pub(super) endpoints: Arc<Endpoints>,
-    pub(super) endpoint_rx: spsc::EndpointReceiver,
     pub(super) scratch_buffer: Vec<u8>,
 }
 
 impl Performer {
-    pub(crate) fn new(
-        performer: PerformerPtr,
-        endpoints: Arc<Endpoints>,
-    ) -> (Self, PerformerHandle) {
-        let (endpoint_tx, endpoint_rx) = spsc::channel(8192);
+    pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<Endpoints>) -> Self {
+        Performer {
+            inner: performer,
+            endpoints: Arc::clone(&endpoints),
+            scratch_buffer: vec![0; 512],
+        }
+    }
 
-        (
-            Performer {
-                inner: performer,
-                endpoints: Arc::clone(&endpoints),
-                endpoint_rx,
-                scratch_buffer: vec![0; 512],
-            },
-            PerformerHandle {
-                endpoints,
-                endpoint_tx,
-            },
-        )
+    /// Returns the endpoints of the performer.
+    pub fn endpoints(&self) -> &Endpoints {
+        &self.endpoints
     }
 
     /// Sets the block size of the performer.
@@ -50,45 +37,29 @@ impl Performer {
 
     /// Renders the next block of frames.
     pub fn advance(&mut self) {
-        let result = self.endpoint_rx.read_messages(|message| match message {
-            EndpointMessage::Value {
-                handle,
-                data,
-                num_frames_to_reach_value,
-            } => {
-                unsafe {
-                    self.inner
-                        .set_input_value(handle, data.as_ptr(), num_frames_to_reach_value)
-                };
-            }
-            EndpointMessage::Event {
-                handle,
-                type_index,
-                data,
-            } => self.inner.add_input_event(handle, type_index, data),
-        });
-        debug_assert!(result.is_ok());
-
         self.inner.advance();
     }
 
-    /// Returns the [`EndpointHandle`] for the endpoint with the given ID.
-    pub fn get_output(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
-        self.endpoints.get_output_by_id(id)
-    }
-
     /// Reads the value of an endpoint.
-    pub fn read_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
+    pub fn get_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
         let endpoint = self
             .endpoints
-            .get_output(handle)
+            .get(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Output {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Value(endpoint) = endpoint {
             endpoint
         } else {
             return Err(EndpointError::EndpointTypeMismatch);
         };
+
+        if endpoint.ty().size() > self.scratch_buffer.len() {
+            return Err(EndpointError::TypeTooLargeForBuffer);
+        }
 
         self.inner
             .copy_output_value(handle, self.scratch_buffer.as_mut_slice());
@@ -97,6 +68,40 @@ impl Performer {
             endpoint.ty().as_ref(),
             &self.scratch_buffer,
         ))
+    }
+
+    /// Set the value of an endpoint.
+    pub fn set_value(
+        &mut self,
+        handle: EndpointHandle,
+        value: impl Into<Value>,
+    ) -> Result<(), EndpointError> {
+        let endpoint = self
+            .endpoints
+            .get(handle)
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Input {
+            return Err(EndpointError::DirectionMismatch);
+        }
+
+        let endpoint = if let Endpoint::Value(value) = endpoint {
+            value
+        } else {
+            return Err(EndpointError::EndpointTypeMismatch);
+        };
+
+        let value = value.into();
+
+        if endpoint.ty().as_ref() != value.ty() {
+            return Err(EndpointError::DataTypeMismatch);
+        }
+
+        value.with_bytes(|bytes| {
+            unsafe { self.inner.set_input_value(handle, bytes.as_ptr(), 0) };
+        });
+
+        Ok(())
     }
 
     /// Reads the output frames of an endpoint into the given slice.
@@ -131,6 +136,41 @@ impl Performer {
         self.inner.set_input_frames(handle, frames);
     }
 
+    /// Post an event to an endpoint.
+    pub fn post_event(
+        &mut self,
+        handle: EndpointHandle,
+        value: impl Into<Value>,
+    ) -> Result<(), EndpointError> {
+        let endpoint = self
+            .endpoints
+            .get(handle)
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Input {
+            return Err(EndpointError::DirectionMismatch);
+        }
+
+        let endpoint = if let Endpoint::Event(endpoint) = endpoint {
+            endpoint
+        } else {
+            return Err(EndpointError::EndpointTypeMismatch);
+        };
+
+        let value = value.into();
+
+        let type_index = endpoint
+            .type_index(value.ty())
+            .ok_or(EndpointError::DataTypeMismatch)?;
+
+        value.with_bytes(|bytes| {
+            self.inner
+                .add_input_event(handle, type_index, bytes.as_ref())
+        });
+
+        Ok(())
+    }
+
     /// Iterates over the events of an endpoint.
     pub fn read_events(
         &mut self,
@@ -139,8 +179,12 @@ impl Performer {
     ) -> Result<usize, EndpointError> {
         let endpoint = self
             .endpoints
-            .get_output(handle)
+            .get(handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        if endpoint.direction() != EndpointDirection::Output {
+            return Err(EndpointError::DirectionMismatch);
+        }
 
         let endpoint = if let Endpoint::Event(endpoint) = endpoint {
             endpoint
@@ -181,4 +225,32 @@ impl Performer {
     pub fn get_latency(&self) -> f64 {
         self.inner.get_latency()
     }
+}
+
+/// An error that can occur when interacting with performer endpoints.
+#[derive(Debug, thiserror::Error)]
+pub enum EndpointError {
+    /// The endpoint does not exist.
+    #[error("no such endpoint")]
+    EndpointDoesNotExist,
+
+    /// The direction of the endpoint does not match the expected direction.
+    #[error("direction mismatch")]
+    DirectionMismatch,
+
+    /// The type of the endpoint does not match the expected type.
+    #[error("type mismatch")]
+    EndpointTypeMismatch,
+
+    /// The data type does not match the expected type.
+    #[error("data type mismatch")]
+    DataTypeMismatch,
+
+    /// Failed to send a message to the performer.
+    #[error("failed to send message to performer")]
+    FailedToSendMessageToPerformer,
+
+    /// The data type is too large for the buffer.
+    #[error("data type too large for buffer")]
+    TypeTooLargeForBuffer,
 }

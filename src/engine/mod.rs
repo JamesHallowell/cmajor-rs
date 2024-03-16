@@ -9,7 +9,7 @@ use {
         endpoint::{EndpointHandle, Endpoints},
         engine::program_details::ProgramDetails,
         ffi::EnginePtr,
-        performer::{Performer, PerformerHandle},
+        performer::Performer,
         program::Program,
     },
     serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue},
@@ -183,17 +183,12 @@ impl Engine<Loaded> {
             }
         };
 
-        let inputs = program_details.inputs().map(|endpoint| {
-            let handle = self.get_endpoint_handle(endpoint.id()).unwrap();
-            (handle, endpoint)
+        let endpoints = program_details.endpoints().filter_map(|endpoint| {
+            self.get_endpoint_handle(endpoint.id())
+                .map(|handle| (handle, endpoint))
         });
 
-        let outputs = program_details.outputs().map(|endpoint| {
-            let handle = self.get_endpoint_handle(endpoint.id()).unwrap();
-            (handle, endpoint)
-        });
-
-        let endpoints = Endpoints::new().with_inputs(inputs).with_outputs(outputs);
+        let endpoints = Endpoints::new(endpoints);
 
         match self.inner.link() {
             Ok(_) => {
@@ -212,7 +207,7 @@ impl Engine<Loaded> {
 
 impl Engine<Linked> {
     /// Create a performer for the linked program.
-    pub fn performer(&self) -> (Performer, PerformerHandle) {
+    pub fn performer(&self) -> Performer {
         Performer::new(
             self.inner.create_performer(),
             Arc::clone(&self._state.endpoints),
