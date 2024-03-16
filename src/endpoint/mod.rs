@@ -301,6 +301,20 @@ impl Endpoints {
         Self { endpoints, ids }
     }
 
+    /// Get an iterator over the input endpoints.
+    pub fn inputs(&self) -> impl Iterator<Item = &Endpoint> {
+        self.endpoints
+            .values()
+            .filter(|endpoint| endpoint.direction() == EndpointDirection::Input)
+    }
+
+    /// Get an interator over the output endpoints.
+    pub fn outputs(&self) -> impl Iterator<Item = &Endpoint> {
+        self.endpoints
+            .values()
+            .filter(|endpoint| endpoint.direction() == EndpointDirection::Output)
+    }
+
     /// Get an endpoint by its handle.
     pub fn get(&self, handle: EndpointHandle) -> Option<&Endpoint> {
         self.endpoints.get(&handle)
