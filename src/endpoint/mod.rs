@@ -74,6 +74,7 @@ pub enum EndpointDirection {
 #[derive(Debug)]
 pub struct StreamEndpoint {
     id: EndpointId,
+    direction: EndpointDirection,
     ty: Type,
     annotation: Annotation,
 }
@@ -88,6 +89,7 @@ impl From<StreamEndpoint> for Endpoint {
 #[derive(Debug)]
 pub struct EventEndpoint {
     id: EndpointId,
+    direction: EndpointDirection,
     ty: Vec<Type>,
     annotation: Annotation,
 }
@@ -102,6 +104,7 @@ impl From<EventEndpoint> for Endpoint {
 #[derive(Debug)]
 pub struct ValueEndpoint {
     id: EndpointId,
+    direction: EndpointDirection,
     ty: Type,
     annotation: Annotation,
 }
@@ -122,6 +125,15 @@ impl Endpoint {
         }
     }
 
+    /// The endpoint's direction.
+    pub fn direction(&self) -> EndpointDirection {
+        match self {
+            Self::Stream(endpoint) => endpoint.direction,
+            Self::Event(endpoint) => endpoint.direction,
+            Self::Value(endpoint) => endpoint.direction,
+        }
+    }
+
     /// The endpoint's annotation.
     pub fn annotation(&self) -> &Annotation {
         match self {
@@ -133,8 +145,18 @@ impl Endpoint {
 }
 
 impl ValueEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Type, annotation: Annotation) -> Self {
-        Self { id, ty, annotation }
+    pub(crate) fn new(
+        id: EndpointId,
+        direction: EndpointDirection,
+        ty: Type,
+        annotation: Annotation,
+    ) -> Self {
+        Self {
+            id,
+            direction,
+            ty,
+            annotation,
+        }
     }
 
     /// The endpoint's identifier (or name).
@@ -154,8 +176,18 @@ impl ValueEndpoint {
 }
 
 impl StreamEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Type, annotation: Annotation) -> Self {
-        Self { id, ty, annotation }
+    pub(crate) fn new(
+        id: EndpointId,
+        direction: EndpointDirection,
+        ty: Type,
+        annotation: Annotation,
+    ) -> Self {
+        Self {
+            id,
+            direction,
+            ty,
+            annotation,
+        }
     }
 
     /// The endpoint's identifier (or name).
@@ -175,9 +207,19 @@ impl StreamEndpoint {
 }
 
 impl EventEndpoint {
-    pub(crate) fn new(id: EndpointId, ty: Vec<Type>, annotation: Annotation) -> Self {
+    pub(crate) fn new(
+        id: EndpointId,
+        direction: EndpointDirection,
+        ty: Vec<Type>,
+        annotation: Annotation,
+    ) -> Self {
         assert!(!ty.is_empty());
-        Self { id, ty, annotation }
+        Self {
+            id,
+            direction,
+            ty,
+            annotation,
+        }
     }
 
     /// The endpoint's identifier (or name).
@@ -229,18 +271,16 @@ impl From<EndpointTypeIndex> for u32 {
 /// A collection of endpoints.
 #[derive(Debug)]
 pub struct Endpoints {
-    endpoints: HashMap<EndpointHandle, (EndpointDirection, Endpoint)>,
+    endpoints: HashMap<EndpointHandle, Endpoint>,
     ids: HashMap<EndpointId, EndpointHandle>,
 }
 
 impl Endpoints {
-    pub(crate) fn new(
-        endpoints: impl IntoIterator<Item = (EndpointHandle, (EndpointDirection, Endpoint))>,
-    ) -> Self {
+    pub(crate) fn new(endpoints: impl IntoIterator<Item = (EndpointHandle, Endpoint)>) -> Self {
         let endpoints: HashMap<_, _> = endpoints.into_iter().collect();
         let ids = endpoints
             .iter()
-            .map(|(handle, (_, endpoint))| (endpoint.id().clone(), *handle))
+            .map(|(handle, endpoint)| (endpoint.id().clone(), *handle))
             .collect();
 
         Self { endpoints, ids }
@@ -248,20 +288,16 @@ impl Endpoints {
 
     /// Get an input endpoint by its handle.
     pub fn get_input(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.endpoints
-            .get(&handle)
-            .and_then(|(direction, endpoint)| {
-                matches!(direction, EndpointDirection::Input).then(|| endpoint)
-            })
+        self.endpoints.get(&handle).and_then(|endpoint| {
+            matches!(endpoint.direction(), EndpointDirection::Input).then(|| endpoint)
+        })
     }
 
     /// Get an output endpoint by its handle.
     pub fn get_output(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.endpoints
-            .get(&handle)
-            .and_then(|(direction, endpoint)| {
-                matches!(direction, EndpointDirection::Output).then(|| endpoint)
-            })
+        self.endpoints.get(&handle).and_then(|endpoint| {
+            matches!(endpoint.direction(), EndpointDirection::Output).then(|| endpoint)
+        })
     }
 
     /// Get an input endpoint by its identifier.

@@ -183,12 +183,10 @@ impl Engine<Loaded> {
             }
         };
 
-        let endpoints = program_details
-            .endpoints()
-            .filter_map(|(direction, endpoint)| {
-                self.get_endpoint_handle(endpoint.id())
-                    .map(|handle| (handle, (direction, endpoint)))
-            });
+        let endpoints = program_details.endpoints().filter_map(|endpoint| {
+            self.get_endpoint_handle(endpoint.id())
+                .map(|handle| (handle, endpoint))
+        });
 
         let endpoints = Endpoints::new(endpoints);
 
