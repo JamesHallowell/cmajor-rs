@@ -2,7 +2,7 @@ use cmajor::{
     endpoint::Endpoint,
     performer::{EndpointError, Performer},
     value::{
-        types::{Object, Type},
+        types::{Object, Primitive, Type},
         Complex32, Complex64, ValueRef,
     },
     Cmajor,
@@ -423,7 +423,7 @@ fn can_query_endpoint_information() {
     };
 
     assert_eq!(a.id(), "a");
-    assert_eq!(a.ty(), &Type::Int32);
+    assert_eq!(a.ty(), &Type::Primitive(Primitive::Int32));
 
     let b = match performer.endpoints().get_by_id("b").unwrap() {
         (_, Endpoint::Value(endpoint)) => endpoint,
@@ -431,7 +431,7 @@ fn can_query_endpoint_information() {
     };
 
     assert_eq!(b.id(), "b");
-    assert_eq!(b.ty(), &Type::Float32);
+    assert_eq!(b.ty(), &Type::Primitive(Primitive::Float32));
 
     let c = match performer.endpoints().get_by_id("c").unwrap() {
         (_, Endpoint::Event(endpoint)) => endpoint,
@@ -442,8 +442,10 @@ fn can_query_endpoint_information() {
     assert_eq!(
         c.types(),
         vec![
-            Type::Int32,
-            Object::new().with_field("d", Type::Bool).into()
+            Type::Primitive(Primitive::Int32),
+            Object::new()
+                .with_field("d", Type::Primitive(Primitive::Bool))
+                .into()
         ]
     );
 }
