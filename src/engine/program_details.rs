@@ -4,7 +4,7 @@ use {
             Endpoint, EndpointDirection, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint,
         },
         engine::program_details::ParseEndpointError::UnsupportedType,
-        value::types::{Array, Object, Type},
+        value::types::{Array, Object, Primitive, Type},
     },
     serde::{
         de::{value::MapAccessDeserializer, Visitor},
@@ -161,12 +161,12 @@ impl TryFrom<&EndpointDataType> for Type {
         }: &EndpointDataType,
     ) -> Result<Self, Self::Error> {
         match *ty {
-            ValueType::Void => Ok(Type::Void),
-            ValueType::Bool => Ok(Type::Bool),
-            ValueType::Int32 => Ok(Type::Int32),
-            ValueType::Int64 => Ok(Type::Int64),
-            ValueType::Float32 => Ok(Type::Float32),
-            ValueType::Float64 => Ok(Type::Float64),
+            ValueType::Void => Ok(Type::Primitive(Primitive::Void)),
+            ValueType::Bool => Ok(Type::Primitive(Primitive::Bool)),
+            ValueType::Int32 => Ok(Type::Primitive(Primitive::Int32)),
+            ValueType::Int64 => Ok(Type::Primitive(Primitive::Int64)),
+            ValueType::Float32 => Ok(Type::Primitive(Primitive::Float32)),
+            ValueType::Float64 => Ok(Type::Primitive(Primitive::Float64)),
             ValueType::Object => {
                 let mut object = Object::new();
                 for (name, value) in members.as_ref().ok_or(Self::Error::StructHasNoMembers)? {
@@ -287,7 +287,10 @@ mod test {
 
         assert_eq!(details.id.as_ref(), "out");
         assert_eq!(details.endpoint_type, EndpointType::Stream);
-        assert_eq!(details.value_type, vec![Type::Float32]);
+        assert_eq!(
+            details.value_type,
+            vec![Type::Primitive(Primitive::Float32)]
+        );
     }
 
     #[test]
@@ -311,6 +314,12 @@ mod test {
 
         assert_eq!(details.id.as_ref(), "out");
         assert_eq!(details.endpoint_type, EndpointType::Event);
-        assert_eq!(details.value_type, vec![Type::Float32, Type::Int32]);
+        assert_eq!(
+            details.value_type,
+            vec![
+                Type::Primitive(Primitive::Float32),
+                Type::Primitive(Primitive::Int32)
+            ]
+        );
     }
 }

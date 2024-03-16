@@ -1,27 +1,12 @@
 //! Types of Cmajor values.
 
-use smallvec::SmallVec;
+use {crate::value::types::sealed::Sealed, smallvec::SmallVec};
 
-/// The type of a Cmajor value.
+/// A Cmajor type.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    /// A void type.
-    Void,
-
-    /// A boolean type.
-    Bool,
-
-    /// A 32-bit signed integer type.
-    Int32,
-
-    /// A 64-bit signed integer type.
-    Int64,
-
-    /// A 32-bit floating-point type.
-    Float32,
-
-    /// A 64-bit floating-point type.
-    Float64,
+    /// A primitive type.
+    Primitive(Primitive),
 
     /// An array type.
     Array(Box<Array>),
@@ -30,9 +15,9 @@ pub enum Type {
     Object(Box<Object>),
 }
 
-/// A reference to a Cmajor [`Type`].
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum TypeRef<'a> {
+/// A Cmajor primitive.
+pub enum Primitive {
     /// A void type.
     Void,
 
@@ -50,6 +35,13 @@ pub enum TypeRef<'a> {
 
     /// A 64-bit floating-point type.
     Float64,
+}
+
+/// A reference to a Cmajor [`Type`].
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TypeRef<'a> {
+    /// A primitive type.
+    Primitive(Primitive),
 
     /// An array type.
     Array(&'a Array),
@@ -87,12 +79,7 @@ impl Type {
     /// Get a reference to the type.
     pub fn as_ref(&self) -> TypeRef<'_> {
         match self {
-            Type::Void => TypeRef::Void,
-            Type::Bool => TypeRef::Bool,
-            Type::Int32 => TypeRef::Int32,
-            Type::Int64 => TypeRef::Int64,
-            Type::Float32 => TypeRef::Float32,
-            Type::Float64 => TypeRef::Float64,
+            Type::Primitive(primitive) => TypeRef::Primitive(*primitive),
             Type::Array(array) => TypeRef::Array(array.as_ref()),
             Type::Object(object) => TypeRef::Object(object.as_ref()),
         }
@@ -103,12 +90,12 @@ impl TypeRef<'_> {
     /// The size of the type in bytes.
     pub fn size(&self) -> usize {
         match self {
-            TypeRef::Void => 0,
-            TypeRef::Bool => 4,
-            TypeRef::Int32 => 4,
-            TypeRef::Int64 => 8,
-            TypeRef::Float32 => 4,
-            TypeRef::Float64 => 8,
+            TypeRef::Primitive(Primitive::Void) => 0,
+            TypeRef::Primitive(Primitive::Bool) => 4,
+            TypeRef::Primitive(Primitive::Int32) => 4,
+            TypeRef::Primitive(Primitive::Int64) => 8,
+            TypeRef::Primitive(Primitive::Float32) => 4,
+            TypeRef::Primitive(Primitive::Float64) => 8,
             TypeRef::Array(array) => array.size(),
             TypeRef::Object(object) => object.size(),
         }
@@ -117,12 +104,7 @@ impl TypeRef<'_> {
     /// Convert the type reference into an owned [`Type`].
     pub fn to_owned(&self) -> Type {
         match *self {
-            TypeRef::Void => Type::Void,
-            TypeRef::Bool => Type::Bool,
-            TypeRef::Int32 => Type::Int32,
-            TypeRef::Int64 => Type::Int64,
-            TypeRef::Float32 => Type::Float32,
-            TypeRef::Float64 => Type::Float64,
+            TypeRef::Primitive(primitive) => Type::Primitive(primitive),
             TypeRef::Array(array) => Type::Array(Box::new(array.clone())),
             TypeRef::Object(object) => Type::Object(Box::new(object.clone())),
         }
@@ -212,4 +194,30 @@ impl Field {
     pub fn ty(&self) -> &Type {
         &self.ty
     }
+}
+
+/// Implemented for primitive types.
+pub trait IsPrimitive: Sealed {}
+
+impl IsPrimitive for bool {}
+impl IsPrimitive for i32 {}
+impl IsPrimitive for i64 {}
+impl IsPrimitive for f32 {}
+impl IsPrimitive for f64 {}
+
+/// Implemented for scalar types.
+pub trait IsScalar: Sealed {}
+
+impl IsScalar for i32 {}
+impl IsScalar for i64 {}
+impl IsScalar for f32 {}
+impl IsScalar for f64 {}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for bool {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
 }

@@ -4,7 +4,7 @@ use {
     crate::{
         endpoint::{Endpoint, EndpointDirection, EndpointHandle, Endpoints},
         ffi::PerformerPtr,
-        value::{Value, ValueRef},
+        value::{types::IsScalar, Value, ValueRef},
     },
     std::sync::Arc,
 };
@@ -115,7 +115,7 @@ impl Performer {
     /// given slice.
     pub unsafe fn read_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &mut [T])
     where
-        T: Copy,
+        T: Copy + IsScalar,
     {
         self.inner.copy_output_frames(handle, frames);
     }
@@ -131,7 +131,7 @@ impl Performer {
     /// given slice.
     pub unsafe fn write_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &[T])
     where
-        T: Copy,
+        T: Copy + IsScalar,
     {
         self.inner.set_input_frames(handle, frames);
     }
