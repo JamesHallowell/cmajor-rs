@@ -9,7 +9,7 @@ use {
         endpoint::{EndpointHandle, Endpoints},
         engine::program_details::ProgramDetails,
         ffi::EnginePtr,
-        performer::{Performer, PerformerHandle},
+        performer::Performer,
         program::Program,
     },
     serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue},
@@ -207,7 +207,7 @@ impl Engine<Loaded> {
 
 impl Engine<Linked> {
     /// Create a performer for the linked program.
-    pub fn performer(&self) -> (Performer, PerformerHandle) {
+    pub fn performer(&self) -> Performer {
         Performer::new(
             self.inner.create_performer(),
             Arc::clone(&self._state.endpoints),

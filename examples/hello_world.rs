@@ -72,11 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let engine = engine.load(&program)?.link()?;
 
-    let (mut performer, _) = engine.performer();
+    let mut performer = engine.performer();
 
     performer.set_block_size(BLOCK_SIZE);
 
-    let (output, _) = performer.get_output("out").unwrap();
+    let output = performer.endpoints().get_handle("out").unwrap();
 
     let stream = cpal::default_host()
         .default_output_device()

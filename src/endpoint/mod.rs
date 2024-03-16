@@ -61,7 +61,7 @@ pub enum Endpoint {
 }
 
 /// The direction of an endpoint.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EndpointDirection {
     /// An input endpoint.
     Input,
@@ -286,29 +286,21 @@ impl Endpoints {
         Self { endpoints, ids }
     }
 
-    /// Get an input endpoint by its handle.
-    pub fn get_input(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.endpoints.get(&handle).and_then(|endpoint| {
-            matches!(endpoint.direction(), EndpointDirection::Input).then(|| endpoint)
-        })
+    /// Get an endpoint by its handle.
+    pub fn get(&self, handle: EndpointHandle) -> Option<&Endpoint> {
+        self.endpoints.get(&handle)
     }
 
-    /// Get an output endpoint by its handle.
-    pub fn get_output(&self, handle: EndpointHandle) -> Option<&Endpoint> {
-        self.endpoints.get(&handle).and_then(|endpoint| {
-            matches!(endpoint.direction(), EndpointDirection::Output).then(|| endpoint)
-        })
-    }
-
-    /// Get an input endpoint by its identifier.
-    pub fn get_input_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+    /// Get an endpoint by its ID.
+    pub fn get_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
         let handle = self.ids.get(id.as_ref()).copied()?;
-        self.get_input(handle).map(|endpoint| (handle, endpoint))
+        self.endpoints
+            .get(&handle)
+            .map(|endpoint| (handle, endpoint))
     }
 
-    /// Get an output endpoint by its identifier.
-    pub fn get_output_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
-        let handle = self.ids.get(id.as_ref()).copied()?;
-        self.get_output(handle).map(|endpoint| (handle, endpoint))
+    /// Get an endpoint's handle by its ID.
+    pub fn get_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
+        self.ids.get(id.as_ref()).copied()
     }
 }
