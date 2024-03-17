@@ -1,11 +1,12 @@
 use {
     crate::value::types::{Array, Object, Primitive, Type, TypeRef},
     bytes::Buf,
+    serde::{Deserialize, Serialize},
     smallvec::SmallVec,
 };
 
 /// A Cmajor value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     /// A void value.
     Void,
@@ -61,7 +62,7 @@ pub enum ValueRef<'a> {
 }
 
 /// An array value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArrayValue {
     ty: Array,
     data: SmallVec<[u8; 16]>,
@@ -75,7 +76,7 @@ pub struct ArrayValueRef<'a> {
 }
 
 /// An object value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectValue {
     ty: Object,
     data: SmallVec<[u8; 16]>,
@@ -405,7 +406,7 @@ impl From<ObjectValue> for Value {
 }
 
 /// A 32-bit complex number.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Complex32 {
     /// The imaginary part.
     pub imag: f32,
@@ -415,7 +416,7 @@ pub struct Complex32 {
 }
 
 /// A 64-bit complex number.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Complex64 {
     /// The imaginary part.
     pub imag: f64,
@@ -424,7 +425,7 @@ pub struct Complex64 {
     pub real: f64,
 }
 
-impl From<Complex32> for Value {
+impl From<Complex32> for ObjectValue {
     fn from(value: Complex32) -> Self {
         let object = Object::new()
             .with_field("imag", Type::Primitive(Primitive::Float32))
@@ -434,7 +435,13 @@ impl From<Complex32> for Value {
         data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
 
-        ObjectValue { ty: object, data }.into()
+        ObjectValue { ty: object, data }
+    }
+}
+
+impl From<Complex32> for Value {
+    fn from(value: Complex32) -> Self {
+        ObjectValue::from(value).into()
     }
 }
 
@@ -454,7 +461,7 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
     }
 }
 
-impl From<Complex64> for Value {
+impl From<Complex64> for ObjectValue {
     fn from(value: Complex64) -> Self {
         let object = Object::new()
             .with_field("imag", Type::Primitive(Primitive::Float64))
@@ -464,7 +471,13 @@ impl From<Complex64> for Value {
         data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
 
-        ObjectValue { ty: object, data }.into()
+        ObjectValue { ty: object, data }
+    }
+}
+
+impl From<Complex64> for Value {
+    fn from(value: Complex64) -> Self {
+        ObjectValue::from(value).into()
     }
 }
 
@@ -524,6 +537,61 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
             Value::Float64(value) => Self::Float64(*value),
             Value::Array(array) => Self::Array(array.as_ref().as_ref()),
             Value::Object(object) => Self::Object(object.as_ref().as_ref()),
+        }
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for bool {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value {
+            ValueRef::Bool(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for i32 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value {
+            ValueRef::Int32(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for i64 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value {
+            ValueRef::Int64(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for f32 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value {
+            ValueRef::Float32(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<ValueRef<'_>> for f64 {
+    type Error = ();
+
+    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+        match value {
+            ValueRef::Float64(value) => Ok(value),
+            _ => Err(()),
         }
     }
 }

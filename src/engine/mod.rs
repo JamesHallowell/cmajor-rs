@@ -6,7 +6,7 @@ mod program_details;
 pub use annotation::Annotation;
 use {
     crate::{
-        endpoint::{EndpointHandle, Endpoints},
+        endpoint::{EndpointHandle, ProgramEndpoints},
         engine::program_details::ProgramDetails,
         ffi::EnginePtr,
         performer::Performer,
@@ -131,7 +131,7 @@ pub struct Loaded;
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
-    endpoints: Arc<Endpoints>,
+    endpoints: Arc<ProgramEndpoints>,
 }
 
 impl Engine<Idle> {
@@ -188,7 +188,7 @@ impl Engine<Loaded> {
                 .map(|handle| (handle, endpoint))
         });
 
-        let endpoints = Endpoints::new(endpoints);
+        let endpoints = ProgramEndpoints::new(endpoints);
 
         match self.inner.link() {
             Ok(_) => {

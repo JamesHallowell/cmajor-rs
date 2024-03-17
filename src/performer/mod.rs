@@ -1,39 +1,52 @@
 //! The Cmajor performer for running programs.
 
+mod atomic;
+mod endpoints;
+
+pub use endpoints::{Endpoint, InputEvent, InputValue, OutputValue};
 use {
     crate::{
-        endpoint::{Endpoint, EndpointDirection, EndpointHandle, Endpoints},
+        endpoint::{EndpointDirection, EndpointHandle, EndpointType, ProgramEndpoints},
         ffi::PerformerPtr,
-        value::{
-            types::{IsScalar, Type},
-            Value, ValueRef,
-        },
+        value::{types::IsScalar, ValueRef},
     },
+    endpoints::CachedInputValues,
+    sealed::sealed,
     std::sync::Arc,
 };
 
 /// A Cmajor performer.
 pub struct Performer {
     inner: PerformerPtr,
-    endpoints: Arc<Endpoints>,
-    value_read_buffer: ValueReadBuffer,
+    endpoints: Arc<ProgramEndpoints>,
+    inputs: Vec<EndpointHandler>,
+    outputs: Vec<EndpointHandler>,
+    cached_input_values: CachedInputValues,
 }
 
-struct ValueReadBuffer {
-    buffer: Vec<u8>,
-}
+pub(crate) type EndpointHandler = Box<dyn FnMut(&mut PerformerPtr) + Send>;
 
 impl Performer {
-    pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<Endpoints>) -> Self {
+    pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<ProgramEndpoints>) -> Self {
         Performer {
             inner: performer,
             endpoints: Arc::clone(&endpoints),
-            value_read_buffer: ValueReadBuffer::new(&endpoints),
+            inputs: vec![],
+            outputs: vec![],
+            cached_input_values: CachedInputValues::default(),
         }
     }
 
+    /// Returns an endpoint of the performer.
+    pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
+    where
+        T: PerformerEndpoint,
+    {
+        PerformerEndpoint::make(id.as_ref(), self)
+    }
+
     /// Returns the endpoints of the performer.
-    pub fn endpoints(&self) -> &Endpoints {
+    pub fn endpoints(&self) -> &ProgramEndpoints {
         &self.endpoints
     }
 
@@ -44,64 +57,22 @@ impl Performer {
 
     /// Renders the next block of frames.
     pub fn advance(&mut self) {
-        self.inner.advance();
-    }
+        let Self {
+            inner,
+            inputs,
+            outputs,
+            ..
+        } = self;
 
-    /// Reads the value of an endpoint.
-    pub fn get_value(&mut self, handle: EndpointHandle) -> Result<ValueRef<'_>, EndpointError> {
-        let endpoint = self
-            .endpoints
-            .get(handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        let endpoint = if let Endpoint::Value(endpoint) = endpoint {
-            endpoint
-        } else {
-            return Err(EndpointError::EndpointTypeMismatch);
-        };
-
-        if endpoint.direction() != EndpointDirection::Output {
-            return Err(EndpointError::DirectionMismatch);
+        for input in inputs {
+            input(inner);
         }
 
-        let buffer = self.value_read_buffer.get_buffer_for_type(endpoint.ty());
-        self.inner.copy_output_value(handle, buffer);
+        inner.advance();
 
-        Ok(ValueRef::new_from_slice(endpoint.ty().as_ref(), buffer))
-    }
-
-    /// Set the value of an endpoint.
-    pub fn set_value(
-        &mut self,
-        handle: EndpointHandle,
-        value: impl Into<Value>,
-    ) -> Result<(), EndpointError> {
-        let endpoint = self
-            .endpoints
-            .get(handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        if endpoint.direction() != EndpointDirection::Input {
-            return Err(EndpointError::DirectionMismatch);
+        for output in outputs {
+            output(inner);
         }
-
-        let endpoint = if let Endpoint::Value(value) = endpoint {
-            value
-        } else {
-            return Err(EndpointError::EndpointTypeMismatch);
-        };
-
-        let value = value.into();
-
-        if endpoint.ty().as_ref() != value.ty() {
-            return Err(EndpointError::DataTypeMismatch);
-        }
-
-        value.with_bytes(|bytes| {
-            unsafe { self.inner.set_input_value(handle, bytes.as_ptr(), 0) };
-        });
-
-        Ok(())
     }
 
     /// Reads the output frames of an endpoint into the given slice.
@@ -136,41 +107,6 @@ impl Performer {
         self.inner.set_input_frames(handle, frames);
     }
 
-    /// Post an event to an endpoint.
-    pub fn post_event(
-        &mut self,
-        handle: EndpointHandle,
-        value: impl Into<Value>,
-    ) -> Result<(), EndpointError> {
-        let endpoint = self
-            .endpoints
-            .get(handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        if endpoint.direction() != EndpointDirection::Input {
-            return Err(EndpointError::DirectionMismatch);
-        }
-
-        let endpoint = if let Endpoint::Event(endpoint) = endpoint {
-            endpoint
-        } else {
-            return Err(EndpointError::EndpointTypeMismatch);
-        };
-
-        let value = value.into();
-
-        let type_index = endpoint
-            .type_index(value.ty())
-            .ok_or(EndpointError::DataTypeMismatch)?;
-
-        value.with_bytes(|bytes| {
-            self.inner
-                .add_input_event(handle, type_index, bytes.as_ref())
-        });
-
-        Ok(())
-    }
-
     /// Iterates over the events of an endpoint.
     pub fn read_events(
         &mut self,
@@ -186,7 +122,7 @@ impl Performer {
             return Err(EndpointError::DirectionMismatch);
         }
 
-        let endpoint = if let Endpoint::Event(endpoint) = endpoint {
+        let endpoint = if let EndpointType::Event(endpoint) = endpoint {
             endpoint
         } else {
             return Err(EndpointError::EndpointTypeMismatch);
@@ -251,30 +187,10 @@ pub enum EndpointError {
     FailedToSendMessageToPerformer,
 }
 
-impl ValueReadBuffer {
-    fn new(endpoints: &Endpoints) -> Self {
-        let largest_output_value_size = endpoints
-            .outputs()
-            .filter_map(|endpoint| {
-                if let Endpoint::Value(endpoint) = endpoint {
-                    Some(endpoint.ty().size())
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap_or(0);
-
-        Self {
-            buffer: vec![0; largest_output_value_size],
-        }
-    }
-
-    fn get_buffer_for_type(&mut self, ty: &Type) -> &mut [u8] {
-        assert!(
-            self.buffer.len() >= ty.size(),
-            "value type too large for buffer"
-        );
-        &mut self.buffer[..ty.size()]
-    }
+#[doc(hidden)]
+#[sealed(pub(crate))]
+pub trait PerformerEndpoint {
+    fn make(id: &str, performer: &mut Performer) -> Result<Endpoint<Self>, EndpointError>
+    where
+        Self: Sized;
 }

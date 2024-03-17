@@ -86,7 +86,7 @@ impl PerformerPtr {
             ((*(*self.performer).vtable).add_input_event)(
                 self.performer,
                 handle.into(),
-                type_index.into(),
+                usize::from(type_index) as u32,
                 data_ptr,
             )
         };
@@ -158,7 +158,7 @@ impl PerformerPtr {
                 (*callback)(
                     frame_offset as usize,
                     endpoint.into(),
-                    type_index.into(),
+                    (type_index as usize).into(),
                     data,
                 );
             });

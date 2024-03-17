@@ -33,7 +33,7 @@ impl PartialEq<str> for EndpointId {
 
 /// A handle used to reference an endpoint.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, Hash, PartialEq)]
-pub struct EndpointHandle(u32);
+pub struct EndpointHandle(pub(crate) u32);
 
 impl From<u32> for EndpointHandle {
     fn from(handle: u32) -> Self {
@@ -49,7 +49,7 @@ impl From<EndpointHandle> for u32 {
 
 /// An endpoint.
 #[derive(Debug)]
-pub enum Endpoint {
+pub enum EndpointType {
     /// A stream endpoint.
     Stream(StreamEndpoint),
 
@@ -79,7 +79,7 @@ pub struct StreamEndpoint {
     annotation: Annotation,
 }
 
-impl From<StreamEndpoint> for Endpoint {
+impl From<StreamEndpoint> for EndpointType {
     fn from(endpoint: StreamEndpoint) -> Self {
         Self::Stream(endpoint)
     }
@@ -94,7 +94,7 @@ pub struct EventEndpoint {
     annotation: Annotation,
 }
 
-impl From<EventEndpoint> for Endpoint {
+impl From<EventEndpoint> for EndpointType {
     fn from(endpoint: EventEndpoint) -> Self {
         Self::Event(endpoint)
     }
@@ -109,13 +109,13 @@ pub struct ValueEndpoint {
     annotation: Annotation,
 }
 
-impl From<ValueEndpoint> for Endpoint {
+impl From<ValueEndpoint> for EndpointType {
     fn from(endpoint: ValueEndpoint) -> Self {
         Self::Value(endpoint)
     }
 }
 
-impl Endpoint {
+impl EndpointType {
     /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         match self {
@@ -140,6 +140,30 @@ impl Endpoint {
             Self::Stream(endpoint) => &endpoint.annotation,
             Self::Event(endpoint) => &endpoint.annotation,
             Self::Value(endpoint) => &endpoint.annotation,
+        }
+    }
+
+    /// Get the endpoint as a value endpoint.
+    pub fn as_stream(&self) -> Option<&StreamEndpoint> {
+        match self {
+            Self::Stream(endpoint) => Some(endpoint),
+            _ => None,
+        }
+    }
+
+    /// Get the endpoint as an event endpoint.
+    pub fn as_event(&self) -> Option<&EventEndpoint> {
+        match self {
+            Self::Event(endpoint) => Some(endpoint),
+            _ => None,
+        }
+    }
+
+    /// Get the endpoint as a value endpoint.
+    pub fn as_value(&self) -> Option<&ValueEndpoint> {
+        match self {
+            Self::Value(endpoint) => Some(endpoint),
+            _ => None,
         }
     }
 }
@@ -257,27 +281,26 @@ impl EventEndpoint {
         self.ty
             .iter()
             .position(|t| t.as_ref() == ty)
-            .map(|index| index as u32)
             .map(EndpointTypeIndex::from)
     }
 
     /// The type at the given index in the endpoint's type list.
     pub fn get_type(&self, index: EndpointTypeIndex) -> Option<&Type> {
-        self.ty.get(index.0 as usize)
+        self.ty.get(usize::from(index))
     }
 }
 
 /// An index into an event endpoint's type list.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct EndpointTypeIndex(u32);
+pub struct EndpointTypeIndex(usize);
 
-impl From<u32> for EndpointTypeIndex {
-    fn from(index: u32) -> Self {
+impl From<usize> for EndpointTypeIndex {
+    fn from(index: usize) -> Self {
         Self(index)
     }
 }
 
-impl From<EndpointTypeIndex> for u32 {
+impl From<EndpointTypeIndex> for usize {
     fn from(index: EndpointTypeIndex) -> Self {
         index.0
     }
@@ -285,13 +308,13 @@ impl From<EndpointTypeIndex> for u32 {
 
 /// A collection of endpoints.
 #[derive(Debug)]
-pub struct Endpoints {
-    endpoints: HashMap<EndpointHandle, Endpoint>,
+pub struct ProgramEndpoints {
+    endpoints: HashMap<EndpointHandle, EndpointType>,
     ids: HashMap<EndpointId, EndpointHandle>,
 }
 
-impl Endpoints {
-    pub(crate) fn new(endpoints: impl IntoIterator<Item = (EndpointHandle, Endpoint)>) -> Self {
+impl ProgramEndpoints {
+    pub(crate) fn new(endpoints: impl IntoIterator<Item = (EndpointHandle, EndpointType)>) -> Self {
         let endpoints: HashMap<_, _> = endpoints.into_iter().collect();
         let ids = endpoints
             .iter()
@@ -302,26 +325,26 @@ impl Endpoints {
     }
 
     /// Get an iterator over the input endpoints.
-    pub fn inputs(&self) -> impl Iterator<Item = &Endpoint> {
+    pub fn inputs(&self) -> impl Iterator<Item = &EndpointType> {
         self.endpoints
             .values()
             .filter(|endpoint| endpoint.direction() == EndpointDirection::Input)
     }
 
     /// Get an interator over the output endpoints.
-    pub fn outputs(&self) -> impl Iterator<Item = &Endpoint> {
+    pub fn outputs(&self) -> impl Iterator<Item = &EndpointType> {
         self.endpoints
             .values()
             .filter(|endpoint| endpoint.direction() == EndpointDirection::Output)
     }
 
     /// Get an endpoint by its handle.
-    pub fn get(&self, handle: EndpointHandle) -> Option<&Endpoint> {
+    pub fn get(&self, handle: EndpointHandle) -> Option<&EndpointType> {
         self.endpoints.get(&handle)
     }
 
     /// Get an endpoint by its ID.
-    pub fn get_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &Endpoint)> {
+    pub fn get_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &EndpointType)> {
         let handle = self.ids.get(id.as_ref()).copied()?;
         self.endpoints
             .get(&handle)

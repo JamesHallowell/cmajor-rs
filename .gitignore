@@ -5,3 +5,4 @@
 *.dylib
 /cmaj
 .env
+cmake-build-*
