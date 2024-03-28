@@ -1,7 +1,8 @@
 use {
     crate::{
         endpoint::{
-            Endpoint, EndpointDirection, EndpointId, EventEndpoint, StreamEndpoint, ValueEndpoint,
+            EndpointDirection, EndpointId, EndpointType, EventEndpoint, StreamEndpoint,
+            ValueEndpoint,
         },
         engine::program_details::ParseEndpointError::UnsupportedType,
         value::types::{Array, Object, Primitive, Type},
@@ -23,7 +24,7 @@ pub struct ProgramDetails {
 }
 
 impl ProgramDetails {
-    pub fn endpoints(&self) -> impl Iterator<Item = Endpoint> + '_ {
+    pub fn endpoints(&self) -> impl Iterator<Item = EndpointType> + '_ {
         let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
         let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));
 
@@ -45,7 +46,7 @@ struct EndpointDetails {
     id: EndpointId,
 
     #[serde(rename = "endpointType")]
-    endpoint_type: EndpointType,
+    endpoint_type: EndpointVariant,
 
     #[serde(
         rename = "dataType",
@@ -62,7 +63,7 @@ struct EndpointDetails {
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, PartialEq)]
-enum EndpointType {
+enum EndpointVariant {
     #[serde(rename = "stream")]
     Stream,
 
@@ -201,21 +202,21 @@ fn try_make_endpoint(
         ..
     }: &EndpointDetails,
     direction: EndpointDirection,
-) -> Result<Endpoint, ParseEndpointError> {
+) -> Result<EndpointType, ParseEndpointError> {
     let annotation = annotation.clone().unwrap_or_default().into();
 
     Ok(match endpoint_type {
-        EndpointType::Stream => {
+        EndpointVariant::Stream => {
             if value_type.len() != 1 {
                 return Err(ParseEndpointError::UnexpectedNumberOfTypes);
             }
 
             StreamEndpoint::new(id.clone(), direction, value_type[0].clone(), annotation).into()
         }
-        EndpointType::Event => {
+        EndpointVariant::Event => {
             EventEndpoint::new(id.clone(), direction, value_type.clone(), annotation).into()
         }
-        EndpointType::Value => {
+        EndpointVariant::Value => {
             if value_type.len() != 1 {
                 return Err(ParseEndpointError::UnexpectedNumberOfTypes);
             }
@@ -286,7 +287,7 @@ mod test {
         let details: EndpointDetails = serde_json::from_str(json).unwrap();
 
         assert_eq!(details.id.as_ref(), "out");
-        assert_eq!(details.endpoint_type, EndpointType::Stream);
+        assert_eq!(details.endpoint_type, EndpointVariant::Stream);
         assert_eq!(
             details.value_type,
             vec![Type::Primitive(Primitive::Float32)]
@@ -313,7 +314,7 @@ mod test {
         let details: EndpointDetails = serde_json::from_str(json).unwrap();
 
         assert_eq!(details.id.as_ref(), "out");
-        assert_eq!(details.endpoint_type, EndpointType::Event);
+        assert_eq!(details.endpoint_type, EndpointVariant::Event);
         assert_eq!(
             details.value_type,
             vec![

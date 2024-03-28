@@ -1,9 +1,14 @@
 //! Types of Cmajor values.
 
-use {crate::value::types::sealed::Sealed, smallvec::SmallVec};
+use {
+    sealed::sealed,
+    serde::{Deserialize, Serialize},
+    smallvec::SmallVec,
+    std::any::TypeId,
+};
 
 /// A Cmajor type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
     /// A primitive type.
     Primitive(Primitive),
@@ -15,7 +20,7 @@ pub enum Type {
     Object(Box<Object>),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 /// A Cmajor primitive.
 pub enum Primitive {
     /// A void type.
@@ -51,20 +56,21 @@ pub enum TypeRef<'a> {
 }
 
 /// An object type.
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Object {
     fields: SmallVec<[Field; 2]>,
 }
 
 /// A field of an [`Object`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Field {
     name: String,
     ty: Type,
+    offset: usize,
 }
 
 /// An array type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Array {
     elem_ty: Type,
     len: usize,
@@ -83,6 +89,38 @@ impl Type {
             Type::Array(array) => TypeRef::Array(array.as_ref()),
             Type::Object(object) => TypeRef::Object(object.as_ref()),
         }
+    }
+
+    /// If the type is an object, return it.
+    pub fn as_object(&self) -> Option<&Object> {
+        match self {
+            Type::Object(object) => Some(object),
+            _ => None,
+        }
+    }
+
+    /// Returns the corresponding [`TypeId`] for the type (if any).
+    pub(crate) fn type_id(&self) -> Option<TypeId> {
+        match self {
+            Type::Primitive(Primitive::Void) => Some(TypeId::of::<()>()),
+            Type::Primitive(Primitive::Bool) => Some(TypeId::of::<bool>()),
+            Type::Primitive(Primitive::Int32) => Some(TypeId::of::<i32>()),
+            Type::Primitive(Primitive::Int64) => Some(TypeId::of::<i64>()),
+            Type::Primitive(Primitive::Float32) => Some(TypeId::of::<f32>()),
+            Type::Primitive(Primitive::Float64) => Some(TypeId::of::<f64>()),
+            _ => None,
+        }
+    }
+
+    /// Check whether the type is a given primitive.
+    pub fn is<T>(&self) -> bool
+    where
+        T: IsPrimitive + 'static,
+    {
+        TypeId::of::<T>()
+            == self
+                .type_id()
+                .expect("primitive types always have a type id")
     }
 }
 
@@ -154,9 +192,11 @@ impl Object {
 
     /// Add a [`Field`] to the object.
     pub fn add_field(&mut self, name: impl AsRef<str>, ty: impl Into<Type>) {
+        let size = self.size();
         self.fields.push(Field {
             name: name.as_ref().to_owned(),
             ty: ty.into(),
+            offset: size,
         });
     }
 
@@ -169,6 +209,12 @@ impl Object {
     /// The fields of the object.
     pub fn fields(&self) -> impl Iterator<Item = &Field> {
         self.fields.iter()
+    }
+}
+
+impl From<Primitive> for Type {
+    fn from(primitive: Primitive) -> Self {
+        Type::Primitive(primitive)
     }
 }
 
@@ -194,30 +240,39 @@ impl Field {
     pub fn ty(&self) -> &Type {
         &self.ty
     }
+
+    /// The offset of the field in the object.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
 }
 
 /// Implemented for primitive types.
-pub trait IsPrimitive: Sealed {}
+#[sealed]
+pub trait IsPrimitive {}
 
-impl IsPrimitive for bool {}
-impl IsPrimitive for i32 {}
-impl IsPrimitive for i64 {}
-impl IsPrimitive for f32 {}
-impl IsPrimitive for f64 {}
+macro_rules! impl_is_primitive {
+    ($($ty:ty),*) => {
+        $(
+            #[sealed]
+            impl IsPrimitive for $ty {}
+        )*
+    };
+}
+
+impl_is_primitive!(bool, i32, i64, f32, f64);
 
 /// Implemented for scalar types.
-pub trait IsScalar: Sealed {}
+#[sealed]
+pub trait IsScalar {}
 
-impl IsScalar for i32 {}
-impl IsScalar for i64 {}
-impl IsScalar for f32 {}
-impl IsScalar for f64 {}
-
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for bool {}
-    impl Sealed for i32 {}
-    impl Sealed for i64 {}
-    impl Sealed for f32 {}
-    impl Sealed for f64 {}
+macro_rules! impl_is_scalar {
+    ($($ty:ty),*) => {
+        $(
+            #[sealed]
+            impl IsScalar for $ty {}
+        )*
+    };
 }
+
+impl_is_scalar!(i32, i64, f32, f64);
