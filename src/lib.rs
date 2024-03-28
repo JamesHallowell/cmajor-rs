@@ -15,3 +15,6 @@ mod library;
 pub mod performer;
 mod program;
 pub mod value;
+
+#[cfg(all(feature = "static", not(target_os = "macos")))]
+compile_error!("The 'static' feature is only available on macOS currently.");

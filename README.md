@@ -48,6 +48,14 @@ to find it, either by:
     }
     ```
 
+## Crate Features
+
+### `static` (Experimental)
+
+It is possible to statically link to Cmajor to avoid having to load the library dynamically at runtime. This will build
+the library from source, so you'll need to have the necessary build tools installed. This feature is disabled by
+default, and only has experimental support on macOS.
+
 ## License
 
 Licensed under either of
