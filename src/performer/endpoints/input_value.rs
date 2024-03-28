@@ -180,7 +180,7 @@ fn make_endpoint_connection(handle: EndpointHandle, ty: &Type) -> (Writer, Endpo
             primitive_impl!(handle, f64, AtomicF64);
         }
         _ => {
-            let (writer, mut reader) = realtime_reader(None);
+            let (writer, reader) = realtime_reader(None);
             let writer = Mutex::new(writer);
 
             return (
