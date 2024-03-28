@@ -54,10 +54,10 @@ fn can_read_and_write_to_value_endpoint() {
     let mut performer = setup(PROGRAM);
 
     let int_in = performer.endpoint::<InputValue<i32>>("int_in").unwrap();
-    let mut int_out = performer.endpoint::<OutputValue<i32>>("int_out").unwrap();
+    let int_out = performer.endpoint::<OutputValue<i32>>("int_out").unwrap();
 
     let bool_in = performer.endpoint::<InputValue<bool>>("bool_in").unwrap();
-    let mut bool_out = performer.endpoint::<OutputValue<bool>>("bool_out").unwrap();
+    let bool_out = performer.endpoint::<OutputValue<bool>>("bool_out").unwrap();
 
     int_in.set(2);
     bool_in.set(true);
@@ -112,7 +112,7 @@ fn can_read_and_write_complex32_numbers() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputValue>("in").unwrap();
-    let mut output = performer.endpoint::<OutputValue>("out").unwrap();
+    let output = performer.endpoint::<OutputValue>("out").unwrap();
 
     input
         .set(Complex32 {
@@ -153,7 +153,7 @@ fn can_read_and_write_complex64_numbers() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputValue>("in").unwrap();
-    let mut output = performer.endpoint::<OutputValue>("out").unwrap();
+    let output = performer.endpoint::<OutputValue>("out").unwrap();
 
     input
         .set(Complex64 {
@@ -198,7 +198,7 @@ fn can_read_structs() {
     "#;
 
     let mut performer = setup(PROGRAM);
-    let mut output = performer.endpoint::<OutputValue>("out").unwrap();
+    let output = performer.endpoint::<OutputValue>("out").unwrap();
 
     performer.advance();
 
@@ -230,7 +230,7 @@ fn can_read_and_write_arrays() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputValue<Value>>("in").unwrap();
-    let mut output = performer.endpoint::<OutputValue<Value>>("out").unwrap();
+    let output = performer.endpoint::<OutputValue<Value>>("out").unwrap();
 
     input.set([1, 2, 3, 4]).unwrap();
 
@@ -278,7 +278,7 @@ fn can_post_events() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputEvent>("in").unwrap();
-    let mut output = performer.endpoint::<OutputValue<i32>>("out").unwrap();
+    let output = performer.endpoint::<OutputValue<i32>>("out").unwrap();
 
     input.post(4).unwrap();
     performer.advance();
@@ -489,7 +489,7 @@ fn read_and_write_vectors() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputValue>("in").unwrap();
-    let mut output = performer.endpoint::<OutputValue>("out").unwrap();
+    let output = performer.endpoint::<OutputValue>("out").unwrap();
 
     input.set([1, 2, 3, 4]).unwrap();
     performer.advance();
@@ -563,7 +563,7 @@ fn multiple_handles_to_the_same_input_value_endpoint() {
 
     let input_a = performer.endpoint::<InputValue<i32>>("a").unwrap();
     let input_b = performer.endpoint::<InputValue<i32>>("a").unwrap();
-    let mut output = performer.endpoint::<OutputValue<i32>>("b").unwrap();
+    let output = performer.endpoint::<OutputValue<i32>>("b").unwrap();
 
     input_a.set(42);
     performer.advance();
@@ -597,8 +597,8 @@ fn multiple_handles_to_the_same_output_value_endpoint() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputValue<i32>>("a").unwrap();
-    let mut output_a = performer.endpoint::<OutputValue<i32>>("b").unwrap();
-    let mut output_b = performer.endpoint::<OutputValue<i32>>("b").unwrap();
+    let output_a = performer.endpoint::<OutputValue<i32>>("b").unwrap();
+    let output_b = performer.endpoint::<OutputValue<i32>>("b").unwrap();
 
     input.set(42);
 
@@ -636,7 +636,7 @@ fn void_events() {
     let mut performer = setup(PROGRAM);
 
     let input = performer.endpoint::<InputEvent>("increment").unwrap();
-    let mut output = performer
+    let output = performer
         .endpoint::<OutputValue<i32>>("currentCount")
         .unwrap();
 

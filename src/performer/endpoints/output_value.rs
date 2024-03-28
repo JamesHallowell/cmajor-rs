@@ -31,11 +31,11 @@ pub struct OutputValue<T = Value> {
     _marker: PhantomData<fn() -> T>,
 }
 
-type Reader = Box<dyn FnMut() -> Value + Send>;
+type Reader = Box<dyn Fn() -> Value + Send>;
 
 impl Endpoint<OutputValue<bool>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> bool {
+    pub fn get(&self) -> bool {
         let value: Result<i32, ()> = (self.inner.reader)().as_ref().try_into();
         debug_assert!(value.is_ok());
         value.unwrap_or_default() != 0
@@ -44,7 +44,7 @@ impl Endpoint<OutputValue<bool>> {
 
 impl Endpoint<OutputValue<i32>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> i32 {
+    pub fn get(&self) -> i32 {
         let value = (self.inner.reader)().as_ref().try_into();
         debug_assert!(value.is_ok());
         value.unwrap_or_default()
@@ -53,7 +53,7 @@ impl Endpoint<OutputValue<i32>> {
 
 impl Endpoint<OutputValue<i64>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> i64 {
+    pub fn get(&self) -> i64 {
         let value = (self.inner.reader)().as_ref().try_into();
         debug_assert!(value.is_ok());
         value.unwrap_or_default()
@@ -62,7 +62,7 @@ impl Endpoint<OutputValue<i64>> {
 
 impl Endpoint<OutputValue<f32>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> f32 {
+    pub fn get(&self) -> f32 {
         let value = (self.inner.reader)().as_ref().try_into();
         debug_assert!(value.is_ok());
         value.unwrap_or_default()
@@ -71,7 +71,7 @@ impl Endpoint<OutputValue<f32>> {
 
 impl Endpoint<OutputValue<f64>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> f64 {
+    pub fn get(&self) -> f64 {
         let value = (self.inner.reader)().as_ref().try_into();
         debug_assert!(value.is_ok());
         value.unwrap_or_default()
@@ -80,7 +80,7 @@ impl Endpoint<OutputValue<f64>> {
 
 impl Endpoint<OutputValue<Value>> {
     /// Read the value of the endpoint.
-    pub fn get(&mut self) -> Value {
+    pub fn get(&self) -> Value {
         (self.inner.reader)()
     }
 }
@@ -165,7 +165,7 @@ fn make_endpoint_connection(handle: EndpointHandle, ty: &Type) -> (Reader, Endpo
             primitive_impl!(handle, f64, AtomicF64);
         }
         _ => {
-            let (mut reader, mut writer) = realtime_writer(None);
+            let (reader, writer) = realtime_writer(None);
 
             let ty = ty.to_owned();
             let mut buffer = vec![0; ty.size()];
