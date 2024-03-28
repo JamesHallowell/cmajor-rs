@@ -3,14 +3,20 @@
 mod atomic;
 mod endpoints;
 
-pub use endpoints::{Endpoint, InputEvent, InputValue, OutputValue};
+pub use endpoints::{
+    input_event::InputEvent,
+    input_value::InputValue,
+    output_value::OutputValue,
+    stream::{InputStream, OutputStream},
+    Endpoint,
+};
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointType, ProgramEndpoints},
         ffi::PerformerPtr,
         value::ValueRef,
     },
-    endpoints::CachedInputValues,
+    endpoints::input_value::CachedInputValues,
     sealed::sealed,
     std::sync::Arc,
 };
