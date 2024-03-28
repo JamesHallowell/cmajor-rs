@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cmajor = "0.2"
+cmajor = "0.3"
 ```
 
 You will also need to [download the Cmajor library](https://github.com/SoundStacks/cmajor/releases) and tell the crate
@@ -58,20 +58,5 @@ default, and only has experimental support on macOS.
 
 ## License
 
-Licensed under either of
-
-* Apache License, Version 2.0
-  ([LICENSE-APACHE](LICENSE-APACHE))
-* MIT license
-  ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-The end-user license for the Cmajor redistributable library can be
-found [here](https://github.com/SoundStacks/cmajor/blob/main/EULA.md#cmajor-end-user-license-agreement).
-
-## Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+Licensed under GPLv3 (or later). Refer to the [Cmajor licensing terms](https://cmajor.dev/docs/Licence) for more
+information.
