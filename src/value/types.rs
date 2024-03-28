@@ -264,7 +264,7 @@ impl_is_primitive!(bool, i32, i64, f32, f64);
 
 /// Implemented for scalar types.
 #[sealed]
-pub trait IsScalar {}
+pub trait IsScalar: IsPrimitive {}
 
 macro_rules! impl_is_scalar {
     ($($ty:ty),*) => {

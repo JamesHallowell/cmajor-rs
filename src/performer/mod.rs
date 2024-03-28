@@ -8,7 +8,7 @@ use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointType, ProgramEndpoints},
         ffi::PerformerPtr,
-        value::{types::IsScalar, ValueRef},
+        value::ValueRef,
     },
     endpoints::CachedInputValues,
     sealed::sealed,
@@ -16,17 +16,18 @@ use {
 };
 
 /// A Cmajor performer.
-pub struct Performer {
+pub struct Performer<Streams = ((), ())> {
     inner: PerformerPtr,
     endpoints: Arc<ProgramEndpoints>,
     inputs: Vec<EndpointHandler>,
     outputs: Vec<EndpointHandler>,
     cached_input_values: CachedInputValues,
+    streams: Streams,
 }
 
 pub(crate) type EndpointHandler = Box<dyn FnMut(&mut PerformerPtr) + Send>;
 
-impl Performer {
+impl Performer<((), ())> {
     pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<ProgramEndpoints>) -> Self {
         Performer {
             inner: performer,
@@ -34,9 +35,12 @@ impl Performer {
             inputs: vec![],
             outputs: vec![],
             cached_input_values: CachedInputValues::default(),
+            streams: ((), ()),
         }
     }
+}
 
+impl<Streams> Performer<Streams> {
     /// Returns an endpoint of the performer.
     pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
     where
@@ -86,7 +90,7 @@ impl Performer {
     /// given slice.
     pub unsafe fn read_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &mut [T])
     where
-        T: Copy + IsScalar,
+        T: Copy,
     {
         self.inner.copy_output_frames(handle, frames);
     }
@@ -102,7 +106,7 @@ impl Performer {
     /// given slice.
     pub unsafe fn write_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &[T])
     where
-        T: Copy + IsScalar,
+        T: Copy,
     {
         self.inner.set_input_frames(handle, frames);
     }
@@ -190,7 +194,10 @@ pub enum EndpointError {
 #[doc(hidden)]
 #[sealed(pub(crate))]
 pub trait PerformerEndpoint {
-    fn make(id: &str, performer: &mut Performer) -> Result<Endpoint<Self>, EndpointError>
+    fn make<Streams>(
+        id: &str,
+        performer: &mut Performer<Streams>,
+    ) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized;
 }
