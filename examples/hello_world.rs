@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     performer.set_block_size(BLOCK_SIZE);
 
-    let output = performer.endpoints().get_handle("out").unwrap();
+    let mut performer = performer.with_output_stream::<f32>("out")?;
 
     let stream = cpal::default_host()
         .default_output_device()
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 performer.advance();
-                unsafe { performer.read_stream_unchecked(output, data) };
+                performer.read_stream(data);
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,

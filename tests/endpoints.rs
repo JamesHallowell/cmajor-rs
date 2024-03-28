@@ -370,18 +370,18 @@ fn can_read_streams() {
     let mut performer = setup(PROGRAM);
     performer.set_block_size(8);
 
-    let output = performer.endpoints().get_handle("out").unwrap();
+    let mut performer = performer.with_output_stream::<i32>("out").unwrap();
 
     performer.advance();
 
     let mut buffer = [0_i32; 8];
 
-    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+    performer.read_stream(buffer.as_mut_slice());
     assert_eq!(buffer, [0, 1, 2, 3, 4, 5, 6, 7]);
 
     performer.advance();
 
-    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+    performer.read_stream(buffer.as_mut_slice());
     assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
 
     assert_eq!(performer.get_xruns(), 0);
@@ -452,19 +452,18 @@ fn can_write_streams() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let mut performer = setup(PROGRAM)
+        .with_input_stream::<i32>("in")
+        .unwrap()
+        .with_output_stream::<i32>("out")
+        .unwrap();
 
     let mut buffer = [1, 2, 3, 4, 5, 6, 7, 8];
     performer.set_block_size(buffer.len() as u32);
 
-    let input = performer.endpoints().get_handle("in").unwrap();
-    let output = performer.endpoints().get_handle("out").unwrap();
-
-    unsafe {
-        performer.write_stream_unchecked(input, buffer.as_mut_slice());
-    }
+    performer.write_stream(buffer.as_mut_slice());
     performer.advance();
-    unsafe { performer.read_stream_unchecked(output, buffer.as_mut_slice()) };
+    performer.read_stream(buffer.as_mut_slice());
 
     assert_eq!(buffer, [2, 4, 6, 8, 10, 12, 14, 16]);
 }
@@ -650,4 +649,40 @@ fn void_events() {
     performer.advance();
 
     assert_eq!(output.get(), 2);
+}
+
+#[test]
+fn vector_stream_endpoints() {
+    const PROGRAM: &str = r#"
+        processor Swap
+        {
+            input stream float<2> in;
+            output stream float<2> out;
+
+            void main()
+            {
+                loop {
+                    out <- float<2> (in[1], in[0]);
+                    advance();
+                }
+            }
+        }
+    "#;
+
+    let mut performer = setup(PROGRAM)
+        .with_input_stream::<[f32; 2]>("in")
+        .unwrap()
+        .with_output_stream::<[f32; 2]>("out")
+        .unwrap();
+
+    let input_buffer = [[1., 2.]; 4];
+    let mut output_buffer = [[0.; 2]; 4];
+
+    performer.set_block_size(4);
+
+    performer.write_stream(&input_buffer);
+    performer.advance();
+    performer.read_stream(&mut output_buffer);
+
+    assert_eq!(output_buffer, [[2., 1.], [2., 1.], [2., 1.], [2., 1.]]);
 }

@@ -90,7 +90,10 @@ impl<T> PerformerEndpoint for OutputValue<T>
 where
     T: 'static,
 {
-    fn make(id: &str, performer: &mut Performer) -> Result<Endpoint<Self>, EndpointError> {
+    fn make<Streams>(
+        id: &str,
+        performer: &mut Performer<Streams>,
+    ) -> Result<Endpoint<Self>, EndpointError> {
         let (handle, endpoint) = performer
             .endpoints
             .get_by_id(id)

@@ -1,6 +1,7 @@
 mod input_event;
 mod input_value;
 mod output_value;
+mod stream;
 
 /// An endpoint.
 pub struct Endpoint<T> {
