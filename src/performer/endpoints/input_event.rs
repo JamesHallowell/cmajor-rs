@@ -18,6 +18,13 @@ pub struct InputEvent<T = Value> {
     _marker: PhantomData<T>,
 }
 
+impl<T> Endpoint<InputEvent<T>> {
+    /// The data types of this endpoint.
+    pub fn types(&self) -> &[Type] {
+        &self.inner.types
+    }
+}
+
 impl Endpoint<InputEvent<Value>> {
     /// Post an event to the endpoint.
     pub fn post(&self, value: impl Into<Value>) -> Result<(), EndpointError> {

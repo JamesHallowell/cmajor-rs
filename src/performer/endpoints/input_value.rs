@@ -40,6 +40,13 @@ pub struct CachedInputValues {
     writers: HashMap<EndpointHandle, Writer>,
 }
 
+impl<T> Endpoint<InputValue<T>> {
+    /// The data type of this endpoint.
+    pub fn ty(&self) -> &Type {
+        &self.inner.ty
+    }
+}
+
 impl Endpoint<InputValue<bool>> {
     /// Set the value of the endpoint.
     pub fn set(&self, value: bool) {
