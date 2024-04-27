@@ -26,6 +26,7 @@ struct PerformerVTable {
     iterate_output_events:
         unsafe extern "system" fn(*mut Performer, u32, *mut c_void, HandleOutputEventCallback),
 
+    reset: unsafe extern "system" fn(*mut Performer),
     advance: unsafe extern "system" fn(*mut Performer),
     get_string_for_handle:
         unsafe extern "system" fn(*mut Performer, u32, *mut isize) -> *const c_char,
