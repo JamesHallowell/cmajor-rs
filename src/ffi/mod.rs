@@ -20,25 +20,25 @@ pub struct Library {
     entry_points: *mut EntryPoints,
 }
 
-type CMajorGetEntryPointsV9 = unsafe extern "C" fn() -> *mut c_void;
+type CMajorGetEntryPointsV10 = unsafe extern "C" fn() -> *mut c_void;
 
 #[cfg(feature = "static")]
 extern "C" {
-    fn cmajor_getEntryPointsV9() -> *mut c_void;
+    fn cmajor_getEntryPointsV10() -> *mut c_void;
 }
 
 impl Library {
     #[cfg(feature = "static")]
     pub fn new() -> Self {
-        let entry_points = unsafe { cmajor_getEntryPointsV9() }.cast();
+        let entry_points = unsafe { cmajor_getEntryPointsV10() }.cast();
         Self { entry_points }
     }
 
     pub fn load(path_to_library: impl AsRef<Path>) -> Result<Self, libloading::Error> {
-        const LIBRARY_ENTRY_POINT: &[u8] = b"cmajor_getEntryPointsV9";
+        const LIBRARY_ENTRY_POINT: &[u8] = b"cmajor_getEntryPointsV10";
 
         let library = unsafe { libloading::Library::new(path_to_library.as_ref()) }?;
-        let entry_point_fn: libloading::Symbol<CMajorGetEntryPointsV9> =
+        let entry_point_fn: libloading::Symbol<CMajorGetEntryPointsV10> =
             unsafe { library.get(LIBRARY_ENTRY_POINT)? };
 
         let entry_points = unsafe { entry_point_fn() }.cast();
