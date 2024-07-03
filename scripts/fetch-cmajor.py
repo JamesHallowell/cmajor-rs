@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 
 def download_github_release(asset):
-    url = f"https://github.com/SoundStacks/cmajor/releases/download/{asset}"
+    url = f"https://github.com/cmajor-lang/cmajor/releases/download/{asset}"
     response = urlopen(url)
     if response.status != 200:
         raise Exception(f"Failed to download {url}")
