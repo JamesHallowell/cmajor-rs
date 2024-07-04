@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(cmajor-static)
+project(cmajor-rs)
 
 file(
   DOWNLOAD
@@ -12,13 +12,15 @@ include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
 
 set(FETCHCONTENT_QUIET FALSE)
 
+set(CMAJOR_VERSION 1.0.2562)
+
 cpmaddpackage(
   NAME
   cmajor
   GITHUB_REPOSITORY
   cmajor-lang/cmajor
   GIT_TAG
-  1.0.2375
+  ${CMAJOR_VERSION}
   GIT_SHALLOW
   TRUE
   GIT_PROGRESS
@@ -26,27 +28,9 @@ cpmaddpackage(
   GIT_CONFIG
   fetch.parallel=0)
 
-set(CMAJ_VERSION="1.0")
+make_cmaj_library(LIBRARY_NAME cmajor INCLUDE_PLAYBACK ENABLE_PERFORMER_LLVM)
 
-add_compile_definitions(
-  $<$<CONFIG:Debug>:DEBUG=1> CMAJOR_DLL=0 CMAJ_ENABLE_WEBVIEW_DEV_TOOLS=1
-  CHOC_ASSERT=must_include_assertion_header_before_any_choc_headers)
-
-make_cmaj_library(
-  LIBRARY_NAME
-  cmajor-for-rust
-  INCLUDE_PLAYBACK
-  ENABLE_PERFORMER_LLVM
-  ENABLE_PERFORMER_WEBVIEW
-  ENABLE_PERFORMER_CPP
-  ENABLE_CODEGEN_LLVM_WASM
-  ENABLE_CODEGEN_BINARYEN
-  ENABLE_CODEGEN_CPP)
-
-add_library(
-  cmajor-static STATIC
-  ${cmajor_SOURCE_DIR}/tools/CmajDLL/Source/cmaj_ExportedFunctions.cpp)
-target_compile_definitions(cmajor-static PUBLIC CMAJ_VERSION="1.0")
-target_link_libraries(cmajor-static PUBLIC cmajor-for-rust)
+add_library(cmajor-static STATIC main.cpp)
+target_link_libraries(cmajor-static PUBLIC cmajor)
 target_compile_features(cmajor-static PUBLIC cxx_std_17)
 target_include_directories(cmajor-static PUBLIC ${cmajor_SOURCE_DIR}/include)

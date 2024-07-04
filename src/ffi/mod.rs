@@ -24,13 +24,13 @@ type CMajorGetEntryPointsV10 = unsafe extern "C" fn() -> *mut c_void;
 
 #[cfg(feature = "static")]
 extern "C" {
-    fn cmajor_getEntryPointsV10() -> *mut c_void;
+    fn cmajor_getEntryPointsStatic() -> *mut c_void;
 }
 
 impl Library {
     #[cfg(feature = "static")]
     pub fn new() -> Self {
-        let entry_points = unsafe { cmajor_getEntryPointsV10() }.cast();
+        let entry_points = unsafe { cmajor_getEntryPointsStatic() }.cast();
         Self { entry_points }
     }
 
