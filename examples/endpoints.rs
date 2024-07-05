@@ -41,13 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Cmajor v{}", cmajor.version());
 
-    let llvm_engine = cmajor
-        .engine_types()
-        .find(|engine_type| engine_type == "llvm")
-        .expect("no llvm engine type");
-
     let engine = cmajor
-        .create_engine(llvm_engine)
+        .create_default_engine()
         .with_sample_rate(SAMPLE_RATE)
         .build();
 

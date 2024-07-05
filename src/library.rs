@@ -93,6 +93,11 @@ impl Cmajor {
         EngineTypes::new(self.library.engine_types())
     }
 
+    /// Create the default engine type (LLVM JIT).
+    pub fn create_default_engine(&self) -> EngineBuilder {
+        self.create_engine(EngineType::default_engine_type())
+    }
+
     /// Create a new engine of the given type.
     pub fn create_engine(&self, engine_type: EngineType) -> EngineBuilder {
         let engine_type = CString::new(engine_type.to_str())

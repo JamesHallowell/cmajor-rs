@@ -45,12 +45,12 @@ processor HelloWorld
     // We'll define a couple of constants here to set the volume and tempo
     let framesPerQuarterNote = int (processor.frequency / 7);
     let volume = 0.15f;
-    
+
     float phase;
 }
 "#;
 
-const SAMPLE_RATE: u32 = 44_100;
+const SAMPLE_RATE: u32 = 48_000;
 const BLOCK_SIZE: u32 = 256;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,13 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Cmajor v{}", cmajor.version());
 
-    let llvm_engine = cmajor
-        .engine_types()
-        .find(|engine_type| engine_type == "llvm")
-        .expect("no llvm engine type");
-
     let engine = cmajor
-        .create_engine(llvm_engine)
+        .create_default_engine()
         .with_sample_rate(SAMPLE_RATE)
         .build();
 
