@@ -10,12 +10,10 @@ use cmajor::{
 fn setup(program: &str) -> Performer {
     let cmajor = Cmajor::new();
 
-    let llvm = cmajor
-        .engine_types()
-        .find(|engine_type| engine_type == "llvm")
-        .expect("no llvm engine type");
-
-    let engine = cmajor.create_engine(llvm).with_sample_rate(44_100).build();
+    let engine = cmajor
+        .create_default_engine()
+        .with_sample_rate(44_100)
+        .build();
 
     let program = cmajor.parse(program).expect("failed to parse program");
 
@@ -39,7 +37,7 @@ fn can_read_and_write_to_value_endpoint() {
 
             input value bool bool_in;
             output value bool bool_out;
-        
+
             void main()
             {
                 loop {
@@ -75,7 +73,7 @@ fn cant_access_endpoints_with_wrong_type() {
         {
             input value float in;
             output event float out;
-        
+
             void main()
             {
                 out <- in + 1;
@@ -100,7 +98,7 @@ fn can_read_and_write_complex32_numbers() {
         {
             input value complex in;
             output value complex out;
-        
+
             void main()
             {
                 out <- in;
@@ -141,7 +139,7 @@ fn can_read_and_write_complex64_numbers() {
         {
             input value complex64 in;
             output value complex64 out;
-        
+
             void main()
             {
                 out <- in;
@@ -181,14 +179,14 @@ fn can_read_structs() {
         processor Echo
         {
             output value S out;
-            
+
             struct S
             {
                 bool a;
                 float b;
                 int c;
             }
-        
+
             void main()
             {
                 out <- S (true, 7.0, 42);
@@ -218,7 +216,7 @@ fn can_read_and_write_arrays() {
         {
             input value int[4] in;
             output value int[4] out;
-        
+
             void main()
             {
                 out <- int[] (in[3], in[2], in[1], in[0]);
@@ -257,17 +255,17 @@ fn can_post_events() {
         {
             input event (int, bool) in;
             output value int out;
-            
+
             event in (int x)
             {
                 out <- x * x;
             }
-            
+
             event in (bool x)
-            {            
+            {
                 out <- x ? 42 : 0;
             }
-        
+
             void main()
             {
                 advance();
@@ -298,17 +296,17 @@ fn can_read_events() {
         {
             input event (int, bool) in;
             output event (int, bool) out;
-            
+
             event in(int value)
             {
                 out <- value;
             }
-            
+
             event in(bool value)
             {
                 out <- value;
             }
-        
+
             void main()
             {
                 advance();
@@ -354,7 +352,7 @@ fn can_read_streams() {
         processor Iota
         {
             output stream int out;
-        
+
             void main()
             {
                 int i = 0;
@@ -395,11 +393,11 @@ fn can_query_endpoint_information() {
             input stream int a;
             input value float b;
             output event (int, S) c;
-        
+
             struct S {
                 bool d;
             }
-        
+
             void main()
             {
                 advance();
@@ -441,7 +439,7 @@ fn can_write_streams() {
         {
             input stream int in;
             output stream int out;
-        
+
             void main()
             {
                 loop {
@@ -475,7 +473,7 @@ fn read_and_write_vectors() {
         {
             input value int<4> in;
             output value int<4> out;
-        
+
             void main()
             {
                 loop {
@@ -517,7 +515,7 @@ fn endpoints_with_annotations() {
         {
             input value float a [[ name: "foo", min: 0.5, max: 10.0, hidden: true ]];
             output value int b [[ name: "bar", min: 1, max: 5, hidden: false ]];
-        
+
             void main()
             {
                 advance();

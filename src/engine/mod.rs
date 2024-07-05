@@ -54,6 +54,11 @@ impl EngineType {
     pub(crate) fn to_str(&self) -> &str {
         &self.0
     }
+
+    pub(crate) fn default_engine_type() -> Self {
+        // Empty string is the default engine type.
+        Self(String::new())
+    }
 }
 
 impl PartialEq<str> for EngineType {
