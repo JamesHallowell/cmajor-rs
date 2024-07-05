@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cmajor = "0.4"
+cmajor = "0.5"
 ```
 
 You will also need to [download the Cmajor library](https://github.com/SoundStacks/cmajor/releases) and tell the crate
@@ -28,7 +28,7 @@ to find it, either by:
 
     ```rust
     use {cmajor::Cmajor, std::error::Error};
-    
+
     fn main() -> Result<(), Box<dyn Error>> {
         let cmajor = Cmajor::new("path/to/libCmajPerformer.so")?;
     }
@@ -42,7 +42,7 @@ to find it, either by:
 
     ```rust
     use cmajor::{Cmajor, std::error::Error};
-    
+
     fn main() -> Result<(), Box<dyn Error>> {
         let cmajor = Cmajor::new_from_env()?;
     }
