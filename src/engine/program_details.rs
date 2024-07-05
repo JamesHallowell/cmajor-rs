@@ -15,6 +15,7 @@ use {
     std::{borrow::Borrow, fmt::Formatter, iter::repeat},
 };
 
+/// Details about a Cmajor program.
 #[derive(Debug, Deserialize)]
 pub struct ProgramDetails {
     inputs: Vec<EndpointDetails>,
@@ -24,6 +25,7 @@ pub struct ProgramDetails {
 }
 
 impl ProgramDetails {
+    /// Returns an iterator over all the endpoints in the program.
     pub fn endpoints(&self) -> impl Iterator<Item = EndpointType> + '_ {
         let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
         let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));

@@ -3,11 +3,9 @@
 mod annotation;
 mod program_details;
 
-pub use annotation::Annotation;
 use {
     crate::{
         endpoint::{EndpointHandle, ProgramEndpoints},
-        engine::program_details::ProgramDetails,
         ffi::EnginePtr,
         performer::Performer,
         program::Program,
@@ -20,6 +18,7 @@ use {
         sync::Arc,
     },
 };
+pub use {annotation::Annotation, program_details::ProgramDetails};
 
 /// The set of supported engine types.
 pub struct EngineTypes<'a> {
