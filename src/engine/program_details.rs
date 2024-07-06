@@ -4,15 +4,15 @@ use {
             EndpointDirection, EndpointId, EndpointType, EventEndpoint, StreamEndpoint,
             ValueEndpoint,
         },
-        engine::program_details::ParseEndpointError::UnsupportedType,
-        value::types::{Array, Object, Primitive, Type},
+        ffi::types::{TypeDescription, TypeDescriptionError},
+        value::types::Type,
     },
     serde::{
         de::{value::MapAccessDeserializer, Visitor},
         Deserialize, Deserializer,
     },
     serde_json::{Map as JsonMap, Value as JsonValue},
-    std::{borrow::Borrow, fmt::Formatter, iter::repeat},
+    std::{fmt::Formatter, iter::repeat},
 };
 
 /// Details about a Cmajor program.
@@ -76,125 +76,6 @@ enum EndpointVariant {
     Value,
 }
 
-#[derive(Debug, Copy, Clone, Deserialize, PartialEq)]
-enum ValueType {
-    #[serde(rename = "void")]
-    Void,
-
-    #[serde(rename = "bool")]
-    Bool,
-
-    #[serde(rename = "int32")]
-    Int32,
-
-    #[serde(rename = "int64")]
-    Int64,
-
-    #[serde(rename = "float32")]
-    Float32,
-
-    #[serde(rename = "float64")]
-    Float64,
-
-    #[serde(rename = "string")]
-    String,
-
-    #[serde(rename = "array")]
-    Array,
-
-    #[serde(rename = "object")]
-    Object,
-
-    #[serde(rename = "vector")]
-    Vector,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-struct EndpointDataType {
-    #[serde(rename = "type")]
-    ty: ValueType,
-
-    #[serde(rename = "class")]
-    class: Option<String>,
-
-    #[serde(rename = "members")]
-    members: Option<JsonMap<String, JsonValue>>,
-
-    #[serde(rename = "element")]
-    element: Option<Box<Self>>,
-
-    #[serde(rename = "size")]
-    size: Option<usize>,
-
-    #[serde(flatten)]
-    _extra: JsonMap<String, JsonValue>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ParseEndpointError {
-    #[error(transparent)]
-    InvalidJson(#[from] serde_json::Error),
-
-    #[error("unsupported type: {0:?}")]
-    UnsupportedType(String),
-
-    #[error("struct has no members")]
-    StructHasNoMembers,
-
-    #[error("array has no element")]
-    ArrayHasNoElement,
-
-    #[error("array has no size")]
-    ArrayHasNoSize,
-
-    #[error("endpoint has an unexpected number of types")]
-    UnexpectedNumberOfTypes,
-}
-
-impl TryFrom<&EndpointDataType> for Type {
-    type Error = ParseEndpointError;
-
-    fn try_from(
-        EndpointDataType {
-            ty,
-            members,
-            element,
-            size,
-            ..
-        }: &EndpointDataType,
-    ) -> Result<Self, Self::Error> {
-        match *ty {
-            ValueType::Void => Ok(Type::Primitive(Primitive::Void)),
-            ValueType::Bool => Ok(Type::Primitive(Primitive::Bool)),
-            ValueType::Int32 => Ok(Type::Primitive(Primitive::Int32)),
-            ValueType::Int64 => Ok(Type::Primitive(Primitive::Int64)),
-            ValueType::Float32 => Ok(Type::Primitive(Primitive::Float32)),
-            ValueType::Float64 => Ok(Type::Primitive(Primitive::Float64)),
-            ValueType::Object => {
-                let mut object = Object::new();
-                for (name, value) in members.as_ref().ok_or(Self::Error::StructHasNoMembers)? {
-                    let ty: Type = serde_json::from_value::<EndpointDataType>(value.clone())?
-                        .borrow()
-                        .try_into()?;
-                    object.add_field(name, ty);
-                }
-                Ok(object.into())
-            }
-            ValueType::Array | ValueType::Vector => {
-                let element_ty: Type = element
-                    .as_ref()
-                    .ok_or(ParseEndpointError::ArrayHasNoElement)?
-                    .as_ref()
-                    .try_into()?;
-                let size = size.ok_or(ParseEndpointError::ArrayHasNoSize)?;
-
-                Ok(Array::new(element_ty, size).into())
-            }
-            ty => Err(UnsupportedType(format!("{:?}", ty))),
-        }
-    }
-}
-
 fn try_make_endpoint(
     EndpointDetails {
         id,
@@ -204,13 +85,13 @@ fn try_make_endpoint(
         ..
     }: &EndpointDetails,
     direction: EndpointDirection,
-) -> Result<EndpointType, ParseEndpointError> {
+) -> Result<EndpointType, TypeDescriptionError> {
     let annotation = annotation.clone().unwrap_or_default().into();
 
     Ok(match endpoint_type {
         EndpointVariant::Stream => {
             if value_type.len() != 1 {
-                return Err(ParseEndpointError::UnexpectedNumberOfTypes);
+                return Err(TypeDescriptionError::UnexpectedNumberOfTypes);
             }
 
             StreamEndpoint::new(id.clone(), direction, value_type[0].clone(), annotation).into()
@@ -220,7 +101,7 @@ fn try_make_endpoint(
         }
         EndpointVariant::Value => {
             if value_type.len() != 1 {
-                return Err(ParseEndpointError::UnexpectedNumberOfTypes);
+                return Err(TypeDescriptionError::UnexpectedNumberOfTypes);
             }
 
             ValueEndpoint::new(id.clone(), direction, value_type[0].clone(), annotation).into()
@@ -246,7 +127,7 @@ where
             A: serde::de::SeqAccess<'de>,
         {
             let mut data_types = Vec::new();
-            while let Some(data_type) = seq.next_element::<EndpointDataType>()? {
+            while let Some(data_type) = seq.next_element::<TypeDescription>()? {
                 let data_type = Type::try_from(&data_type).map_err(serde::de::Error::custom)?;
                 data_types.push(data_type);
             }
@@ -258,7 +139,7 @@ where
         where
             A: serde::de::MapAccess<'de>,
         {
-            let data_type: EndpointDataType =
+            let data_type: TypeDescription =
                 Deserialize::deserialize(MapAccessDeserializer::new(map))?;
 
             let data_type = Type::try_from(&data_type).map_err(serde::de::Error::custom)?;
@@ -272,7 +153,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, crate::value::types::Primitive};
 
     #[test]
     fn parse_an_endpoint_with_a_single_data_type() {
