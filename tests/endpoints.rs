@@ -426,7 +426,7 @@ fn can_query_endpoint_information() {
     assert!(c.types()[0].is::<i32>());
     assert_eq!(
         c.types()[1],
-        Object::new()
+        Object::new("S")
             .with_field("d", Type::Primitive(Primitive::Bool))
             .into()
     );

@@ -30,6 +30,9 @@ struct RequestExternalVariableArg {
 struct RequestExternalVariableArgType {
     #[serde(rename = "type")]
     ty: String,
+
+    #[serde(flatten)]
+    _rest: json::Map<String, json::Value>,
 }
 
 type RequestExternalFunctionCallback =
@@ -209,17 +212,16 @@ impl EnginePtr {
             return;
         };
 
-        value.with_bytes(|bytes| {
-            dbg!(bytes);
-            unsafe {
-                ((*(*self.engine).vtable).set_external_variable)(
-                    self.engine,
-                    name.as_ptr(),
-                    bytes.as_ptr().cast(),
-                    bytes.len() as isize,
-                )
-            };
-        });
+        let serialised = value.serialise_as_choc_value();
+
+        unsafe {
+            ((*(*self.engine).vtable).set_external_variable)(
+                self.engine,
+                name.as_ptr(),
+                serialised.as_ptr().cast(),
+                serialised.len() as isize,
+            )
+        };
     }
 }
 

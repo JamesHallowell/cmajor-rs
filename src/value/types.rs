@@ -1,6 +1,7 @@
 //! Types of Cmajor values.
 
 use {
+    bytes::BufMut,
     sealed::sealed,
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
@@ -58,6 +59,7 @@ pub enum TypeRef<'a> {
 /// An object type.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Object {
+    class: String,
     fields: SmallVec<[Field; 2]>,
 }
 
@@ -124,6 +126,19 @@ impl Type {
     }
 }
 
+fn write_packed_int(mut buffer: impl BufMut, mut value: u64) {
+    while value >= 0x80 {
+        buffer.put_u8((value & 0x7F) as u8 | 0x80);
+        value >>= 7;
+    }
+    buffer.put_u8(value as u8);
+}
+
+fn write_null_terminated_string(mut buffer: impl BufMut, string: impl AsRef<str>) {
+    buffer.put_slice(string.as_ref().as_bytes());
+    buffer.put_u8(0);
+}
+
 impl TypeRef<'_> {
     /// The size of the type in bytes.
     pub fn size(&self) -> usize {
@@ -145,6 +160,36 @@ impl TypeRef<'_> {
             TypeRef::Primitive(primitive) => Type::Primitive(primitive),
             TypeRef::Array(array) => Type::Array(Box::new(array.clone())),
             TypeRef::Object(object) => Type::Object(Box::new(object.clone())),
+        }
+    }
+
+    pub(crate) fn serialise_as_choc_type(&self) -> Vec<u8> {
+        match self {
+            TypeRef::Primitive(Primitive::Void) => vec![0],
+            TypeRef::Primitive(Primitive::Int32) => vec![1],
+            TypeRef::Primitive(Primitive::Int64) => vec![2],
+            TypeRef::Primitive(Primitive::Float32) => vec![3],
+            TypeRef::Primitive(Primitive::Float64) => vec![4],
+            TypeRef::Primitive(Primitive::Bool) => vec![5],
+            TypeRef::Array(array) => {
+                let mut buffer = vec![];
+                buffer.put_u8(7);
+                buffer.put_u8(if array.is_empty() { 0 } else { 1 });
+                write_packed_int(&mut buffer, array.len() as u64);
+                buffer.put_slice(array.elem_ty().as_ref().serialise_as_choc_type().as_slice());
+                buffer
+            }
+            TypeRef::Object(object) => {
+                let mut buffer = vec![];
+                buffer.put_u8(8);
+                write_packed_int(&mut buffer, object.fields.len() as u64);
+                write_null_terminated_string(&mut buffer, object.class.as_str());
+                for field in object.fields() {
+                    buffer.put_slice(field.ty().as_ref().serialise_as_choc_type().as_slice());
+                    write_null_terminated_string(&mut buffer, field.name());
+                }
+                buffer
+            }
         }
     }
 }
@@ -181,8 +226,11 @@ impl Array {
 
 impl Object {
     /// Create a new object type.
-    pub fn new() -> Self {
-        Object::default()
+    pub fn new(class: impl AsRef<str>) -> Self {
+        Object {
+            class: class.as_ref().to_string(),
+            fields: SmallVec::default(),
+        }
     }
 
     /// The size of the object in bytes.

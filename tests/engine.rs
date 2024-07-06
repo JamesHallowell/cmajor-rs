@@ -1,8 +1,11 @@
 use cmajor::{
     endpoint::EndpointDirection,
     engine::Externals,
-    performer::OutputValue,
-    value::types::{Primitive, Type},
+    performer::{OutputValue, Performer},
+    value::{
+        types::{Primitive, Type},
+        Complex32, ValueRef,
+    },
     Cmajor,
 };
 
@@ -12,7 +15,7 @@ fn program_details() {
         processor Test {
             input value int in [[ hello: "world" ]];
 
-            fn main() {
+            void main() {
                 advance();
             }
         }
@@ -48,21 +51,7 @@ fn program_details() {
     ));
 }
 
-#[test]
-fn loading_external_variables() {
-    let source_code = r#"
-        processor Test {
-            output value int out;
-
-            external int value;
-
-            fn main() {
-                out <- value;
-                advance();
-            }
-        }
-    "#;
-
+fn setup(source_code: impl AsRef<str>, externals: Externals) -> Performer {
     let cmajor = Cmajor::new();
     let program = cmajor.parse(source_code).unwrap();
     let engine = cmajor
@@ -70,20 +59,211 @@ fn loading_external_variables() {
         .with_sample_rate(48_000)
         .build();
 
-    let mut externals = Externals::default();
-    externals.set_external_variable("Test::value", 42);
-
     let engine = engine
         .load_with_externals(&program, externals)
-        .unwrap()
-        .link()
+        .and_then(|engine| engine.link())
         .unwrap();
 
     let mut performer = engine.performer();
+    performer.set_block_size(1);
+    performer
+}
+
+#[test]
+fn loading_external_variables_i32() {
+    let source_code = r#"
+        processor Test
+        {
+            output value int32 out;
+            external int32 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", 42),
+    );
 
     let out = performer.endpoint::<OutputValue<i32>>("out").unwrap();
+    performer.advance();
+    assert_eq!(out.get(), 42);
+}
 
+#[test]
+fn loading_external_variables_i64() {
+    let source_code = r#"
+        processor Test
+        {
+            output value int64 out;
+            external int64 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", 42_i64),
+    );
+
+    let out = performer.endpoint::<OutputValue<i64>>("out").unwrap();
+    performer.advance();
+    assert_eq!(out.get(), 42);
+}
+
+#[test]
+fn loading_external_variables_f32() {
+    let source_code = r#"
+        processor Test
+        {
+            output value float32 out;
+            external float32 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", 42_f32),
+    );
+
+    let out = performer.endpoint::<OutputValue<f32>>("out").unwrap();
+    performer.advance();
+    assert_eq!(out.get(), 42_f32);
+}
+
+#[test]
+fn loading_external_variables_f64() {
+    let source_code = r#"
+        processor Test
+        {
+            output value float64 out;
+            external float64 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", 42_f64),
+    );
+
+    let out = performer.endpoint::<OutputValue<f64>>("out").unwrap();
+    performer.advance();
+    assert_eq!(out.get(), 42_f64);
+}
+
+#[test]
+fn loading_external_variables_bool() {
+    let source_code = r#"
+        processor Test
+        {
+            output value bool out;
+            external bool in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", true),
+    );
+
+    let out = performer.endpoint::<OutputValue<bool>>("out").unwrap();
+    performer.advance();
+    assert_eq!(out.get(), true);
+}
+
+#[test]
+fn loading_external_variables_struct() {
+    let source_code = r#"
+        processor Test
+        {
+            output value complex32 out;
+            external complex32 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable(
+            "Test::in",
+            Complex32 {
+                real: 42.0,
+                imag: 21.0,
+            },
+        ),
+    );
+
+    let out = performer.endpoint::<OutputValue>("out").unwrap();
     performer.advance();
 
-    assert_eq!(out.get(), 42);
+    let result: Complex32 = out.get().as_ref().try_into().unwrap();
+    assert_eq!(result.real, 42.0);
+    assert_eq!(result.imag, 21.0);
+}
+
+#[test]
+fn loading_external_variables_array() {
+    let source_code = r#"
+        processor Test
+        {
+            output value int[4] out;
+            external int[4] in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(
+        source_code,
+        Externals::default().with_variable("Test::in", [1, 2, 3, 4]),
+    );
+
+    let out = performer.endpoint::<OutputValue>("out").unwrap();
+    performer.advance();
+
+    let value = out.get();
+    let value_ref = value.as_ref();
+    let array = value_ref.as_array().unwrap();
+
+    assert_eq!(array.get(0), Some(ValueRef::Int32(1)));
+    assert_eq!(array.get(1), Some(ValueRef::Int32(2)));
+    assert_eq!(array.get(2), Some(ValueRef::Int32(3)));
+    assert_eq!(array.get(3), Some(ValueRef::Int32(4)));
 }

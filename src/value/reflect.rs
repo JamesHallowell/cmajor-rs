@@ -403,11 +403,11 @@ mod test {
         let fields = object.fields().collect::<Vec<_>>();
         assert_eq!(fields.len(), 2);
 
-        assert_eq!(fields[0].name(), "imag");
+        assert_eq!(fields[0].name(), "real");
         assert_eq!(fields[0].ty(), &Type::Primitive(Primitive::Float32));
         assert_eq!(fields[0].offset(), 0);
 
-        assert_eq!(fields[1].name(), "real");
+        assert_eq!(fields[1].name(), "imag");
         assert_eq!(fields[1].ty(), &Type::Primitive(Primitive::Float32));
         assert_eq!(fields[1].offset(), 4);
     }

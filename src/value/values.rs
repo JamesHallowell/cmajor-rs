@@ -1,6 +1,6 @@
 use {
     crate::value::types::{Array, Object, Primitive, Type, TypeRef},
-    bytes::Buf,
+    bytes::{Buf, BufMut},
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
 };
@@ -120,6 +120,15 @@ impl Value {
 
     pub(crate) fn with_bytes<R>(&self, callback: impl FnMut(&[u8]) -> R) -> R {
         self.as_ref().with_bytes(callback)
+    }
+
+    pub(crate) fn serialise_as_choc_value(&self) -> Vec<u8> {
+        let mut serialised = Vec::new();
+        serialised.put_slice(self.ty().serialise_as_choc_type().as_slice());
+        self.with_bytes(|bytes| {
+            serialised.put_slice(bytes);
+        });
+        serialised
     }
 }
 
@@ -408,32 +417,32 @@ impl From<ObjectValue> for Value {
 /// A 32-bit complex number.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Complex32 {
-    /// The imaginary part.
-    pub imag: f32,
-
     /// The real part.
     pub real: f32,
+
+    /// The imaginary part.
+    pub imag: f32,
 }
 
 /// A 64-bit complex number.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Complex64 {
-    /// The imaginary part.
-    pub imag: f64,
-
     /// The real part.
     pub real: f64,
+
+    /// The imaginary part.
+    pub imag: f64,
 }
 
 impl From<Complex32> for ObjectValue {
     fn from(value: Complex32) -> Self {
-        let object = Object::new()
-            .with_field("imag", Type::Primitive(Primitive::Float32))
-            .with_field("real", Type::Primitive(Primitive::Float32));
+        let object = Object::new("complex32")
+            .with_field("real", Type::Primitive(Primitive::Float32))
+            .with_field("imag", Type::Primitive(Primitive::Float32));
 
         let mut data = SmallVec::new();
-        data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
+        data.extend_from_slice(&value.imag.to_ne_bytes());
 
         ObjectValue { ty: object, data }
     }
@@ -450,9 +459,9 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
 
     fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
         match value {
-            ValueRef::Object(object) => match (object.field("imag"), object.field("real")) {
-                (Some(ValueRef::Float32(imag)), Some(ValueRef::Float32(real))) => {
-                    Ok(Self { imag, real })
+            ValueRef::Object(object) => match (object.field("real"), object.field("imag")) {
+                (Some(ValueRef::Float32(real)), Some(ValueRef::Float32(imag))) => {
+                    Ok(Self { real, imag })
                 }
                 _ => Err(()),
             },
@@ -463,13 +472,13 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
 
 impl From<Complex64> for ObjectValue {
     fn from(value: Complex64) -> Self {
-        let object = Object::new()
-            .with_field("imag", Type::Primitive(Primitive::Float64))
-            .with_field("real", Type::Primitive(Primitive::Float64));
+        let object = Object::new("complex64")
+            .with_field("real", Type::Primitive(Primitive::Float64))
+            .with_field("imag", Type::Primitive(Primitive::Float64));
 
         let mut data = SmallVec::new();
-        data.extend_from_slice(&value.imag.to_ne_bytes());
         data.extend_from_slice(&value.real.to_ne_bytes());
+        data.extend_from_slice(&value.imag.to_ne_bytes());
 
         ObjectValue { ty: object, data }
     }
@@ -486,9 +495,9 @@ impl TryFrom<ValueRef<'_>> for Complex64 {
 
     fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
         match value {
-            ValueRef::Object(object) => match (object.field("imag"), object.field("real")) {
-                (Some(ValueRef::Float64(imag)), Some(ValueRef::Float64(real))) => {
-                    Ok(Self { imag, real })
+            ValueRef::Object(object) => match (object.field("real"), object.field("imag")) {
+                (Some(ValueRef::Float64(real)), Some(ValueRef::Float64(imag))) => {
+                    Ok(Self { real, imag })
                 }
                 _ => Err(()),
             },
@@ -690,12 +699,12 @@ mod test {
 
     #[test]
     fn object_as_value() {
-        let ty = Object::new()
+        let ty = Object::new("test")
             .with_field("a", Type::Primitive(Primitive::Int32))
             .with_field("b", Type::Primitive(Primitive::Int64))
             .with_field(
                 "c",
-                Object::new().with_field("d", Type::Primitive(Primitive::Bool)),
+                Object::new("inner").with_field("d", Type::Primitive(Primitive::Bool)),
             );
 
         let mut data = Vec::new();

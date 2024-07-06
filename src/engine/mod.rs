@@ -182,7 +182,8 @@ impl Engine<Loaded> {
             .program_details()
             .expect("failed to get program details");
 
-        serde_json::from_str(program_details.to_string().as_ref())
+        let program_details = program_details.to_string();
+        serde_json::from_str(program_details.as_ref())
     }
 
     /// Link the program loaded into the engine.

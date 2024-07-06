@@ -160,6 +160,7 @@ impl TryFrom<&EndpointDataType> for Type {
             members,
             element,
             size,
+            class,
             ..
         }: &EndpointDataType,
     ) -> Result<Self, Self::Error> {
@@ -171,7 +172,7 @@ impl TryFrom<&EndpointDataType> for Type {
             ValueType::Float32 => Ok(Type::Primitive(Primitive::Float32)),
             ValueType::Float64 => Ok(Type::Primitive(Primitive::Float64)),
             ValueType::Object => {
-                let mut object = Object::new();
+                let mut object = Object::new(class.clone().unwrap());
                 for (name, value) in members.as_ref().ok_or(Self::Error::StructHasNoMembers)? {
                     let ty: Type = serde_json::from_value::<EndpointDataType>(value.clone())?
                         .borrow()
