@@ -1,6 +1,6 @@
 use cmajor::{
     endpoint::EndpointDirection,
-    engine::Externals,
+    engine::{Error, Externals},
     performer::{OutputValue, Performer},
     value::{
         types::{Primitive, Type},
@@ -51,7 +51,7 @@ fn program_details() {
     ));
 }
 
-fn setup(source_code: impl AsRef<str>, externals: Externals) -> Performer {
+fn setup(source_code: impl AsRef<str>, externals: Externals) -> Result<Performer, Error> {
     let cmajor = Cmajor::new();
     let program = cmajor.parse(source_code).unwrap();
     let engine = cmajor
@@ -61,12 +61,11 @@ fn setup(source_code: impl AsRef<str>, externals: Externals) -> Performer {
 
     let engine = engine
         .load_with_externals(&program, externals)
-        .and_then(|engine| engine.link())
-        .unwrap();
+        .and_then(|engine| engine.link())?;
 
     let mut performer = engine.performer();
     performer.set_block_size(1);
-    performer
+    Ok(performer)
 }
 
 #[test]
@@ -88,7 +87,8 @@ fn loading_external_variables_i32() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue<i32>>("out").unwrap();
     performer.advance();
@@ -114,7 +114,8 @@ fn loading_external_variables_i64() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_i64),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue<i64>>("out").unwrap();
     performer.advance();
@@ -140,7 +141,8 @@ fn loading_external_variables_f32() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_f32),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue<f32>>("out").unwrap();
     performer.advance();
@@ -166,7 +168,8 @@ fn loading_external_variables_f64() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_f64),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue<f64>>("out").unwrap();
     performer.advance();
@@ -192,7 +195,8 @@ fn loading_external_variables_bool() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", true),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue<bool>>("out").unwrap();
     performer.advance();
@@ -224,7 +228,8 @@ fn loading_external_variables_struct() {
                 imag: 21.0,
             },
         ),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue>("out").unwrap();
     performer.advance();
@@ -253,7 +258,8 @@ fn loading_external_variables_array() {
     let mut performer = setup(
         source_code,
         Externals::default().with_variable("Test::in", [1, 2, 3, 4]),
-    );
+    )
+    .unwrap();
 
     let out = performer.endpoint::<OutputValue>("out").unwrap();
     performer.advance();
@@ -266,4 +272,34 @@ fn loading_external_variables_array() {
     assert_eq!(array.get(1), Some(ValueRef::Int32(2)));
     assert_eq!(array.get(2), Some(ValueRef::Int32(3)));
     assert_eq!(array.get(3), Some(ValueRef::Int32(4)));
+}
+
+#[test]
+fn loading_external_variables_are_type_checked() {
+    let source_code = r#"
+        processor Test
+        {
+            output value int32 out;
+            external int32 in;
+
+            void main()
+            {
+                out <- in;
+                advance();
+            }
+        }
+    "#;
+
+    let result = setup(
+        source_code,
+        Externals::default().with_variable(
+            "Test::in",
+            Complex32 {
+                real: 42.0,
+                imag: 21.0,
+            },
+        ),
+    );
+
+    assert!(result.is_err());
 }

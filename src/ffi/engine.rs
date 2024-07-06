@@ -22,17 +22,6 @@ type RequestExternalVariableCallback = unsafe extern "system" fn(*mut c_void, *c
 #[derive(Debug, Deserialize)]
 struct RequestExternalVariableArg {
     name: String,
-    #[serde(rename = "type")]
-    ty: RequestExternalVariableArgType,
-}
-
-#[derive(Debug, Deserialize)]
-struct RequestExternalVariableArgType {
-    #[serde(rename = "type")]
-    ty: String,
-
-    #[serde(flatten)]
-    _rest: json::Map<String, json::Value>,
 }
 
 type RequestExternalFunctionCallback =
@@ -114,11 +103,6 @@ impl EnginePtr {
                     return;
                 }
             };
-
-            println!(
-                "request_external_variable_callback: {:?} {:?}",
-                ctx, details
-            );
 
             let ctx = unsafe { &mut *(ctx as *mut LoadContext) };
 

@@ -1,40 +1,8 @@
 use {
-    crate::value::{
-        types::{Primitive, Type},
-        Value,
-    },
-    serde::{de::Visitor, Deserialize, Deserializer},
-    std::{any::TypeId, collections::VecDeque, fmt::Display},
+    crate::value::types::{Primitive, Type},
+    serde::{de::Visitor, Deserializer},
+    std::{collections::VecDeque, fmt::Display},
 };
-
-pub(crate) trait Reflect: for<'de> Deserialize<'de> + 'static {
-    fn reflect() -> Result<Option<Type>, Error>;
-}
-
-impl<T> Reflect for T
-where
-    T: for<'de> Deserialize<'de> + 'static,
-{
-    fn reflect() -> Result<Option<Type>, Error> {
-        get_type::<T>()
-    }
-}
-
-fn get_type<T>() -> Result<Option<Type>, Error>
-where
-    T: Reflect,
-{
-    if TypeId::of::<T>() == TypeId::of::<Value>() {
-        return Ok(None);
-    }
-
-    let mut deserializer = TypeDeserializer {
-        ty: Type::Primitive(Primitive::Void),
-        fields: VecDeque::new(),
-    };
-    T::deserialize(&mut deserializer)?;
-    Ok(Some(deserializer.ty))
-}
 
 struct TypeDeserializer {
     ty: Type,
@@ -364,82 +332,5 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SequenceAccess<'a> {
         T: serde::de::DeserializeSeed<'de>,
     {
         seed.deserialize(&mut *self.de).map(Some)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use {super::*, crate::value::Complex32, serde::Deserialize};
-
-    #[test]
-    fn primitive_types() {
-        assert_eq!(
-            get_type::<bool>().unwrap(),
-            Some(Type::Primitive(Primitive::Bool))
-        );
-        assert_eq!(
-            get_type::<i32>().unwrap(),
-            Some(Type::Primitive(Primitive::Int32))
-        );
-        assert_eq!(
-            get_type::<i64>().unwrap(),
-            Some(Type::Primitive(Primitive::Int64))
-        );
-        assert_eq!(
-            get_type::<f32>().unwrap(),
-            Some(Type::Primitive(Primitive::Float32))
-        );
-        assert_eq!(
-            get_type::<f64>().unwrap(),
-            Some(Type::Primitive(Primitive::Float64))
-        );
-    }
-
-    #[test]
-    fn structs() {
-        let ty = get_type::<Complex32>().unwrap().unwrap();
-        let object = ty.as_object().unwrap();
-
-        let fields = object.fields().collect::<Vec<_>>();
-        assert_eq!(fields.len(), 2);
-
-        assert_eq!(fields[0].name(), "real");
-        assert_eq!(fields[0].ty(), &Type::Primitive(Primitive::Float32));
-        assert_eq!(fields[0].offset(), 0);
-
-        assert_eq!(fields[1].name(), "imag");
-        assert_eq!(fields[1].ty(), &Type::Primitive(Primitive::Float32));
-        assert_eq!(fields[1].offset(), 4);
-    }
-
-    #[test]
-    fn nested_structs() {
-        #[derive(Deserialize)]
-        struct Outer {
-            _inner: Inner,
-        }
-
-        #[derive(Deserialize)]
-        struct Inner {
-            _a: bool,
-            _b: i32,
-        }
-
-        let ty = get_type::<Outer>().unwrap().unwrap();
-        let object = ty.as_object().unwrap();
-
-        let fields = object.fields().collect::<Vec<_>>();
-
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].name(), "_inner");
-
-        let inner = fields[0].ty().as_object().unwrap();
-        let inner_fields = inner.fields().collect::<Vec<_>>();
-
-        assert_eq!(inner_fields.len(), 2);
-        assert_eq!(inner_fields[0].name(), "_a");
-        assert_eq!(inner_fields[0].ty(), &Type::Primitive(Primitive::Bool));
-        assert_eq!(inner_fields[1].name(), "_b");
-        assert_eq!(inner_fields[1].ty(), &Type::Primitive(Primitive::Int32));
     }
 }

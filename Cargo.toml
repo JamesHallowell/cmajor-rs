@@ -11,6 +11,7 @@ static = ["dep:cmake"]
 [dependencies]
 bytes = "1.5.0"
 dotenvy = "0.15.7"
+indexmap = { version = "2.2.6", features = ["serde"] }
 libloading = "0.8.0"
 real-time = "0.5"
 sealed = "0.5"

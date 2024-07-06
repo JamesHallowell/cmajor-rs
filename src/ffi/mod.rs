@@ -13,6 +13,7 @@ mod performer;
 mod program;
 
 mod string;
+pub(crate) mod types;
 
 pub use {engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr};
 
