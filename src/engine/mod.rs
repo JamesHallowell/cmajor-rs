@@ -1,6 +1,7 @@
 //! The Cmajor engine for compiling programs.
 
 mod annotation;
+mod externals;
 mod program_details;
 
 use {
@@ -18,7 +19,7 @@ use {
         sync::Arc,
     },
 };
-pub use {annotation::Annotation, program_details::ProgramDetails};
+pub use {annotation::Annotation, externals::Externals, program_details::ProgramDetails};
 
 /// The set of supported engine types.
 pub struct EngineTypes<'a> {
@@ -148,7 +149,16 @@ impl Engine<Idle> {
 
     /// Load a program into the engine.
     pub fn load(self, program: &Program) -> Result<Engine<Loaded>, Error> {
-        match self.inner.load(&program.inner) {
+        self.load_with_externals(program, Externals::default())
+    }
+
+    /// Load a program into the engine and resolve external definitions.
+    pub fn load_with_externals(
+        self,
+        program: &Program,
+        externals: Externals,
+    ) -> Result<Engine<Loaded>, Error> {
+        match self.inner.load(&program.inner, externals) {
             Ok(_) => Ok(Engine {
                 inner: self.inner,
                 _state: Loaded,

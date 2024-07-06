@@ -1,19 +1,36 @@
 use {
     crate::{
         endpoint::EndpointHandle,
+        engine::Externals,
         ffi::{
             performer::{Performer, PerformerPtr},
             program::{Program, ProgramPtr},
             string::{CmajorString, CmajorStringPtr},
         },
+        value::Value,
     },
+    serde::Deserialize,
+    serde_json as json,
     std::{
-        ffi::{c_char, c_int, c_void, CStr},
+        ffi::{c_char, c_int, c_void, CStr, CString},
         ptr::null_mut,
     },
 };
 
 type RequestExternalVariableCallback = unsafe extern "system" fn(*mut c_void, *const c_char);
+
+#[derive(Debug, Deserialize)]
+struct RequestExternalVariableArg {
+    name: String,
+    #[serde(rename = "type")]
+    ty: RequestExternalVariableArgType,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequestExternalVariableArgType {
+    #[serde(rename = "type")]
+    ty: String,
+}
 
 type RequestExternalFunctionCallback =
     unsafe extern "system" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
@@ -69,12 +86,43 @@ impl EnginePtr {
         };
     }
 
-    pub fn load(&self, program: &ProgramPtr) -> Result<(), CmajorStringPtr> {
+    pub fn load(&self, program: &ProgramPtr, externals: Externals) -> Result<(), CmajorStringPtr> {
+        struct LoadContext {
+            engine: EnginePtr,
+            externals: Externals,
+        }
+
         extern "system" fn request_external_variable_callback(
             ctx: *mut c_void,
-            name: *const c_char,
+            details: *const c_char,
         ) {
-            println!("request_external_variable_callback: {:?} {:?}", ctx, name);
+            let details = unsafe { CStr::from_ptr(details) };
+            let details = match details
+                .to_str()
+                .map(json::from_str::<RequestExternalVariableArg>)
+            {
+                Ok(Ok(details)) => details,
+                Ok(Err(err)) => {
+                    eprintln!("request_external_variable_callback: {err:?}");
+                    return;
+                }
+                Err(err) => {
+                    eprintln!("request_external_variable_callback: {err:?}");
+                    return;
+                }
+            };
+
+            println!(
+                "request_external_variable_callback: {:?} {:?}",
+                ctx, details
+            );
+
+            let ctx = unsafe { &mut *(ctx as *mut LoadContext) };
+
+            if let Some(value) = ctx.externals.variables.get(details.name.as_str()) {
+                ctx.engine
+                    .set_external_variable(details.name.as_str(), value);
+            }
         }
         extern "system" fn request_external_function_callback(
             ctx: *mut c_void,
@@ -89,13 +137,19 @@ impl EnginePtr {
             null_mut()
         }
 
+        let mut ctx = LoadContext {
+            engine: self.clone(),
+            externals,
+        };
+        let ctx_ptr = std::ptr::addr_of_mut!(ctx);
+
         let error = unsafe {
             ((*(*self.engine).vtable).load)(
                 self.engine,
                 program.get(),
-                null_mut(),
+                ctx_ptr.cast(),
                 request_external_variable_callback,
-                null_mut(),
+                ctx_ptr.cast(),
                 request_external_function_callback,
             )
         };
@@ -146,6 +200,35 @@ impl EnginePtr {
     pub fn create_performer(&self) -> PerformerPtr {
         let performer = unsafe { ((*(*self.engine).vtable).create_performer)(self.engine) };
         unsafe { PerformerPtr::new(performer) }
+    }
+
+    fn set_external_variable(&self, name: &str, value: &Value) {
+        let name = if let Ok(name) = CString::new(name) {
+            name
+        } else {
+            return;
+        };
+
+        value.with_bytes(|bytes| {
+            dbg!(bytes);
+            unsafe {
+                ((*(*self.engine).vtable).set_external_variable)(
+                    self.engine,
+                    name.as_ptr(),
+                    bytes.as_ptr().cast(),
+                    bytes.len() as isize,
+                )
+            };
+        });
+    }
+}
+
+impl Clone for EnginePtr {
+    fn clone(&self) -> Self {
+        unsafe { ((*(*self.engine).vtable).add_ref)(self.engine) };
+        Self {
+            engine: self.engine,
+        }
     }
 }
 
