@@ -12,6 +12,7 @@ mod engine_factory;
 mod performer;
 mod program;
 
+mod externals;
 mod string;
 pub(crate) mod types;
 
