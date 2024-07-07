@@ -1,5 +1,8 @@
 use {
-    crate::endpoint::{EndpointHandle, EndpointTypeIndex},
+    crate::{
+        endpoint::{EndpointHandle, EndpointTypeIndex},
+        ffi::externals::check_for_panic,
+    },
     std::{
         ffi::{c_char, c_double, c_int, c_void},
         ptr::null_mut,
@@ -95,6 +98,7 @@ impl PerformerPtr {
 
     pub fn advance(&self) {
         unsafe { ((*(*self.performer).vtable).advance)(self.performer) };
+        check_for_panic();
     }
 
     pub unsafe fn set_input_frames<T>(&self, handle: EndpointHandle, frames: &[T])

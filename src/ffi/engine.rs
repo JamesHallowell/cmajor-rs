@@ -3,11 +3,13 @@ use {
         endpoint::EndpointHandle,
         engine::Externals,
         ffi::{
+            externals::get_external_function,
             performer::{Performer, PerformerPtr},
             program::{Program, ProgramPtr},
             string::{CmajorString, CmajorStringPtr},
+            types::TypeDescription,
         },
-        value::Value,
+        value::{types::Type, Value},
     },
     serde::Deserialize,
     serde_json as json,
@@ -20,7 +22,7 @@ use {
 type RequestExternalVariableCallback = unsafe extern "system" fn(*mut c_void, *const c_char);
 
 #[derive(Debug, Deserialize)]
-struct RequestExternalVariableArg {
+struct RequestExternalVariableArgs {
     name: String,
 }
 
@@ -79,51 +81,6 @@ impl EnginePtr {
     }
 
     pub fn load(&self, program: &ProgramPtr, externals: Externals) -> Result<(), CmajorStringPtr> {
-        struct LoadContext {
-            engine: EnginePtr,
-            externals: Externals,
-        }
-
-        extern "system" fn request_external_variable_callback(
-            ctx: *mut c_void,
-            details: *const c_char,
-        ) {
-            let details = unsafe { CStr::from_ptr(details) };
-            let details = match details
-                .to_str()
-                .map(json::from_str::<RequestExternalVariableArg>)
-            {
-                Ok(Ok(details)) => details,
-                Ok(Err(err)) => {
-                    eprintln!("request_external_variable_callback: {err:?}");
-                    return;
-                }
-                Err(err) => {
-                    eprintln!("request_external_variable_callback: {err:?}");
-                    return;
-                }
-            };
-
-            let ctx = unsafe { &mut *(ctx as *mut LoadContext) };
-
-            if let Some(value) = ctx.externals.variables.get(details.name.as_str()) {
-                ctx.engine
-                    .set_external_variable(details.name.as_str(), value);
-            }
-        }
-        extern "system" fn request_external_function_callback(
-            ctx: *mut c_void,
-            name: *const c_char,
-            signature: *const c_char,
-        ) -> *mut c_void {
-            println!(
-                "request_external_function_callback: {:?} {:?} {:?}",
-                ctx, name, signature
-            );
-
-            null_mut()
-        }
-
         let mut ctx = LoadContext {
             engine: self.clone(),
             externals,
@@ -222,4 +179,57 @@ impl Drop for EnginePtr {
     fn drop(&mut self) {
         unsafe { ((*(*self.engine).vtable).release)(self.engine) };
     }
+}
+
+struct LoadContext {
+    engine: EnginePtr,
+    externals: Externals,
+}
+
+extern "system" fn request_external_variable_callback(ctx: *mut c_void, args: *const c_char) {
+    let args = unsafe { CStr::from_ptr(args) };
+    let args = match args
+        .to_str()
+        .map(json::from_str::<RequestExternalVariableArgs>)
+    {
+        Ok(Ok(details)) => details,
+        Ok(Err(err)) => {
+            eprintln!("request_external_variable_callback: {err:?}");
+            return;
+        }
+        Err(err) => {
+            eprintln!("request_external_variable_callback: {err:?}");
+            return;
+        }
+    };
+
+    let ctx = unsafe { &mut *(ctx as *mut LoadContext) };
+
+    if let Some(value) = ctx.externals.variables.get(args.name.as_str()) {
+        ctx.engine.set_external_variable(args.name.as_str(), value);
+    }
+}
+
+extern "system" fn request_external_function_callback(
+    _ctx: *mut c_void,
+    name: *const c_char,
+    signature: *const c_char,
+) -> *mut c_void {
+    let name = unsafe { CStr::from_ptr(name) };
+    let signature = unsafe { CStr::from_ptr(signature) };
+    let name = name.to_str().expect("failed to parse function symbol name");
+
+    if let Ok(signature) = parse_function_signature(signature) {
+        return get_external_function(name, signature.as_slice());
+    }
+
+    null_mut()
+}
+
+fn parse_function_signature(string: &CStr) -> Result<Vec<Type>, Box<dyn std::error::Error>> {
+    let type_descriptions: Vec<TypeDescription> = json::from_str(string.to_str()?)?;
+    Ok(type_descriptions
+        .iter()
+        .map(Type::try_from)
+        .collect::<Result<Vec<_>, _>>()?)
 }

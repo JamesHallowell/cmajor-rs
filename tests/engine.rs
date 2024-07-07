@@ -303,3 +303,54 @@ fn loading_external_variables_are_type_checked() {
 
     assert!(result.is_err());
 }
+
+#[test]
+#[should_panic(
+    expected = "assertion `left == right` failed: cmajor assertion failed\n  left: 4\n right: 5"
+)]
+fn loading_external_functions() {
+    let source_code = r#"
+        namespace rust
+        {
+            namespace debug
+            {
+                external void print (bool value);
+                external void print (int32 value);
+                external void print (int64 value);
+                external void print (float32 value);
+                external void print (float64 value);
+            }
+
+            namespace test
+            {
+                external void assert (bool condition);
+                external void assertEqual (int32 a, int32 b);
+                external void assertEqual (int64 a, int64 b);
+                external void assertEqual (float32 a, float32 b);
+                external void assertEqual (float64 a, float64 b);
+            }
+        }
+
+        processor Test
+        {
+            output stream float32 out;
+
+            void main()
+            {
+                rust::debug::print (true);
+                rust::debug::print (2147483647_i32);
+                rust::debug::print (9223372036854775807_i64);
+                rust::debug::print (pi);
+                rust::debug::print (float32 (pi));
+
+                rust::test::assert (true);
+                rust::test::assertEqual (2 + 2, 5);
+
+                advance();
+            }
+        }
+    "#;
+
+    let mut performer = setup(source_code, Externals::default()).unwrap();
+    performer.advance();
+}
