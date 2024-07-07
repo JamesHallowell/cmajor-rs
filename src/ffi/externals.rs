@@ -1,42 +1,28 @@
 use {
-    crate::value::types::{Primitive, Type},
+    crate::value::types::Primitive,
     std::{any::Any, cell::RefCell, ffi::c_void, panic::UnwindSafe, ptr::null_mut},
 };
 
-pub fn get_external_function(name: &str, signature: &[Type]) -> *mut c_void {
+pub fn get_external_function(name: &str, signature: &[Primitive]) -> *mut c_void {
     match (name, signature) {
-        ("rust::test::assert", &[Type::Primitive(Primitive::Bool)]) => rust_assert as *mut c_void,
-        (
-            "rust::test::assertEqual",
-            &[Type::Primitive(Primitive::Int32), Type::Primitive(Primitive::Int32)],
-        ) => rust_assert_eq_i32 as *mut c_void,
-        (
-            "rust::test::assertEqual",
-            &[Type::Primitive(Primitive::Int64), Type::Primitive(Primitive::Int64)],
-        ) => rust_assert_eq_i64 as *mut c_void,
-        (
-            "rust::test::assertEqual",
-            &[Type::Primitive(Primitive::Float32), Type::Primitive(Primitive::Float32)],
-        ) => rust_assert_eq_f32 as *mut c_void,
-        (
-            "rust::test::assertEqual",
-            &[Type::Primitive(Primitive::Float64), Type::Primitive(Primitive::Float64)],
-        ) => rust_assert_eq_f64 as *mut c_void,
-        ("rust::debug::print", &[Type::Primitive(Primitive::Bool)]) => {
-            rust_print_bool as *mut c_void
+        ("rust::test::assert", &[Primitive::Bool]) => rust_assert as *mut c_void,
+        ("rust::test::assertEqual", &[Primitive::Int32, Primitive::Int32]) => {
+            rust_assert_eq_i32 as *mut c_void
         }
-        ("rust::debug::print", &[Type::Primitive(Primitive::Int32)]) => {
-            rust_print_i32 as *mut c_void
+        ("rust::test::assertEqual", &[Primitive::Int64, Primitive::Int64]) => {
+            rust_assert_eq_i64 as *mut c_void
         }
-        ("rust::debug::print", &[Type::Primitive(Primitive::Int64)]) => {
-            rust_print_i64 as *mut c_void
+        ("rust::test::assertEqual", &[Primitive::Float32, Primitive::Float32]) => {
+            rust_assert_eq_f32 as *mut c_void
         }
-        ("rust::debug::print", &[Type::Primitive(Primitive::Float32)]) => {
-            rust_print_f32 as *mut c_void
+        ("rust::test::assertEqual", &[Primitive::Float64, Primitive::Float64]) => {
+            rust_assert_eq_f64 as *mut c_void
         }
-        ("rust::debug::print", &[Type::Primitive(Primitive::Float64)]) => {
-            rust_print_f64 as *mut c_void
-        }
+        ("rust::debug::print", &[Primitive::Bool]) => rust_print_bool as *mut c_void,
+        ("rust::debug::print", &[Primitive::Int32]) => rust_print_i32 as *mut c_void,
+        ("rust::debug::print", &[Primitive::Int64]) => rust_print_i64 as *mut c_void,
+        ("rust::debug::print", &[Primitive::Float32]) => rust_print_f32 as *mut c_void,
+        ("rust::debug::print", &[Primitive::Float64]) => rust_print_f64 as *mut c_void,
         _ => null_mut(),
     }
 }
