@@ -9,7 +9,10 @@ use {
             string::{CmajorString, CmajorStringPtr},
             types::TypeDescription,
         },
-        value::{types::Type, Value},
+        value::{
+            types::{Primitive, Type},
+            Value,
+        },
     },
     serde::Deserialize,
     serde_json as json,
@@ -226,10 +229,17 @@ extern "system" fn request_external_function_callback(
     null_mut()
 }
 
-fn parse_function_signature(string: &CStr) -> Result<Vec<Type>, Box<dyn std::error::Error>> {
+fn parse_function_signature(string: &CStr) -> Result<Vec<Primitive>, Box<dyn std::error::Error>> {
     let type_descriptions: Vec<TypeDescription> = json::from_str(string.to_str()?)?;
     Ok(type_descriptions
         .iter()
         .map(Type::try_from)
+        .map(|ty| -> Result<Primitive, Box<dyn std::error::Error>> {
+            match ty {
+                Ok(Type::Primitive(primitive)) => Ok(primitive),
+                Ok(_) => Err("expected primitive type".into()),
+                Err(err) => Err(err.into()),
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?)
 }
