@@ -83,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 buffer_size: cpal::BufferSize::Fixed(BLOCK_SIZE),
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                performer.set_block_size(data.len() as u32);
                 performer.advance();
                 performer.read_stream(data);
             },

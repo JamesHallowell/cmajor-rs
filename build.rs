@@ -8,8 +8,15 @@ mod static_linkage {
     fn build_cmajor_static_lib() -> PathBuf {
         let mut cmake = cmake::Config::new("static");
         cmake.build_target("cmajor-static");
+        if let Some(out_dir) = build_directory() {
+            cmake.out_dir(out_dir);
+        }
         cmake.very_verbose(true);
         cmake.build()
+    }
+
+    fn build_directory() -> Option<PathBuf> {
+        env::var("CMAJOR_BUILD_DIR").map(PathBuf::from).ok()
     }
 
     fn link_cmajor_static_lib(path: &Path) {
@@ -39,20 +46,16 @@ mod static_linkage {
         }
     }
 
-    fn llvm_libs_path() -> PathBuf {
-        let out_dir = env::var("OUT_DIR").unwrap();
-        PathBuf::from(format!(
-            "{out_dir}/build/_deps/cmajor-src/3rdParty/llvm/release/osx/universal/lib"
-        ))
-    }
+    fn link_llvm_libs(path: &Path) {
+        let llvm_libs_path =
+            path.join("build/_deps/cmajor-src/3rdParty/llvm/release/osx/universal/lib");
 
-    fn link_llvm_libs() {
         println!(
             "cargo:rustc-link-search=native={}",
-            llvm_libs_path().display()
+            llvm_libs_path.display()
         );
 
-        for entry in fs::read_dir(llvm_libs_path())
+        for entry in fs::read_dir(llvm_libs_path)
             .unwrap()
             .map(Result::<_, _>::unwrap)
         {
@@ -70,9 +73,11 @@ mod static_linkage {
     }
 
     pub fn link_cmajor() {
-        link_cmajor_static_lib(&build_cmajor_static_lib());
+        let _ = dotenvy::dotenv();
+        let dir = build_cmajor_static_lib();
+        link_cmajor_static_lib(&dir);
         link_platform_libs();
-        link_llvm_libs();
+        link_llvm_libs(&dir);
     }
 }
 
