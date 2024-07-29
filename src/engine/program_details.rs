@@ -20,11 +20,18 @@ use {
 pub struct ProgramDetails {
     inputs: Vec<EndpointDetails>,
     outputs: Vec<EndpointDetails>,
+    #[serde(rename = "mainProcessor")]
+    main_processor: String,
     #[serde(flatten)]
     _extra: JsonMap<String, JsonValue>,
 }
 
 impl ProgramDetails {
+    /// Returns the name of the processor to be used as an entry point.
+    pub fn main_processor(&self) -> &str {
+        &self.main_processor
+    }
+
     /// Returns an iterator over all the endpoints in the program.
     pub fn endpoints(&self) -> impl Iterator<Item = EndpointType> + '_ {
         let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));

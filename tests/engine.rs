@@ -31,6 +31,9 @@ fn program_details() {
     let engine = engine.load(&program).unwrap();
 
     let program_details = engine.program_details().unwrap();
+
+    assert_eq!(program_details.main_processor(), "Test");
+
     let endpoints = program_details.endpoints().collect::<Vec<_>>();
     assert_eq!(endpoints.len(), 1);
 
