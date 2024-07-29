@@ -41,10 +41,7 @@ fn program_details() {
         input_endpoint.annotation().keys().collect::<Vec<_>>(),
         vec!["hello"]
     );
-    assert_eq!(
-        input_endpoint.annotation().get_str("hello").unwrap(),
-        "world"
-    );
+    assert_eq!(input_endpoint.annotation().get("hello").unwrap(), "world");
     assert!(matches!(
         input_endpoint.ty(),
         Type::Primitive(Primitive::Int32)
