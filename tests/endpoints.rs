@@ -1,4 +1,5 @@
 use cmajor::{
+    json,
     performer::{EndpointError, InputEvent, InputValue, OutputValue, Performer},
     value::{
         types::{Object, Primitive, Type},
@@ -527,16 +528,40 @@ fn endpoints_with_annotations() {
 
     let (_, a) = performer.endpoints().get_by_id("a").unwrap();
 
-    assert_eq!(a.annotation().get_str("name"), Some("foo"));
-    assert_eq!(a.annotation().get_f64("min"), Some(0.5));
-    assert_eq!(a.annotation().get_f64("max"), Some(10.0));
-    assert_eq!(a.annotation().get_bool("hidden"), Some(true));
+    assert_eq!(
+        a.annotation().get("name").and_then(json::Value::as_str),
+        Some("foo")
+    );
+    assert_eq!(
+        a.annotation().get("min").and_then(json::Value::as_f64),
+        Some(0.5)
+    );
+    assert_eq!(
+        a.annotation().get("max").and_then(json::Value::as_f64),
+        Some(10.0)
+    );
+    assert_eq!(
+        a.annotation().get("hidden").and_then(json::Value::as_bool),
+        Some(true)
+    );
 
     let (_, b) = performer.endpoints().get_by_id("b").unwrap();
-    assert_eq!(b.annotation().get_str("name"), Some("bar"));
-    assert_eq!(b.annotation().get_i64("min"), Some(1));
-    assert_eq!(b.annotation().get_i64("max"), Some(5));
-    assert_eq!(b.annotation().get_bool("hidden"), Some(false));
+    assert_eq!(
+        b.annotation().get("name").and_then(json::Value::as_str),
+        Some("bar")
+    );
+    assert_eq!(
+        b.annotation().get("min").and_then(json::Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(
+        b.annotation().get("max").and_then(json::Value::as_i64),
+        Some(5)
+    );
+    assert_eq!(
+        b.annotation().get("hidden").and_then(json::Value::as_bool),
+        Some(false)
+    );
 }
 
 #[test]

@@ -5,6 +5,7 @@
 pub use {
     library::{Cmajor, LibraryError},
     program::{ParseError, Program},
+    serde_json as json,
 };
 
 pub mod diagnostic;
