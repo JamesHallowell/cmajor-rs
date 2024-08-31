@@ -20,7 +20,7 @@ Add this to your `Cargo.toml`:
 cmajor = "0.5"
 ```
 
-You will also need to [download the Cmajor library](https://github.com/SoundStacks/cmajor/releases) and tell the crate
+You will also need to [download the Cmajor library](https://github.com/cmajor-lang/cmajor/releases) and tell the crate
 where
 to find it, either by:
 
