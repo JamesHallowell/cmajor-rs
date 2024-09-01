@@ -45,8 +45,4 @@ impl CmajorStringPtr {
 
         String::from_utf8_lossy(slice)
     }
-
-    pub fn to_json(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::from_str(&self.to_string())
-    }
 }

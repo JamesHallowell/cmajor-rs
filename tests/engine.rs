@@ -1,6 +1,6 @@
 use cmajor::{
     endpoint::EndpointDirection,
-    engine::{Error, Externals},
+    engine::{Engine, Error, Externals, Loaded},
     performer::{OutputValue, Performer},
     value::{
         types::{Primitive, Type},
@@ -25,12 +25,12 @@ fn program_details() {
     let program = cmajor.parse(source_code).unwrap();
     let engine = cmajor
         .create_default_engine()
-        .with_sample_rate(48_000)
+        .with_sample_rate(48_000.0)
         .build();
 
     let engine = engine.load(&program).unwrap();
 
-    let program_details = engine.program_details().unwrap();
+    let program_details = engine.program_details();
 
     assert_eq!(program_details.main_processor(), "Test");
 
@@ -51,21 +51,25 @@ fn program_details() {
     ));
 }
 
-fn setup(source_code: impl AsRef<str>, externals: Externals) -> Result<Performer, Error> {
+fn setup<E>(
+    source_code: impl AsRef<str>,
+    externals: Externals,
+    endpoints: impl FnOnce(&mut Engine<Loaded>) -> E,
+) -> Result<(Performer, E), Error> {
     let cmajor = Cmajor::new();
     let program = cmajor.parse(source_code).unwrap();
     let engine = cmajor
         .create_default_engine()
-        .with_sample_rate(48_000)
+        .with_sample_rate(48_000.0)
         .build();
 
-    let engine = engine
-        .load_with_externals(&program, externals)
-        .and_then(|engine| engine.link())?;
+    let mut engine = engine.load_with_externals(&program, externals)?;
 
-    let mut performer = engine.performer();
+    let endpoints = endpoints(&mut engine);
+
+    let mut performer = engine.link()?.performer();
     performer.set_block_size(1);
-    Ok(performer)
+    Ok((performer, endpoints))
 }
 
 #[test]
@@ -84,15 +88,15 @@ fn loading_external_variables_i32() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42),
+        |engine| engine.endpoint("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue<i32>>("out").unwrap();
     performer.advance();
-    assert_eq!(out.get(), 42);
+    assert_eq!(performer.get::<i32>(out), 42);
 }
 
 #[test]
@@ -111,15 +115,15 @@ fn loading_external_variables_i64() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_i64),
+        |engine| engine.endpoint("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue<i64>>("out").unwrap();
     performer.advance();
-    assert_eq!(out.get(), 42);
+    assert_eq!(performer.get::<i64>(out), 42);
 }
 
 #[test]
@@ -138,15 +142,15 @@ fn loading_external_variables_f32() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_f32),
+        |engine| engine.endpoint("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue<f32>>("out").unwrap();
     performer.advance();
-    assert_eq!(out.get(), 42_f32);
+    assert_eq!(performer.get::<f32>(out), 42_f32);
 }
 
 #[test]
@@ -165,15 +169,15 @@ fn loading_external_variables_f64() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", 42_f64),
+        |engine| engine.endpoint("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue<f64>>("out").unwrap();
     performer.advance();
-    assert_eq!(out.get(), 42_f64);
+    assert_eq!(performer.get::<f64>(out), 42_f64);
 }
 
 #[test]
@@ -192,15 +196,15 @@ fn loading_external_variables_bool() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", true),
+        |engine| engine.endpoint("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue<bool>>("out").unwrap();
     performer.advance();
-    assert_eq!(out.get(), true);
+    assert!(performer.get::<bool>(out));
 }
 
 #[test]
@@ -219,7 +223,7 @@ fn loading_external_variables_struct() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable(
             "Test::in",
@@ -228,13 +232,13 @@ fn loading_external_variables_struct() {
                 imag: 21.0,
             },
         ),
+        |engine| engine.endpoint::<OutputValue>("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue>("out").unwrap();
     performer.advance();
 
-    let result: Complex32 = out.get().as_ref().try_into().unwrap();
+    let result: Complex32 = performer.get(out).unwrap().try_into().unwrap();
     assert_eq!(result.real, 42.0);
     assert_eq!(result.imag, 21.0);
 }
@@ -255,18 +259,17 @@ fn loading_external_variables_array() {
         }
     "#;
 
-    let mut performer = setup(
+    let (mut performer, out) = setup(
         source_code,
         Externals::default().with_variable("Test::in", [1, 2, 3, 4]),
+        |engine| engine.endpoint::<OutputValue>("out").unwrap(),
     )
     .unwrap();
 
-    let out = performer.endpoint::<OutputValue>("out").unwrap();
     performer.advance();
 
-    let value = out.get();
-    let value_ref = value.as_ref();
-    let array = value_ref.as_array().unwrap();
+    let value = performer.get(out).unwrap();
+    let array = value.as_array().unwrap();
 
     assert_eq!(array.get(0), Some(ValueRef::Int32(1)));
     assert_eq!(array.get(1), Some(ValueRef::Int32(2)));
@@ -299,6 +302,7 @@ fn loading_external_variables_are_type_checked() {
                 imag: 21.0,
             },
         ),
+        |_| {},
     );
 
     assert!(result.is_err());
@@ -351,6 +355,6 @@ fn loading_external_functions() {
         }
     "#;
 
-    let mut performer = setup(source_code, Externals::default()).unwrap();
+    let (mut performer, _) = setup(source_code, Externals::default(), |_| {}).unwrap();
     performer.advance();
 }

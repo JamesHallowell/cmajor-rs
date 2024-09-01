@@ -1,5 +1,5 @@
 use {
-    cmajor::Cmajor,
+    cmajor::{performer::OutputStream, Cmajor},
     cpal::traits::{DeviceTrait, HostTrait, StreamTrait},
     std::{thread::sleep, time::Duration},
 };
@@ -50,7 +50,7 @@ processor HelloWorld
 }
 "#;
 
-const SAMPLE_RATE: u32 = 48_000;
+const SAMPLE_RATE: f64 = 48_000.0;
 const BLOCK_SIZE: u32 = 256;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,13 +65,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let program = cmajor.parse(PLAY_A_TUNE)?;
 
-    let engine = engine.load(&program)?.link()?;
+    let mut engine = engine.load(&program)?;
+
+    let output_stream = engine.endpoint::<OutputStream<f32>>("out")?;
+
+    let engine = engine.link()?;
 
     let mut performer = engine.performer();
 
     performer.set_block_size(BLOCK_SIZE);
-
-    let mut performer = performer.with_output_stream::<f32>("out")?;
 
     let stream = cpal::default_host()
         .default_output_device()
@@ -79,13 +81,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_output_stream(
             &cpal::StreamConfig {
                 channels: 1,
-                sample_rate: cpal::SampleRate(SAMPLE_RATE),
+                sample_rate: cpal::SampleRate(SAMPLE_RATE as u32),
                 buffer_size: cpal::BufferSize::Fixed(BLOCK_SIZE),
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 performer.set_block_size(data.len() as u32);
                 performer.advance();
-                performer.read_stream(data);
+                performer.read(output_stream, data);
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,

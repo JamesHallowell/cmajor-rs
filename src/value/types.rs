@@ -324,3 +324,13 @@ macro_rules! impl_is_scalar {
 }
 
 impl_is_scalar!(i32, i64, f32, f64);
+
+/// Implemented for floating point types.
+#[sealed]
+pub trait IsFloatingPoint {}
+
+#[sealed]
+impl IsFloatingPoint for f32 {}
+
+#[sealed]
+impl IsFloatingPoint for f64 {}

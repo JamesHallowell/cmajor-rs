@@ -1,7 +1,7 @@
 use {
     crate::{
         endpoint::{
-            EndpointDirection, EndpointId, EndpointType, EventEndpoint, StreamEndpoint,
+            EndpointDirection, EndpointId, EndpointInfo, EventEndpoint, StreamEndpoint,
             ValueEndpoint,
         },
         ffi::types::{TypeDescription, TypeDescriptionError},
@@ -33,7 +33,7 @@ impl ProgramDetails {
     }
 
     /// Returns an iterator over all the endpoints in the program.
-    pub fn endpoints(&self) -> impl Iterator<Item = EndpointType> + '_ {
+    pub fn endpoints(&self) -> impl Iterator<Item = EndpointInfo> + '_ {
         let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
         let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));
 
@@ -92,8 +92,8 @@ fn try_make_endpoint(
         ..
     }: &EndpointDetails,
     direction: EndpointDirection,
-) -> Result<EndpointType, TypeDescriptionError> {
-    let annotation = annotation.clone().unwrap_or_default().into();
+) -> Result<EndpointInfo, TypeDescriptionError> {
+    let annotation = annotation.clone().unwrap_or_default();
 
     Ok(match endpoint_type {
         EndpointVariant::Stream => {

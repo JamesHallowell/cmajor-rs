@@ -1,196 +1,151 @@
 use {
     crate::{
-        endpoint::{EndpointDirection, EndpointHandle},
-        performer::{EndpointError, Performer},
-        value::types::{Primitive, Type},
+        endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
+        performer::{
+            Endpoint, EndpointError, Performer, PerformerEndpoint, __seal_performer_endpoint,
+        },
+        value::types::{IsScalar, Type},
     },
     sealed::sealed,
     std::marker::PhantomData,
 };
 
-impl<Input> Performer<(Input, ())> {
-    /// Bind an output stream to the performer.
-    pub fn with_output_stream<T>(
-        self,
-        id: impl AsRef<str>,
-    ) -> Result<Performer<(Input, OutputStream<T>)>, EndpointError>
-    where
-        T: StreamType,
-    {
-        let (handle, endpoint) = self
-            .endpoints
-            .get_by_id(id)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        if endpoint.direction() != EndpointDirection::Output {
-            return Err(EndpointError::DirectionMismatch);
-        }
-
-        let stream_endpoint = endpoint
-            .as_stream()
-            .ok_or(EndpointError::EndpointTypeMismatch)?;
-
-        match stream_endpoint.ty() {
-            Type::Primitive(primitive) => {
-                if T::EXTENT != 1 || &T::ELEMENT != primitive {
-                    return Err(EndpointError::DataTypeMismatch);
-                }
-            }
-            Type::Array(array) => {
-                if T::EXTENT != array.len() || &Type::Primitive(T::ELEMENT) != array.elem_ty() {
-                    return Err(EndpointError::DataTypeMismatch);
-                }
-            }
-            _ => return Err(EndpointError::EndpointTypeMismatch),
-        }
-
-        let Self {
-            inner,
-            endpoints,
-            inputs,
-            outputs,
-            cached_input_values,
-            streams: (input, ()),
-        } = self;
-
-        Ok(Performer {
-            inner,
-            endpoints,
-            inputs,
-            outputs,
-            cached_input_values,
-            streams: (
-                input,
-                OutputStream {
-                    handle,
-                    _marker: PhantomData,
-                },
-            ),
-        })
-    }
-}
-
-impl<Output> Performer<((), Output)> {
-    /// Bind an input stream to the performer.
-    pub fn with_input_stream<T>(
-        self,
-        id: impl AsRef<str>,
-    ) -> Result<Performer<(InputStream<T>, Output)>, EndpointError>
-    where
-        T: StreamType,
-    {
-        let (handle, endpoint) = self
-            .endpoints
-            .get_by_id(id)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
-
-        if endpoint.direction() != EndpointDirection::Input {
-            return Err(EndpointError::DirectionMismatch);
-        }
-
-        let stream_endpoint = endpoint
-            .as_stream()
-            .ok_or(EndpointError::EndpointTypeMismatch)?;
-
-        match stream_endpoint.ty() {
-            Type::Primitive(primitive) => {
-                if T::EXTENT != 1 || &T::ELEMENT != primitive {
-                    return Err(EndpointError::DataTypeMismatch);
-                }
-            }
-            Type::Array(array) => {
-                if T::EXTENT != array.len() || &Type::Primitive(T::ELEMENT) != array.elem_ty() {
-                    return Err(EndpointError::DataTypeMismatch);
-                }
-            }
-            _ => return Err(EndpointError::EndpointTypeMismatch),
-        }
-
-        let Self {
-            inner,
-            endpoints,
-            inputs,
-            outputs,
-            cached_input_values,
-            streams: ((), output),
-        } = self;
-
-        Ok(Performer {
-            inner,
-            endpoints,
-            inputs,
-            outputs,
-            cached_input_values,
-            streams: (
-                InputStream {
-                    handle,
-                    _marker: PhantomData,
-                },
-                output,
-            ),
-        })
-    }
-}
-
 /// An input stream.
-pub struct InputStream<T> {
+#[derive(Debug, Copy, Clone)]
+pub struct InputStream<T>
+where
+    T: StreamType,
+{
     handle: EndpointHandle,
     _marker: PhantomData<T>,
 }
 
 /// An output stream.
-pub struct OutputStream<T> {
+#[derive(Debug, Copy, Clone)]
+pub struct OutputStream<T>
+where
+    T: StreamType,
+{
     handle: EndpointHandle,
     _marker: PhantomData<T>,
 }
 
-impl<T, Output> Performer<(InputStream<T>, Output)>
+#[sealed]
+impl<T> PerformerEndpoint for InputStream<T>
 where
     T: StreamType,
 {
-    /// Write to the performers input stream.
-    pub fn write_stream(&mut self, frames: &[T]) {
-        unsafe { self.write_stream_unchecked(self.streams.0.handle, frames) }
+    fn make(
+        handle: EndpointHandle,
+        endpoint: EndpointInfo,
+    ) -> Result<Endpoint<Self>, EndpointError> {
+        validate_stream_endpoint::<T>(&endpoint, EndpointDirection::Input)?;
+
+        Ok(Endpoint(Self {
+            handle,
+            _marker: PhantomData,
+        }))
     }
 }
 
-impl<T, Input> Performer<(Input, OutputStream<T>)>
+#[sealed]
+impl<T> PerformerEndpoint for OutputStream<T>
 where
     T: StreamType,
 {
-    /// Read from the performers output stream.
-    pub fn read_stream(&mut self, frames: &mut [T]) {
-        unsafe { self.read_stream_unchecked(self.streams.1.handle, frames) }
+    fn make(
+        handle: EndpointHandle,
+        endpoint: EndpointInfo,
+    ) -> Result<Endpoint<Self>, EndpointError> {
+        validate_stream_endpoint::<T>(&endpoint, EndpointDirection::Output)?;
+
+        Ok(Endpoint(Self {
+            handle,
+            _marker: PhantomData,
+        }))
+    }
+}
+
+fn validate_stream_endpoint<T>(
+    endpoint: &EndpointInfo,
+    expected_direction: EndpointDirection,
+) -> Result<(), EndpointError>
+where
+    T: StreamType,
+{
+    if endpoint.direction() != expected_direction {
+        return Err(EndpointError::DirectionMismatch);
+    }
+
+    let stream = endpoint
+        .as_stream()
+        .ok_or(EndpointError::EndpointTypeMismatch)?;
+
+    let (stream_type, stream_extent) = match stream.ty() {
+        Type::Array(array) => (array.elem_ty(), array.len()),
+        ty => (ty, 1),
+    };
+
+    if !stream_type.is::<T::Element>() {
+        return Err(EndpointError::DataTypeMismatch);
+    }
+
+    if stream_extent != T::EXTENT {
+        return Err(EndpointError::DataTypeMismatch);
+    }
+
+    Ok(())
+}
+
+pub fn write_stream<T>(
+    performer: &Performer,
+    Endpoint(InputStream { handle, .. }): Endpoint<InputStream<T>>,
+    buffer: &[T],
+) where
+    T: StreamType,
+{
+    unsafe { performer.ptr.set_input_frames(handle, buffer) }
+}
+
+pub fn read_stream<T>(
+    performer: &Performer,
+    Endpoint(OutputStream { handle, .. }): Endpoint<OutputStream<T>>,
+    buffer: &mut [T],
+) where
+    T: StreamType,
+{
+    unsafe {
+        performer.ptr.copy_output_frames(handle, buffer);
     }
 }
 
 #[sealed]
 pub trait StreamType: Copy {
-    const ELEMENT: Primitive;
+    type Element: IsScalar + 'static;
     const EXTENT: usize;
 }
 
 #[sealed]
 impl StreamType for i32 {
-    const ELEMENT: Primitive = Primitive::Int32;
+    type Element = Self;
     const EXTENT: usize = 1;
 }
 
 #[sealed]
 impl StreamType for i64 {
-    const ELEMENT: Primitive = Primitive::Int64;
+    type Element = Self;
     const EXTENT: usize = 1;
 }
 
 #[sealed]
 impl StreamType for f32 {
-    const ELEMENT: Primitive = Primitive::Float32;
+    type Element = Self;
     const EXTENT: usize = 1;
 }
 
 #[sealed]
 impl StreamType for f64 {
-    const ELEMENT: Primitive = Primitive::Float64;
+    type Element = Self;
     const EXTENT: usize = 1;
 }
 
@@ -199,6 +154,7 @@ impl<T, const EXTENT: usize> StreamType for [T; EXTENT]
 where
     T: StreamType,
 {
-    const ELEMENT: Primitive = T::ELEMENT;
+    type Element = T::Element;
+
     const EXTENT: usize = EXTENT;
 }

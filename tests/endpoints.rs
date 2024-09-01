@@ -1,6 +1,7 @@
 use cmajor::{
+    engine::{Engine, Loaded},
     json,
-    performer::{EndpointError, InputEvent, InputValue, OutputValue, Performer},
+    performer::{EndpointError, InputStream, InputValue, OutputEvent, OutputValue, Performer},
     value::{
         types::{Object, Primitive, Type},
         Complex32, Complex64, Value, ValueRef,
@@ -8,24 +9,24 @@ use cmajor::{
     Cmajor,
 };
 
-fn setup(program: &str) -> Performer {
+fn setup<E>(program: &str, endpoints: impl FnOnce(&mut Engine<Loaded>) -> E) -> (Performer, E) {
     let cmajor = Cmajor::new();
 
     let engine = cmajor
         .create_default_engine()
-        .with_sample_rate(44_100)
+        .with_sample_rate(44_100.0)
         .build();
 
     let program = cmajor.parse(program).expect("failed to parse program");
 
-    let engine = engine
-        .load(&program)
-        .and_then(|engine| engine.link())
-        .expect("failed to load and link program");
+    let mut engine = engine.load(&program).expect("failed to load program");
 
-    let mut performer = engine.performer();
+    let endpoints = endpoints(&mut engine);
+
+    let mut performer = engine.link().unwrap().performer();
     performer.set_block_size(128);
-    performer
+
+    (performer, endpoints)
 }
 
 #[test]
@@ -50,21 +51,22 @@ fn can_read_and_write_to_value_endpoint() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (int_in, int_out, bool_in, bool_out)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("int_in").unwrap(),
+            engine.endpoint("int_out").unwrap(),
+            engine.endpoint("bool_in").unwrap(),
+            engine.endpoint("bool_out").unwrap(),
+        )
+    });
 
-    let int_in = performer.endpoint::<InputValue<i32>>("int_in").unwrap();
-    let int_out = performer.endpoint::<OutputValue<i32>>("int_out").unwrap();
-
-    let bool_in = performer.endpoint::<InputValue<bool>>("bool_in").unwrap();
-    let bool_out = performer.endpoint::<OutputValue<bool>>("bool_out").unwrap();
-
-    int_in.set(2);
-    bool_in.set(true);
+    performer.set(int_in, 2);
+    performer.set(bool_in, true);
 
     performer.advance();
 
-    assert_eq!(int_out.get(), 4);
-    assert!(bool_out.get());
+    assert_eq!(performer.get::<i32>(int_out), 4);
+    assert!(performer.get::<bool>(bool_out));
 }
 
 #[test]
@@ -83,12 +85,18 @@ fn cant_access_endpoints_with_wrong_type() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint::<OutputValue>("out"),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue>("in").unwrap();
-    assert!(matches!(input.set(5), Err(EndpointError::DataTypeMismatch)));
+    assert!(matches!(
+        performer.set(input, Value::Int32(5)),
+        Err(EndpointError::DataTypeMismatch)
+    ));
 
-    let output = performer.endpoint::<OutputValue>("out");
     assert!(matches!(output, Err(EndpointError::EndpointTypeMismatch)));
 }
 
@@ -108,27 +116,29 @@ fn can_read_and_write_complex32_numbers() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue>("in").unwrap();
-    let output = performer.endpoint::<OutputValue>("out").unwrap();
-
-    input
-        .set(Complex32 {
-            imag: 1.0,
-            real: 2.0,
-        })
-        .unwrap();
+    let value: Value = Complex32 {
+        real: 2.0,
+        imag: 1.0,
+    }
+    .into();
+    performer.set(input, value).unwrap();
 
     performer.advance();
 
-    let result: Complex32 = output.get().as_ref().try_into().unwrap();
+    let result: Complex32 = performer.get::<Value>(output).unwrap().try_into().unwrap();
 
     assert_eq!(
         result,
         Complex32 {
-            imag: 1.0,
             real: 2.0,
+            imag: 1.0
         }
     );
 }
@@ -149,27 +159,29 @@ fn can_read_and_write_complex64_numbers() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue>("in").unwrap();
-    let output = performer.endpoint::<OutputValue>("out").unwrap();
-
-    input
-        .set(Complex64 {
-            imag: 1.0,
-            real: 2.0,
-        })
-        .unwrap();
+    let value: Value = Complex64 {
+        real: 2.0,
+        imag: 1.0,
+    }
+    .into();
+    performer.set(input, value).unwrap();
 
     performer.advance();
 
-    let result: Complex64 = output.get().as_ref().try_into().unwrap();
+    let result: Complex64 = performer.get::<Value>(output).unwrap().try_into().unwrap();
 
     assert_eq!(
         result,
         Complex64 {
-            imag: 1.0,
             real: 2.0,
+            imag: 1.0
         }
     );
 }
@@ -196,14 +208,12 @@ fn can_read_structs() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
-    let output = performer.endpoint::<OutputValue>("out").unwrap();
+    let (mut performer, output) = setup(PROGRAM, |engine| engine.endpoint("out").unwrap());
 
     performer.advance();
 
-    let result = output.get();
-    let result = result.as_ref();
-    let object = result.as_object().expect("expected an object");
+    let value = performer.get::<Value>(output).unwrap();
+    let object = value.as_object().unwrap();
 
     assert_eq!(object.field("a").unwrap(), ValueRef::Bool(true));
     assert_eq!(object.field("b").unwrap(), ValueRef::Float32(7.0));
@@ -226,21 +236,20 @@ fn can_read_and_write_arrays() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue<Value>>("in").unwrap();
-    let output = performer.endpoint::<OutputValue<Value>>("out").unwrap();
-
-    input.set([1, 2, 3, 4]).unwrap();
+    performer.set::<Value>(input, [1, 2, 3, 4].into()).unwrap();
 
     performer.advance();
 
-    let result = output.get();
-    let array = if let ValueRef::Array(array) = result.as_ref() {
-        array
-    } else {
-        panic!("expected an array")
-    };
+    let value = performer.get::<Value>(output).unwrap();
+    let array = value.as_array().unwrap();
+
     assert_eq!(array.len(), 4);
 
     assert_eq!(array.get(0), Some(ValueRef::Int32(4)));
@@ -274,20 +283,22 @@ fn can_post_events() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputEvent>("in").unwrap();
-    let output = performer.endpoint::<OutputValue<i32>>("out").unwrap();
-
-    input.post(4).unwrap();
+    performer.post(input, 4).unwrap();
     performer.advance();
 
-    assert_eq!(output.get(), 16);
+    assert_eq!(performer.get::<i32>(output), 16);
 
-    input.post(true).unwrap();
+    performer.post(input, true).unwrap();
     performer.advance();
 
-    assert_eq!(output.get(), 42);
+    assert_eq!(performer.get(output), 42);
 }
 
 #[test]
@@ -315,31 +326,31 @@ fn can_read_events() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputEvent>("in").unwrap();
-    let output = performer.endpoints().get_handle("out").unwrap();
-
-    input.post(5).unwrap();
+    performer.post(input, 5).unwrap();
     performer.advance();
     assert_eq!(
         performer
-            .read_events(output, |frame, handle, data| {
+            .fetch(output, |frame, data| {
                 assert_eq!(frame, 0);
-                assert_eq!(handle, output);
                 assert_eq!(data, ValueRef::Int32(5));
             })
             .unwrap(),
         1
     );
 
-    input.post(true).unwrap();
+    performer.post(input, true).unwrap();
     performer.advance();
     assert_eq!(
         performer
-            .read_events(output, |frame, handle, data| {
+            .fetch(output, |frame, data| {
                 assert_eq!(frame, 0);
-                assert_eq!(handle, output);
                 assert_eq!(data, ValueRef::Bool(true));
             })
             .unwrap(),
@@ -366,21 +377,20 @@ fn can_read_streams() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
-    performer.set_block_size(8);
+    let (mut performer, stream) = setup(PROGRAM, |engine| engine.endpoint("out").unwrap());
 
-    let mut performer = performer.with_output_stream::<i32>("out").unwrap();
+    performer.set_block_size(8);
 
     performer.advance();
 
     let mut buffer = [0_i32; 8];
 
-    performer.read_stream(buffer.as_mut_slice());
+    performer.read(stream, buffer.as_mut_slice());
     assert_eq!(buffer, [0, 1, 2, 3, 4, 5, 6, 7]);
 
     performer.advance();
 
-    performer.read_stream(buffer.as_mut_slice());
+    performer.read(stream, buffer.as_mut_slice());
     assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
 
     assert_eq!(performer.get_xruns(), 0);
@@ -406,21 +416,27 @@ fn can_query_endpoint_information() {
         }
     "#;
 
-    let performer = setup(PROGRAM);
+    let (performer, _) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint::<InputStream<i32>>("a").unwrap(),
+            engine.endpoint::<InputValue<f32>>("b").unwrap(),
+            engine.endpoint::<OutputEvent>("c").unwrap(),
+        )
+    });
 
-    let (_, a) = performer.endpoints().get_by_id("a").unwrap();
+    let a = performer.endpoint_by_id("a").unwrap();
     let a = a.as_stream().expect("expected stream");
 
     assert_eq!(a.id(), "a");
     assert!(a.ty().is::<i32>());
 
-    let (_, b) = performer.endpoints().get_by_id("b").unwrap();
+    let b = performer.endpoint_by_id("b").unwrap();
     let b = b.as_value().expect("expected value");
 
     assert_eq!(b.id(), "b");
     assert!(b.ty().is::<f32>());
 
-    let (_, c) = performer.endpoints().get_by_id("c").unwrap();
+    let c = performer.endpoint_by_id("c").unwrap();
     let c = c.as_event().expect("expected event");
 
     assert_eq!(c.id(), "c");
@@ -451,18 +467,19 @@ fn can_write_streams() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM)
-        .with_input_stream::<i32>("in")
-        .unwrap()
-        .with_output_stream::<i32>("out")
-        .unwrap();
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
     let mut buffer = [1, 2, 3, 4, 5, 6, 7, 8];
     performer.set_block_size(buffer.len() as u32);
 
-    performer.write_stream(buffer.as_mut_slice());
+    performer.write(input, buffer.as_mut_slice());
     performer.advance();
-    performer.read_stream(buffer.as_mut_slice());
+    performer.read(output, buffer.as_mut_slice());
 
     assert_eq!(buffer, [2, 4, 6, 8, 10, 12, 14, 16]);
 }
@@ -485,17 +502,18 @@ fn read_and_write_vectors() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue>("in").unwrap();
-    let output = performer.endpoint::<OutputValue>("out").unwrap();
-
-    input.set([1, 2, 3, 4]).unwrap();
+    performer.set::<Value>(input, [1, 2, 3, 4].into()).unwrap();
     performer.advance();
 
-    let value = output.get();
-    let value_ref = value.as_ref();
-    let array = value_ref.as_array().expect("expected an array");
+    let value = performer.get::<Value>(output).unwrap();
+    let array = value.as_array().unwrap();
 
     let elems: Vec<_> = array.elems().collect();
     assert_eq!(
@@ -524,9 +542,12 @@ fn endpoints_with_annotations() {
         }
     "#;
 
-    let performer = setup(PROGRAM);
+    let (performer, _) = setup(PROGRAM, |engine| {
+        let _ = engine.endpoint::<InputValue<f32>>("a");
+        let _ = engine.endpoint::<OutputValue<i32>>("b");
+    });
 
-    let (_, a) = performer.endpoints().get_by_id("a").unwrap();
+    let a = performer.endpoint_by_id("a").unwrap();
 
     assert_eq!(
         a.annotation().get("name").and_then(json::Value::as_str),
@@ -545,7 +566,7 @@ fn endpoints_with_annotations() {
         Some(true)
     );
 
-    let (_, b) = performer.endpoints().get_by_id("b").unwrap();
+    let b = performer.endpoint_by_id("b").unwrap();
     assert_eq!(
         b.annotation().get("name").and_then(json::Value::as_str),
         Some("bar")
@@ -582,21 +603,19 @@ fn multiple_handles_to_the_same_input_value_endpoint() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (engine.endpoint("a").unwrap(), engine.endpoint("b").unwrap())
+    });
 
-    let input_a = performer.endpoint::<InputValue<i32>>("a").unwrap();
-    let input_b = performer.endpoint::<InputValue<i32>>("a").unwrap();
-    let output = performer.endpoint::<OutputValue<i32>>("b").unwrap();
-
-    input_a.set(42);
+    performer.set(input, 42);
     performer.advance();
 
-    assert_eq!(output.get(), 42);
+    assert_eq!(performer.get::<i32>(output), 42);
 
-    input_b.set(24);
+    performer.set(input, 24);
     performer.advance();
 
-    assert_eq!(output.get(), 24);
+    assert_eq!(performer.get(output), 24);
 }
 
 #[test]
@@ -617,18 +636,20 @@ fn multiple_handles_to_the_same_output_value_endpoint() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (a, b, c)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("a").unwrap(),
+            engine.endpoint("b").unwrap(),
+            engine.endpoint("b").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputValue<i32>>("a").unwrap();
-    let output_a = performer.endpoint::<OutputValue<i32>>("b").unwrap();
-    let output_b = performer.endpoint::<OutputValue<i32>>("b").unwrap();
-
-    input.set(42);
+    performer.set(a, 42);
 
     performer.advance();
 
-    assert_eq!(output_a.get(), 42);
-    assert_eq!(output_b.get(), 42);
+    assert_eq!(performer.get::<i32>(b), 42);
+    assert_eq!(performer.get::<i32>(c), 42);
 }
 
 #[test]
@@ -656,22 +677,22 @@ fn void_events() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM);
+    let (mut performer, (increment, current_count)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("increment").unwrap(),
+            engine.endpoint("currentCount").unwrap(),
+        )
+    });
 
-    let input = performer.endpoint::<InputEvent>("increment").unwrap();
-    let output = performer
-        .endpoint::<OutputValue<i32>>("currentCount")
-        .unwrap();
-
-    input.post(()).unwrap();
+    performer.post(increment, ()).unwrap();
     performer.advance();
 
-    assert_eq!(output.get(), 1);
+    assert_eq!(performer.get::<i32>(current_count), 1);
 
-    input.post(()).unwrap();
+    performer.post(increment, ()).unwrap();
     performer.advance();
 
-    assert_eq!(output.get(), 2);
+    assert_eq!(performer.get::<i32>(current_count), 2);
 }
 
 #[test]
@@ -692,20 +713,21 @@ fn vector_stream_endpoints() {
         }
     "#;
 
-    let mut performer = setup(PROGRAM)
-        .with_input_stream::<[f32; 2]>("in")
-        .unwrap()
-        .with_output_stream::<[f32; 2]>("out")
-        .unwrap();
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
 
-    let input_buffer = [[1., 2.]; 4];
-    let mut output_buffer = [[0.; 2]; 4];
+    let input_buffer = [[1_f32, 2_f32]; 4];
+    let mut output_buffer = [[0_f32; 2]; 4];
 
     performer.set_block_size(4);
 
-    performer.write_stream(&input_buffer);
+    performer.write(input, &input_buffer);
     performer.advance();
-    performer.read_stream(&mut output_buffer);
+    performer.read(output, &mut output_buffer);
 
     assert_eq!(output_buffer, [[2., 1.], [2., 1.], [2., 1.], [2., 1.]]);
 }

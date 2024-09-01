@@ -1,9 +1,7 @@
-pub mod input_event;
-pub mod input_value;
-pub mod output_value;
+pub mod event;
 pub mod stream;
+pub mod value;
 
 /// An endpoint.
-pub struct Endpoint<T> {
-    inner: T,
-}
+#[derive(Debug, Copy, Clone)]
+pub struct Endpoint<T>(pub(crate) T);

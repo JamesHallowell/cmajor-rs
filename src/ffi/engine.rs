@@ -72,11 +72,6 @@ impl EnginePtr {
         Self { engine }
     }
 
-    pub fn get_build_settings(&self) -> CmajorStringPtr {
-        let result = unsafe { ((*(*self.engine).vtable).get_build_settings)(self.engine) };
-        unsafe { CmajorStringPtr::new(result) }
-    }
-
     pub fn set_build_settings(&self, build_settings: &CStr) {
         unsafe {
             ((*(*self.engine).vtable).set_build_settings)(self.engine, build_settings.as_ptr())
@@ -231,7 +226,7 @@ extern "system" fn request_external_function_callback(
 
 fn parse_function_signature(string: &CStr) -> Result<Vec<Primitive>, Box<dyn std::error::Error>> {
     let type_descriptions: Vec<TypeDescription> = json::from_str(string.to_str()?)?;
-    Ok(type_descriptions
+    type_descriptions
         .iter()
         .map(Type::try_from)
         .map(|ty| -> Result<Primitive, Box<dyn std::error::Error>> {
@@ -241,5 +236,5 @@ fn parse_function_signature(string: &CStr) -> Result<Vec<Primitive>, Box<dyn std
                 Err(err) => Err(err.into()),
             }
         })
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()
 }

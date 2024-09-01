@@ -1,5 +1,5 @@
 use {
-    crate::value::types::{Array, Object, Primitive, Type, TypeRef},
+    crate::value::types::{Array, IsFloatingPoint, Object, Primitive, Type, TypeRef},
     bytes::{Buf, BufMut},
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
@@ -157,7 +157,7 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    /// If the value is an object, get a reference to it. Otherwise returns `None`.
+    /// If the value is an object, get a reference to it. Otherwise, returns `None`.
     pub fn as_object(&self) -> Option<ObjectValueRef<'_>> {
         match self {
             Self::Object(object) => Some(*object),
@@ -372,7 +372,19 @@ impl From<()> for Value {
     }
 }
 
+impl From<()> for ValueRef<'_> {
+    fn from(_: ()) -> Self {
+        Self::Void
+    }
+}
+
 impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+impl From<bool> for ValueRef<'_> {
     fn from(value: bool) -> Self {
         Self::Bool(value)
     }
@@ -384,7 +396,19 @@ impl From<i32> for Value {
     }
 }
 
+impl From<i32> for ValueRef<'_> {
+    fn from(value: i32) -> Self {
+        Self::Int32(value)
+    }
+}
+
 impl From<i64> for Value {
+    fn from(value: i64) -> Self {
+        Self::Int64(value)
+    }
+}
+
+impl From<i64> for ValueRef<'_> {
     fn from(value: i64) -> Self {
         Self::Int64(value)
     }
@@ -396,7 +420,19 @@ impl From<f32> for Value {
     }
 }
 
+impl From<f32> for ValueRef<'_> {
+    fn from(value: f32) -> Self {
+        Self::Float32(value)
+    }
+}
+
 impl From<f64> for Value {
+    fn from(value: f64) -> Self {
+        Self::Float64(value)
+    }
+}
+
+impl From<f64> for ValueRef<'_> {
     fn from(value: f64) -> Self {
         Self::Float64(value)
     }
@@ -408,41 +444,49 @@ impl From<ArrayValue> for Value {
     }
 }
 
+impl<'a> From<&'a ArrayValue> for ValueRef<'a> {
+    fn from(value: &'a ArrayValue) -> Self {
+        Self::Array(value.as_ref())
+    }
+}
+
 impl From<ObjectValue> for Value {
     fn from(object: ObjectValue) -> Self {
         Self::Object(Box::new(object))
     }
 }
 
-/// A 32-bit complex number.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Complex32 {
-    /// The real part.
-    pub real: f32,
-
-    /// The imaginary part.
-    pub imag: f32,
+impl<'a> From<&'a ObjectValue> for ValueRef<'a> {
+    fn from(value: &'a ObjectValue) -> Self {
+        Self::Object(value.as_ref())
+    }
 }
+
+/// A complex number.
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct Complex<T: IsFloatingPoint> {
+    /// The real component.
+    pub real: T,
+
+    /// The imaginary component.
+    pub imag: T,
+}
+
+/// A 32-bit complex number.
+pub type Complex32 = Complex<f32>;
 
 /// A 64-bit complex number.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Complex64 {
-    /// The real part.
-    pub real: f64,
-
-    /// The imaginary part.
-    pub imag: f64,
-}
+pub type Complex64 = Complex<f64>;
 
 impl From<Complex32> for ObjectValue {
-    fn from(value: Complex32) -> Self {
+    fn from(Complex { real, imag }: Complex32) -> Self {
         let object = Object::new("complex32")
             .with_field("real", Type::Primitive(Primitive::Float32))
             .with_field("imag", Type::Primitive(Primitive::Float32));
 
         let mut data = SmallVec::new();
-        data.extend_from_slice(&value.real.to_ne_bytes());
-        data.extend_from_slice(&value.imag.to_ne_bytes());
+        data.extend_from_slice(&real.to_ne_bytes());
+        data.extend_from_slice(&imag.to_ne_bytes());
 
         ObjectValue { ty: object, data }
     }
@@ -471,14 +515,14 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
 }
 
 impl From<Complex64> for ObjectValue {
-    fn from(value: Complex64) -> Self {
+    fn from(Complex { real, imag }: Complex64) -> Self {
         let object = Object::new("complex64")
             .with_field("real", Type::Primitive(Primitive::Float64))
             .with_field("imag", Type::Primitive(Primitive::Float64));
 
         let mut data = SmallVec::new();
-        data.extend_from_slice(&value.real.to_ne_bytes());
-        data.extend_from_slice(&value.imag.to_ne_bytes());
+        data.extend_from_slice(&real.to_ne_bytes());
+        data.extend_from_slice(&imag.to_ne_bytes());
 
         ObjectValue { ty: object, data }
     }

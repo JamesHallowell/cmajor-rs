@@ -5,7 +5,6 @@ use {
         program::Program,
         ParseError,
     },
-    serde_json::{Map, Value},
     std::{ffi::CString, path::Path},
 };
 
@@ -109,15 +108,8 @@ impl Cmajor {
             .expect("engine factory not found");
         let engine = engine_factory.create_engine(None);
 
-        let build_settings =
-            if let Ok(Value::Object(build_settings)) = engine.get_build_settings().to_json() {
-                build_settings
-            } else {
-                Map::new()
-            };
-
         EngineBuilder {
-            build_settings,
+            sample_rate: 0.0,
             engine: Engine::new(engine),
         }
     }
