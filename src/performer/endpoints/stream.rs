@@ -1,9 +1,7 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{
-            Endpoint, EndpointError, Performer, PerformerEndpoint, __seal_performer_endpoint,
-        },
+        performer::{Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type},
         value::types::{IsScalar, Type},
     },
     sealed::sealed,
@@ -31,7 +29,7 @@ where
 }
 
 #[sealed]
-impl<T> PerformerEndpoint for InputStream<T>
+impl<T> EndpointType for InputStream<T>
 where
     T: StreamType,
 {
@@ -46,10 +44,14 @@ where
             _marker: PhantomData,
         }))
     }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
+    }
 }
 
 #[sealed]
-impl<T> PerformerEndpoint for OutputStream<T>
+impl<T> EndpointType for OutputStream<T>
 where
     T: StreamType,
 {
@@ -63,6 +65,10 @@ where
             handle,
             _marker: PhantomData,
         }))
+    }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
     }
 }
 
@@ -99,23 +105,23 @@ where
 
 pub fn write_stream<T>(
     performer: &Performer,
-    Endpoint(InputStream { handle, .. }): Endpoint<InputStream<T>>,
+    Endpoint(endpoint): Endpoint<InputStream<T>>,
     buffer: &[T],
 ) where
     T: StreamType,
 {
-    unsafe { performer.ptr.set_input_frames(handle, buffer) }
+    unsafe { performer.ptr.set_input_frames(endpoint.handle, buffer) }
 }
 
 pub fn read_stream<T>(
     performer: &Performer,
-    Endpoint(OutputStream { handle, .. }): Endpoint<OutputStream<T>>,
+    Endpoint(endpoint): Endpoint<OutputStream<T>>,
     buffer: &mut [T],
 ) where
     T: StreamType,
 {
     unsafe {
-        performer.ptr.copy_output_frames(handle, buffer);
+        performer.ptr.copy_output_frames(endpoint.handle, buffer);
     }
 }
 

@@ -5,7 +5,7 @@ mod endpoints;
 pub use endpoints::{
     event::{InputEvent, OutputEvent},
     stream::{InputStream, OutputStream},
-    value::{GetOutputValue, InputValue, OutputValue, SetInputValue},
+    value::{InputValue, OutputValue},
     Endpoint,
 };
 use {
@@ -15,6 +15,7 @@ use {
         performer::endpoints::{
             event::{fetch_events, post_event},
             stream::{read_stream, write_stream, StreamType},
+            value::{GetOutputValue, SetInputValue},
         },
         value::ValueRef,
     },
@@ -54,9 +55,11 @@ impl Performer {
     }
 
     /// Returns information about a given endpoint.
-    pub fn endpoint_by_id(&self, id: impl AsRef<str>) -> Option<&EndpointInfo> {
-        let id = id.as_ref();
-        self.endpoints.values().find(|endpoint| endpoint.id() == id)
+    pub fn endpoint_info<T>(&self, Endpoint(endpoint): Endpoint<T>) -> Option<&EndpointInfo>
+    where
+        T: EndpointType,
+    {
+        self.endpoints.get(&endpoint.handle())
     }
 
     /// Set the value of an endpoint.
@@ -147,11 +150,13 @@ pub enum EndpointError {
 
 #[doc(hidden)]
 #[sealed(pub(crate))]
-pub trait PerformerEndpoint {
+pub trait EndpointType {
     fn make(
         handle: EndpointHandle,
         endpoint: EndpointInfo,
     ) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized;
+
+    fn handle(&self) -> EndpointHandle;
 }

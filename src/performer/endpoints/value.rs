@@ -2,8 +2,7 @@ use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
         performer::{
-            endpoints::Endpoint, EndpointError, Performer, PerformerEndpoint,
-            __seal_performer_endpoint,
+            endpoints::Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type,
         },
         value::{Value, ValueRef},
     },
@@ -26,7 +25,7 @@ pub struct OutputValue<T = Value> {
 }
 
 #[sealed]
-impl<T> PerformerEndpoint for InputValue<T>
+impl<T> EndpointType for InputValue<T>
 where
     T: 'static,
 {
@@ -41,10 +40,14 @@ where
             _marker: PhantomData,
         }))
     }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
+    }
 }
 
 #[sealed]
-impl<T> PerformerEndpoint for OutputValue<T>
+impl<T> EndpointType for OutputValue<T>
 where
     T: 'static,
 {
@@ -58,6 +61,10 @@ where
             handle,
             _marker: PhantomData,
         }))
+    }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
     }
 }
 
@@ -96,7 +103,7 @@ pub trait SetInputValue: Sized {
 
     fn set_input_value(
         performer: &mut Performer,
-        handle: Endpoint<InputValue<Self>>,
+        endpoint: Endpoint<InputValue<Self>>,
         value: Self,
     ) -> Self::Output;
 }
@@ -108,13 +115,13 @@ macro_rules! set_input_value_for {
 
             fn set_input_value(
                 performer: &mut Performer,
-                Endpoint(InputValue { handle, .. }): Endpoint<InputValue<Self>>,
+                Endpoint(endpoint): Endpoint<InputValue<Self>>,
                 value: Self,
             ) -> Self::Output {
                 unsafe {
                     performer
                         .ptr
-                        .set_input_value(handle, value.to_ne_bytes().as_ptr(), 0);
+                        .set_input_value(endpoint.handle, value.to_ne_bytes().as_ptr(), 0);
                 }
             }
         }
@@ -131,14 +138,14 @@ impl SetInputValue for bool {
 
     fn set_input_value(
         performer: &mut Performer,
-        Endpoint(InputValue { handle, .. }): Endpoint<InputValue<Self>>,
+        Endpoint(endpoint): Endpoint<InputValue<Self>>,
         value: Self,
     ) -> Self::Output {
         let value: i32 = if value { 1 } else { 0 };
         unsafe {
             performer
                 .ptr
-                .set_input_value(handle, value.to_ne_bytes().as_ptr(), 0);
+                .set_input_value(endpoint.handle, value.to_ne_bytes().as_ptr(), 0);
         }
     }
 }
@@ -148,22 +155,25 @@ impl SetInputValue for Value {
 
     fn set_input_value(
         performer: &mut Performer,
-        Endpoint(InputValue { handle, .. }): Endpoint<InputValue<Self>>,
+        Endpoint(endpoint): Endpoint<InputValue<Self>>,
         value: Self,
     ) -> Self::Output {
-        let endpoint = performer
+        let ty = performer
             .endpoints
-            .get(&handle)
+            .get(&endpoint.handle)
             .ok_or(EndpointError::EndpointDoesNotExist)?
             .as_value()
-            .ok_or(EndpointError::EndpointTypeMismatch)?;
+            .ok_or(EndpointError::EndpointTypeMismatch)?
+            .ty();
 
-        if endpoint.ty().as_ref() != value.ty() {
+        if ty.as_ref() != value.ty() {
             return Err(EndpointError::DataTypeMismatch);
         }
 
         value.with_bytes(|bytes| unsafe {
-            performer.ptr.set_input_value(handle, bytes.as_ptr(), 0);
+            performer
+                .ptr
+                .set_input_value(endpoint.handle, bytes.as_ptr(), 0);
         });
 
         Ok(())
@@ -187,10 +197,12 @@ macro_rules! get_output_value_for {
 
             fn get_output_value(
                 performer: &mut Performer,
-                Endpoint(OutputValue { handle, .. }): Endpoint<OutputValue<Self>>,
+                Endpoint(endpoint): Endpoint<OutputValue<Self>>,
             ) -> Self::Output<'_> {
                 let mut buffer = [0u8; std::mem::size_of::<Self>()];
-                performer.ptr.copy_output_value(handle, &mut buffer);
+                performer
+                    .ptr
+                    .copy_output_value(endpoint.handle, &mut buffer);
                 Self::from_ne_bytes(buffer)
             }
         }
@@ -207,10 +219,12 @@ impl GetOutputValue for bool {
 
     fn get_output_value(
         performer: &mut Performer,
-        Endpoint(OutputValue { handle, .. }): Endpoint<OutputValue<Self>>,
+        Endpoint(endpoint): Endpoint<OutputValue<Self>>,
     ) -> Self::Output<'_> {
         let mut buffer = [0u8; size_of::<u32>()];
-        performer.ptr.copy_output_value(handle, &mut buffer);
+        performer
+            .ptr
+            .copy_output_value(endpoint.handle, &mut buffer);
         u32::from_ne_bytes(buffer) != 0
     }
 }
@@ -220,18 +234,18 @@ impl GetOutputValue for Value {
 
     fn get_output_value(
         performer: &mut Performer,
-        Endpoint(OutputValue { handle, .. }): Endpoint<OutputValue<Self>>,
+        Endpoint(endpoint): Endpoint<OutputValue<Self>>,
     ) -> Self::Output<'_> {
         let Performer { ptr, buffer, .. } = performer;
 
         let ty = performer
             .endpoints
-            .get(&handle)
+            .get(&endpoint.handle)
             .and_then(|endpoint| endpoint.as_value())
             .map(|value_endpoint| value_endpoint.ty().as_ref())
             .expect("failed to determine endpoint type");
 
-        ptr.copy_output_value(handle, buffer);
+        ptr.copy_output_value(endpoint.handle, buffer);
 
         Ok(ValueRef::new_from_slice(ty, &buffer[..ty.size()]))
     }

@@ -8,7 +8,7 @@ use {
     crate::{
         endpoint::{EndpointHandle, EndpointInfo},
         ffi::EnginePtr,
-        performer::{Endpoint, EndpointError, Performer, PerformerEndpoint},
+        performer::{Endpoint, EndpointError, EndpointType, Performer},
         program::Program,
     },
     std::{
@@ -111,7 +111,7 @@ impl EngineBuilder {
 #[derive(Debug)]
 pub struct Engine<State = Idle> {
     inner: EnginePtr,
-    _state: State,
+    state: State,
 }
 
 /// An error from the engine.
@@ -147,7 +147,7 @@ impl Engine<Idle> {
     pub(crate) fn new(engine: EnginePtr) -> Self {
         Self {
             inner: engine,
-            _state: Idle,
+            state: Idle,
         }
     }
 
@@ -175,7 +175,7 @@ impl Engine<Idle> {
 
                 Ok(Engine {
                     inner: self.inner,
-                    _state: Loaded {
+                    state: Loaded {
                         program_details,
                         endpoints: HashMap::default(),
                     },
@@ -190,12 +190,12 @@ impl Engine<Loaded> {
     /// Returns an endpoint handle.
     pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
     where
-        T: PerformerEndpoint,
+        T: EndpointType,
     {
         let id = id.as_ref();
 
         let info = self
-            ._state
+            .state
             .program_details
             .endpoints()
             .find(|endpoint| endpoint.id() == id)
@@ -207,14 +207,14 @@ impl Engine<Loaded> {
             .get_endpoint_handle(id.as_c_str())
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        self._state.endpoints.insert(handle, info.clone());
+        self.state.endpoints.insert(handle, info.clone());
 
-        PerformerEndpoint::make(handle, info)
+        EndpointType::make(handle, info)
     }
 
     /// Returns the details of the program loaded into the engine.
     pub fn program_details(&self) -> &ProgramDetails {
-        &self._state.program_details
+        &self.state.program_details
     }
 
     /// Link the program loaded into the engine.
@@ -222,11 +222,11 @@ impl Engine<Loaded> {
         match self.inner.link() {
             Ok(_) => {
                 let linked = Linked {
-                    endpoints: self._state.endpoints,
+                    endpoints: self.state.endpoints,
                 };
                 Ok(Engine {
                     inner: self.inner,
-                    _state: linked,
+                    state: linked,
                 })
             }
             Err(error) => Err(Error::FailedToLink(self, error.to_string().into_owned())),
@@ -237,7 +237,7 @@ impl Engine<Loaded> {
 impl Engine<Linked> {
     /// Create a performer for the linked program.
     pub fn performer(&self) -> Performer {
-        Performer::new(self.inner.create_performer(), self._state.endpoints.clone())
+        Performer::new(self.inner.create_performer(), self.state.endpoints.clone())
     }
 }
 
@@ -248,7 +248,7 @@ impl<T> Engine<T> {
 
         Engine {
             inner: self.inner,
-            _state: Idle,
+            state: Idle,
         }
     }
 }

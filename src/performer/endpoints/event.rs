@@ -1,9 +1,7 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{
-            Endpoint, EndpointError, Performer, PerformerEndpoint, __seal_performer_endpoint,
-        },
+        performer::{Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type},
         value::ValueRef,
     },
     sealed::sealed,
@@ -22,7 +20,7 @@ pub struct OutputEvent {
 }
 
 #[sealed]
-impl PerformerEndpoint for InputEvent {
+impl EndpointType for InputEvent {
     fn make(
         handle: EndpointHandle,
         endpoint: EndpointInfo,
@@ -37,10 +35,14 @@ impl PerformerEndpoint for InputEvent {
 
         Ok(Endpoint(InputEvent { handle }))
     }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
+    }
 }
 
 #[sealed]
-impl PerformerEndpoint for OutputEvent {
+impl EndpointType for OutputEvent {
     fn make(handle: EndpointHandle, endpoint: EndpointInfo) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized,
@@ -55,16 +57,20 @@ impl PerformerEndpoint for OutputEvent {
 
         Ok(Endpoint(Self { handle }))
     }
+
+    fn handle(&self) -> EndpointHandle {
+        self.handle
+    }
 }
 
 pub fn post_event(
     performer: &mut Performer,
-    Endpoint(InputEvent { handle }): Endpoint<InputEvent>,
+    Endpoint(endpoint): Endpoint<InputEvent>,
     event: ValueRef<'_>,
 ) -> Result<(), EndpointError> {
     let type_index = performer
         .endpoints
-        .get(&handle)
+        .get(&endpoint.handle)
         .ok_or(EndpointError::EndpointDoesNotExist)?
         .as_event()
         .ok_or(EndpointError::EndpointTypeMismatch)?
@@ -72,7 +78,9 @@ pub fn post_event(
         .ok_or(EndpointError::DataTypeMismatch)?;
 
     event.with_bytes(|bytes| {
-        performer.ptr.add_input_event(handle, type_index, bytes);
+        performer
+            .ptr
+            .add_input_event(endpoint.handle, type_index, bytes);
     });
 
     Ok(())
@@ -80,12 +88,12 @@ pub fn post_event(
 
 pub fn fetch_events(
     performer: &mut Performer,
-    Endpoint(OutputEvent { handle }): Endpoint<OutputEvent>,
+    Endpoint(endpoint): Endpoint<OutputEvent>,
     mut callback: impl FnMut(usize, ValueRef<'_>),
 ) -> Result<usize, EndpointError> {
     let types = performer
         .endpoints
-        .get(&handle)
+        .get(&endpoint.handle)
         .and_then(|endpoint| endpoint.as_event())
         .map(|endpoint| endpoint.types())
         .expect("endpoint should exist and be an event endpoint");
@@ -94,7 +102,7 @@ pub fn fetch_events(
 
     performer
         .ptr
-        .iterate_output_events(handle, |frame_offset, _, type_index, data| {
+        .iterate_output_events(endpoint.handle, |frame_offset, _, type_index, data| {
             let ty = types.get(usize::from(type_index));
             debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
 

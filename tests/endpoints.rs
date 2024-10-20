@@ -416,7 +416,7 @@ fn can_query_endpoint_information() {
         }
     "#;
 
-    let (performer, _) = setup(PROGRAM, |engine| {
+    let (performer, (a, b, c)) = setup(PROGRAM, |engine| {
         (
             engine.endpoint::<InputStream<i32>>("a").unwrap(),
             engine.endpoint::<InputValue<f32>>("b").unwrap(),
@@ -424,19 +424,19 @@ fn can_query_endpoint_information() {
         )
     });
 
-    let a = performer.endpoint_by_id("a").unwrap();
+    let a = performer.endpoint_info(a).unwrap();
     let a = a.as_stream().expect("expected stream");
 
     assert_eq!(a.id(), "a");
     assert!(a.ty().is::<i32>());
 
-    let b = performer.endpoint_by_id("b").unwrap();
+    let b = performer.endpoint_info(b).unwrap();
     let b = b.as_value().expect("expected value");
 
     assert_eq!(b.id(), "b");
     assert!(b.ty().is::<f32>());
 
-    let c = performer.endpoint_by_id("c").unwrap();
+    let c = performer.endpoint_info(c).unwrap();
     let c = c.as_event().expect("expected event");
 
     assert_eq!(c.id(), "c");
@@ -542,12 +542,14 @@ fn endpoints_with_annotations() {
         }
     "#;
 
-    let (performer, _) = setup(PROGRAM, |engine| {
-        let _ = engine.endpoint::<InputValue<f32>>("a");
-        let _ = engine.endpoint::<OutputValue<i32>>("b");
+    let (performer, (a, b)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint::<InputValue<f32>>("a").unwrap(),
+            engine.endpoint::<OutputValue<i32>>("b").unwrap(),
+        )
     });
 
-    let a = performer.endpoint_by_id("a").unwrap();
+    let a = performer.endpoint_info(a).unwrap();
 
     assert_eq!(
         a.annotation().get("name").and_then(json::Value::as_str),
@@ -566,7 +568,7 @@ fn endpoints_with_annotations() {
         Some(true)
     );
 
-    let b = performer.endpoint_by_id("b").unwrap();
+    let b = performer.endpoint_info(b).unwrap();
     assert_eq!(
         b.annotation().get("name").and_then(json::Value::as_str),
         Some("bar")
