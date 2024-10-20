@@ -8,7 +8,7 @@ use {
     crate::{
         endpoint::{EndpointHandle, EndpointInfo},
         ffi::EnginePtr,
-        performer::{Endpoint, EndpointError, EndpointType, Performer},
+        performer::{Endpoint, EndpointError, EndpointType, OutputEvent, Performer},
         program::Program,
     },
     std::{
@@ -135,12 +135,14 @@ pub struct Idle;
 pub struct Loaded {
     program_details: ProgramDetails,
     endpoints: HashMap<EndpointHandle, EndpointInfo>,
+    console: Option<Endpoint<OutputEvent>>,
 }
 
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
     endpoints: HashMap<EndpointHandle, EndpointInfo>,
+    console: Option<Endpoint<OutputEvent>>,
 }
 
 impl Engine<Idle> {
@@ -173,13 +175,16 @@ impl Engine<Idle> {
                 let program_details = serde_json::from_str(program_details.as_ref())
                     .expect("failed to parse program details");
 
-                Ok(Engine {
+                let mut loaded = Engine {
                     inner: self.inner,
                     state: Loaded {
                         program_details,
                         endpoints: HashMap::default(),
+                        console: None,
                     },
-                })
+                };
+                loaded.state.console = loaded.endpoint("console").ok();
+                Ok(loaded)
             }
             Err(error) => Err(Error::FailedToLoad(self, error.to_string().into_owned())),
         }
@@ -223,6 +228,7 @@ impl Engine<Loaded> {
             Ok(_) => {
                 let linked = Linked {
                     endpoints: self.state.endpoints,
+                    console: self.state.console,
                 };
                 Ok(Engine {
                     inner: self.inner,
@@ -237,7 +243,11 @@ impl Engine<Loaded> {
 impl Engine<Linked> {
     /// Create a performer for the linked program.
     pub fn performer(&self) -> Performer {
-        Performer::new(self.inner.create_performer(), self.state.endpoints.clone())
+        Performer::new(
+            self.inner.create_performer(),
+            self.state.endpoints.clone(),
+            self.state.console,
+        )
     }
 }
 

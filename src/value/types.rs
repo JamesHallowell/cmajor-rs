@@ -14,6 +14,9 @@ pub enum Type {
     /// A primitive type.
     Primitive(Primitive),
 
+    /// A string type.
+    String,
+
     /// An array type.
     Array(Box<Array>),
 
@@ -48,6 +51,9 @@ pub enum Primitive {
 pub enum TypeRef<'a> {
     /// A primitive type.
     Primitive(Primitive),
+
+    /// A string type.
+    String,
 
     /// An array type.
     Array(&'a Array),
@@ -88,6 +94,7 @@ impl Type {
     pub fn as_ref(&self) -> TypeRef<'_> {
         match self {
             Type::Primitive(primitive) => TypeRef::Primitive(*primitive),
+            Type::String => TypeRef::String,
             Type::Array(array) => TypeRef::Array(array.as_ref()),
             Type::Object(object) => TypeRef::Object(object.as_ref()),
         }
@@ -149,6 +156,7 @@ impl TypeRef<'_> {
             TypeRef::Primitive(Primitive::Int64) => 8,
             TypeRef::Primitive(Primitive::Float32) => 4,
             TypeRef::Primitive(Primitive::Float64) => 8,
+            TypeRef::String => 4,
             TypeRef::Array(array) => array.size(),
             TypeRef::Object(object) => object.size(),
         }
@@ -158,6 +166,7 @@ impl TypeRef<'_> {
     pub fn to_owned(&self) -> Type {
         match *self {
             TypeRef::Primitive(primitive) => Type::Primitive(primitive),
+            TypeRef::String => Type::String,
             TypeRef::Array(array) => Type::Array(Box::new(array.clone())),
             TypeRef::Object(object) => Type::Object(Box::new(object.clone())),
         }
@@ -171,6 +180,7 @@ impl TypeRef<'_> {
             TypeRef::Primitive(Primitive::Float32) => vec![3],
             TypeRef::Primitive(Primitive::Float64) => vec![4],
             TypeRef::Primitive(Primitive::Bool) => vec![5],
+            TypeRef::String => todo!("serialising string types is not yet supported"),
             TypeRef::Array(array) => {
                 let mut buffer = vec![];
                 buffer.put_u8(7);

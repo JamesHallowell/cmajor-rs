@@ -87,18 +87,16 @@ pub fn post_event(
 }
 
 pub fn fetch_events(
-    performer: &mut Performer,
+    performer: &Performer,
     Endpoint(endpoint): Endpoint<OutputEvent>,
     mut callback: impl FnMut(usize, ValueRef<'_>),
-) -> Result<usize, EndpointError> {
+) -> Result<(), EndpointError> {
     let types = performer
         .endpoints
         .get(&endpoint.handle)
         .and_then(|endpoint| endpoint.as_event())
         .map(|endpoint| endpoint.types())
         .expect("endpoint should exist and be an event endpoint");
-
-    let mut events = 0;
 
     performer
         .ptr
@@ -108,9 +106,8 @@ pub fn fetch_events(
 
             if let Some(ty) = ty {
                 callback(frame_offset, ValueRef::new_from_slice(ty.as_ref(), data));
-                events += 1;
             }
         });
 
-    Ok(events)
+    Ok(())
 }

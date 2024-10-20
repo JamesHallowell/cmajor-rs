@@ -335,27 +335,28 @@ fn can_read_events() {
 
     performer.post(input, 5).unwrap();
     performer.advance();
-    assert_eq!(
-        performer
-            .fetch(output, |frame, data| {
-                assert_eq!(frame, 0);
-                assert_eq!(data, ValueRef::Int32(5));
-            })
-            .unwrap(),
-        1
-    );
+
+    let mut events = vec![];
+    performer
+        .fetch(output, |frame, event| {
+            events.push((frame, event.to_owned()));
+        })
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0], (0, Value::Int32(5)));
 
     performer.post(input, true).unwrap();
     performer.advance();
-    assert_eq!(
-        performer
-            .fetch(output, |frame, data| {
-                assert_eq!(frame, 0);
-                assert_eq!(data, ValueRef::Bool(true));
-            })
-            .unwrap(),
-        1
-    );
+
+    performer
+        .fetch(output, |frame, event| {
+            events.push((frame, event.to_owned()));
+        })
+        .unwrap();
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1], (0, Value::Bool(true)));
 }
 
 #[test]
@@ -732,4 +733,50 @@ fn vector_stream_endpoints() {
     performer.read(output, &mut output_buffer);
 
     assert_eq!(output_buffer, [[2., 1.], [2., 1.], [2., 1.], [2., 1.]]);
+}
+
+#[test]
+fn writing_to_console() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            output value int out;
+
+            void main() {
+                console <- "Hello, world!" <- 5 <- 3.14 <- "🦀";
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, _) = setup(PROGRAM, |_| {});
+
+    performer.advance();
+}
+
+#[test]
+fn string_endpoints() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            output value string out;
+
+            void main() {
+                out <- "Cool 🫘!";
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, out) = setup(PROGRAM, |engine| engine.endpoint("out").unwrap());
+
+    performer.advance();
+
+    let value = if let ValueRef::String(string) = performer.get::<Value>(out).unwrap() {
+        string
+    } else {
+        panic!("expected string");
+    };
+
+    assert_eq!(performer.get_string(value), Some("Cool 🫘!"));
 }

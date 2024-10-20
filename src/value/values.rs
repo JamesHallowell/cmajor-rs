@@ -26,6 +26,9 @@ pub enum Value {
     /// A 64-bit floating-point value.
     Float64(f64),
 
+    /// A string value.
+    String(StringHandle),
+
     /// An array value.
     Array(Box<ArrayValue>),
 
@@ -54,12 +57,19 @@ pub enum ValueRef<'a> {
     /// A 64-bit floating-point value.
     Float64(f64),
 
+    /// A string value.
+    String(StringHandle),
+
     /// An array value.
     Array(ArrayValueRef<'a>),
 
     /// An object value.
     Object(ObjectValueRef<'a>),
 }
+
+/// A handle to a string value.
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StringHandle(pub(crate) u32);
 
 /// An array value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,6 +109,7 @@ impl Value {
             Self::Int64(_) => TypeRef::Primitive(Primitive::Int64),
             Self::Float32(_) => TypeRef::Primitive(Primitive::Float32),
             Self::Float64(_) => TypeRef::Primitive(Primitive::Float64),
+            Self::String(_) => TypeRef::String,
             Self::Array(array) => TypeRef::Array(&array.ty),
             Self::Object(object) => TypeRef::Object(&object.ty),
         }
@@ -113,6 +124,7 @@ impl Value {
             Self::Int64(value) => ValueRef::Int64(*value),
             Self::Float32(value) => ValueRef::Float32(*value),
             Self::Float64(value) => ValueRef::Float64(*value),
+            Self::String(value) => ValueRef::String(*value),
             Self::Array(ref array) => ValueRef::Array(array.as_ref().as_ref()),
             Self::Object(object) => ValueRef::Object(object.as_ref().as_ref()),
         }
@@ -144,6 +156,7 @@ impl<'a> ValueRef<'a> {
             TypeRef::Primitive(Primitive::Int64) => Self::Int64(data.get_i64_ne()),
             TypeRef::Primitive(Primitive::Float32) => Self::Float32(data.get_f32_ne()),
             TypeRef::Primitive(Primitive::Float64) => Self::Float64(data.get_f64_ne()),
+            TypeRef::String => Self::String(StringHandle(data.get_u32_ne())),
             TypeRef::Array(array) => Self::Array(ArrayValueRef::new_from_slice(array, data)),
             TypeRef::Object(object) => Self::Object(ObjectValueRef::new_from_slice(object, data)),
         }
@@ -174,6 +187,7 @@ impl<'a> ValueRef<'a> {
             Self::Int64(_) => TypeRef::Primitive(Primitive::Int64),
             Self::Float32(_) => TypeRef::Primitive(Primitive::Float32),
             Self::Float64(_) => TypeRef::Primitive(Primitive::Float64),
+            Self::String(_) => TypeRef::String,
             Self::Array(array) => TypeRef::Array(array.ty),
             Self::Object(object) => TypeRef::Object(object.ty),
         }
@@ -188,6 +202,7 @@ impl<'a> ValueRef<'a> {
             Self::Int64(value) => Value::from(value),
             Self::Float32(value) => Value::from(value),
             Self::Float64(value) => Value::from(value),
+            Self::String(value) => Value::String(value),
             Self::Array(array) => Value::from(array.to_owned()),
             Self::Object(object) => Value::from(object.to_owned()),
         }
@@ -201,6 +216,7 @@ impl<'a> ValueRef<'a> {
             Self::Int64(value) => callback(value.to_ne_bytes().as_slice()),
             Self::Float32(value) => callback(value.to_ne_bytes().as_slice()),
             Self::Float64(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::String(StringHandle(value)) => callback(value.to_ne_bytes().as_slice()),
             Self::Array(array) => callback(array.data),
             Self::Object(object) => callback(object.data),
         }
@@ -588,6 +604,7 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
             Value::Int64(value) => Self::Int64(*value),
             Value::Float32(value) => Self::Float32(*value),
             Value::Float64(value) => Self::Float64(*value),
+            Value::String(value) => Self::String(*value),
             Value::Array(array) => Self::Array(array.as_ref().as_ref()),
             Value::Object(object) => Self::Object(object.as_ref().as_ref()),
         }

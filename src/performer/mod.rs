@@ -17,7 +17,7 @@ use {
             stream::{read_stream, write_stream, StreamType},
             value::{GetOutputValue, SetInputValue},
         },
-        value::ValueRef,
+        value::{StringHandle, ValueRef},
     },
     sealed::sealed,
     std::collections::HashMap,
@@ -28,17 +28,26 @@ pub struct Performer {
     ptr: PerformerPtr,
     endpoints: HashMap<EndpointHandle, EndpointInfo>,
     buffer: Vec<u8>,
+    console: Option<Endpoint<OutputEvent>>,
 }
 
 impl Performer {
     pub(crate) fn new(
         performer: PerformerPtr,
         endpoints: HashMap<EndpointHandle, EndpointInfo>,
+        console: Option<Endpoint<OutputEvent>>,
     ) -> Self {
+        let size_of_largest_type = endpoints
+            .values()
+            .flat_map(|endpoint| endpoint.types().iter().map(|ty| ty.size()).max())
+            .max()
+            .unwrap_or(0);
+
         Performer {
             ptr: performer,
             endpoints,
-            buffer: vec![0; 512],
+            buffer: vec![0; size_of_largest_type],
+            console,
         }
     }
 }
@@ -52,6 +61,15 @@ impl Performer {
     /// Renders the next block of frames.
     pub fn advance(&mut self) {
         self.ptr.advance();
+
+        if let Some(console) = self.console {
+            let _ = fetch_events(self, console, |_, value| match value {
+                ValueRef::String(StringHandle(handle)) => {
+                    println!("{}", self.ptr.get_string_for_handle(handle).unwrap_or("?"));
+                }
+                value => println!("{value:?}"),
+            });
+        }
     }
 
     /// Returns information about a given endpoint.
@@ -92,7 +110,7 @@ impl Performer {
         &mut self,
         endpoint: Endpoint<OutputEvent>,
         callback: impl FnMut(usize, ValueRef<'_>),
-    ) -> Result<usize, EndpointError> {
+    ) -> Result<(), EndpointError> {
         fetch_events(self, endpoint, callback)
     }
 
@@ -125,6 +143,11 @@ impl Performer {
     /// Returns the performers internal latency in frames.
     pub fn get_latency(&self) -> f64 {
         self.ptr.get_latency()
+    }
+
+    /// Returns the string associated with a handle.
+    pub fn get_string(&self, StringHandle(value): StringHandle) -> Option<&str> {
+        self.ptr.get_string_for_handle(value)
     }
 }
 
