@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,8 +13,8 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [linux, macos]
-        cmajor_version: [1.0.2616]
+        os: [ linux, macos ]
+        cmajor_version: [ 1.0.2656 ]
         include:
           - os: linux
             runner: ubuntu-latest
