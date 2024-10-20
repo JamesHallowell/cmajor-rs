@@ -11,7 +11,7 @@ pub struct Program {
 pub enum ParseError {
     /// An error occurred while parsing a program.
     #[error("Error parsing program: {0:?}")]
-    ParserError(DiagnosticMessage),
+    ParserError(Box<DiagnosticMessage>),
 
     /// An error occurred whilst parsing the error from the library.
     #[error(transparent)]
@@ -27,7 +27,7 @@ impl Program {
             Err(error) => {
                 let parser_error: DiagnosticMessage =
                     serde_json::from_str(error.to_string().as_ref())?;
-                Err(ParseError::ParserError(parser_error))
+                Err(ParseError::ParserError(Box::new(parser_error)))
             }
         }
     }

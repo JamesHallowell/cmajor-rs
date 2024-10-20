@@ -1,175 +1,127 @@
 //! The Cmajor performer for running programs.
 
-mod atomic;
 mod endpoints;
 
 pub use endpoints::{
-    input_event::InputEvent,
-    input_value::InputValue,
-    output_value::OutputValue,
+    event::{InputEvent, OutputEvent},
     stream::{InputStream, OutputStream},
+    value::{GetOutputValue, InputValue, OutputValue, SetInputValue},
     Endpoint,
 };
 use {
     crate::{
-        endpoint::{EndpointDirection, EndpointHandle, EndpointType, ProgramEndpoints},
+        endpoint::{EndpointHandle, EndpointInfo},
         ffi::PerformerPtr,
+        performer::endpoints::{
+            event::{fetch_events, post_event},
+            stream::{read_stream, write_stream, StreamType},
+        },
         value::ValueRef,
     },
-    endpoints::input_value::CachedInputValues,
     sealed::sealed,
-    std::sync::Arc,
+    std::collections::HashMap,
 };
 
 /// A Cmajor performer.
-pub struct Performer<Streams = ((), ())> {
-    inner: PerformerPtr,
-    endpoints: Arc<ProgramEndpoints>,
-    inputs: Vec<EndpointHandler>,
-    outputs: Vec<EndpointHandler>,
-    cached_input_values: CachedInputValues,
-    streams: Streams,
+pub struct Performer {
+    ptr: PerformerPtr,
+    endpoints: HashMap<EndpointHandle, EndpointInfo>,
+    buffer: Vec<u8>,
 }
 
-pub(crate) type EndpointHandler = Box<dyn FnMut(&mut PerformerPtr) + Send>;
-
-impl Performer<((), ())> {
-    pub(crate) fn new(performer: PerformerPtr, endpoints: Arc<ProgramEndpoints>) -> Self {
+impl Performer {
+    pub(crate) fn new(
+        performer: PerformerPtr,
+        endpoints: HashMap<EndpointHandle, EndpointInfo>,
+    ) -> Self {
         Performer {
-            inner: performer,
-            endpoints: Arc::clone(&endpoints),
-            inputs: vec![],
-            outputs: vec![],
-            cached_input_values: CachedInputValues::default(),
-            streams: ((), ()),
+            ptr: performer,
+            endpoints,
+            buffer: vec![0; 512],
         }
     }
 }
 
-impl<Streams> Performer<Streams> {
-    /// Returns an endpoint of the performer.
-    pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
-    where
-        T: PerformerEndpoint,
-    {
-        PerformerEndpoint::make(id.as_ref(), self)
-    }
-
-    /// Returns the endpoints of the performer.
-    pub fn endpoints(&self) -> &ProgramEndpoints {
-        &self.endpoints
-    }
-
+impl Performer {
     /// Sets the block size of the performer.
     pub fn set_block_size(&mut self, num_frames: u32) {
-        self.inner.set_block_size(num_frames);
+        self.ptr.set_block_size(num_frames);
     }
 
     /// Renders the next block of frames.
     pub fn advance(&mut self) {
-        let Self {
-            inner,
-            inputs,
-            outputs,
-            ..
-        } = self;
-
-        for input in inputs {
-            input(inner);
-        }
-
-        inner.advance();
-
-        for output in outputs {
-            output(inner);
-        }
+        self.ptr.advance();
     }
 
-    /// Reads the output frames of an endpoint into the given slice.
-    ///
-    /// # Safety
-    ///
-    /// To avoid overhead in the real-time audio thread this function does not perform any checks
-    /// against the inputs and passes them directly to the Cmajor library.
-    ///
-    /// The caller is responsible for ensuring that the type of the endpoint matches the type of the
-    /// given slice.
-    pub unsafe fn read_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &mut [T])
+    /// Returns information about a given endpoint.
+    pub fn endpoint_by_id(&self, id: impl AsRef<str>) -> Option<&EndpointInfo> {
+        let id = id.as_ref();
+        self.endpoints.values().find(|endpoint| endpoint.id() == id)
+    }
+
+    /// Set the value of an endpoint.
+    pub fn set<T>(&mut self, endpoint: Endpoint<InputValue<T>>, value: T) -> T::Output
     where
-        T: Copy,
+        T: SetInputValue,
     {
-        self.inner.copy_output_frames(handle, frames);
+        SetInputValue::set_input_value(self, endpoint, value)
     }
 
-    /// Writes the input frames to an endpoint from the given slice.
-    ///
-    /// # Safety
-    ///
-    /// To avoid overhead in the real-time audio thread this function does not perform any checks
-    /// against the inputs and passes them directly to the Cmajor library.
-    ///
-    /// The caller is responsible for ensuring that the type of the endpoint matches the type of the
-    /// given slice.
-    pub unsafe fn write_stream_unchecked<T>(&mut self, handle: EndpointHandle, frames: &[T])
+    /// Get the value of an endpoint.
+    pub fn get<T>(&mut self, endpoint: Endpoint<OutputValue<T>>) -> T::Output<'_>
     where
-        T: Copy,
+        T: GetOutputValue,
     {
-        self.inner.set_input_frames(handle, frames);
+        T::get_output_value(self, endpoint)
     }
 
-    /// Iterates over the events of an endpoint.
-    pub fn read_events(
+    /// Post an event to an endpoint.
+    pub fn post<'a>(
         &mut self,
-        handle: EndpointHandle,
-        mut callback: impl FnMut(usize, EndpointHandle, ValueRef<'_>),
+        endpoint: Endpoint<InputEvent>,
+        event: impl Into<ValueRef<'a>>,
+    ) -> Result<(), EndpointError> {
+        post_event(self, endpoint, event.into())
+    }
+
+    /// Fetch the events received from an endpoint.
+    pub fn fetch(
+        &mut self,
+        endpoint: Endpoint<OutputEvent>,
+        callback: impl FnMut(usize, ValueRef<'_>),
     ) -> Result<usize, EndpointError> {
-        let endpoint = self
-            .endpoints
-            .get(handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?;
+        fetch_events(self, endpoint, callback)
+    }
 
-        if endpoint.direction() != EndpointDirection::Output {
-            return Err(EndpointError::DirectionMismatch);
-        }
+    /// Read frames from an input stream.
+    pub fn read<T>(&self, endpoint: Endpoint<OutputStream<T>>, buffer: &mut [T])
+    where
+        T: StreamType,
+    {
+        read_stream(self, endpoint, buffer)
+    }
 
-        let endpoint = if let EndpointType::Event(endpoint) = endpoint {
-            endpoint
-        } else {
-            return Err(EndpointError::EndpointTypeMismatch);
-        };
-
-        let mut events = 0;
-        self.inner
-            .iterate_output_events(handle, |frame_offset, handle, type_index, data| {
-                let ty = endpoint.get_type(type_index);
-                debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
-
-                if let Some(ty) = endpoint.get_type(type_index) {
-                    callback(
-                        frame_offset,
-                        handle,
-                        ValueRef::new_from_slice(ty.as_ref(), data),
-                    );
-                    events += 1;
-                }
-            });
-
-        Ok(events)
+    /// Write frames to an output stream.
+    pub fn write<T>(&self, endpoint: Endpoint<InputStream<T>>, buffer: &[T])
+    where
+        T: StreamType,
+    {
+        write_stream(self, endpoint, buffer)
     }
 
     /// Returns the number of times the performer has over/under-run.
     pub fn get_xruns(&self) -> usize {
-        self.inner.get_xruns()
+        self.ptr.get_xruns()
     }
 
     /// Returns the maximum number of frames that can be processed in a single call to `advance`.
     pub fn get_max_block_size(&self) -> u32 {
-        self.inner.get_max_block_size()
+        self.ptr.get_max_block_size()
     }
 
     /// Returns the performers internal latency in frames.
     pub fn get_latency(&self) -> f64 {
-        self.inner.get_latency()
+        self.ptr.get_latency()
     }
 }
 
@@ -191,18 +143,14 @@ pub enum EndpointError {
     /// The data type does not match the expected type.
     #[error("data type mismatch")]
     DataTypeMismatch,
-
-    /// Failed to send a message to the performer.
-    #[error("failed to send message to performer")]
-    FailedToSendMessageToPerformer,
 }
 
 #[doc(hidden)]
 #[sealed(pub(crate))]
 pub trait PerformerEndpoint {
-    fn make<Streams>(
-        id: &str,
-        performer: &mut Performer<Streams>,
+    fn make(
+        handle: EndpointHandle,
+        endpoint: EndpointInfo,
     ) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized;

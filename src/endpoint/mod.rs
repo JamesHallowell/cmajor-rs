@@ -6,7 +6,7 @@ use {
         value::types::{Type, TypeRef},
     },
     serde::{Deserialize, Serialize},
-    std::{borrow::Borrow, collections::HashMap},
+    std::borrow::Borrow,
 };
 
 /// An endpoint identifier.
@@ -48,8 +48,8 @@ impl From<EndpointHandle> for u32 {
 }
 
 /// An endpoint.
-#[derive(Debug)]
-pub enum EndpointType {
+#[derive(Debug, Clone)]
+pub enum EndpointInfo {
     /// A stream endpoint.
     Stream(StreamEndpoint),
 
@@ -71,7 +71,7 @@ pub enum EndpointDirection {
 }
 
 /// A stream endpoint.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StreamEndpoint {
     id: EndpointId,
     direction: EndpointDirection,
@@ -79,14 +79,14 @@ pub struct StreamEndpoint {
     annotation: Annotation,
 }
 
-impl From<StreamEndpoint> for EndpointType {
+impl From<StreamEndpoint> for EndpointInfo {
     fn from(endpoint: StreamEndpoint) -> Self {
         Self::Stream(endpoint)
     }
 }
 
 /// An event endpoint.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EventEndpoint {
     id: EndpointId,
     direction: EndpointDirection,
@@ -94,14 +94,14 @@ pub struct EventEndpoint {
     annotation: Annotation,
 }
 
-impl From<EventEndpoint> for EndpointType {
+impl From<EventEndpoint> for EndpointInfo {
     fn from(endpoint: EventEndpoint) -> Self {
         Self::Event(endpoint)
     }
 }
 
 /// A value endpoint.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValueEndpoint {
     id: EndpointId,
     direction: EndpointDirection,
@@ -109,13 +109,13 @@ pub struct ValueEndpoint {
     annotation: Annotation,
 }
 
-impl From<ValueEndpoint> for EndpointType {
+impl From<ValueEndpoint> for EndpointInfo {
     fn from(endpoint: ValueEndpoint) -> Self {
         Self::Value(endpoint)
     }
 }
 
-impl EndpointType {
+impl EndpointInfo {
     /// The endpoint's identifier (or name).
     pub fn id(&self) -> &EndpointId {
         match self {
@@ -303,56 +303,5 @@ impl From<usize> for EndpointTypeIndex {
 impl From<EndpointTypeIndex> for usize {
     fn from(index: EndpointTypeIndex) -> Self {
         index.0
-    }
-}
-
-/// A collection of endpoints.
-#[derive(Debug)]
-pub struct ProgramEndpoints {
-    endpoints: HashMap<EndpointHandle, EndpointType>,
-    ids: HashMap<EndpointId, EndpointHandle>,
-}
-
-impl ProgramEndpoints {
-    pub(crate) fn new(endpoints: impl IntoIterator<Item = (EndpointHandle, EndpointType)>) -> Self {
-        let endpoints: HashMap<_, _> = endpoints.into_iter().collect();
-        let ids = endpoints
-            .iter()
-            .map(|(handle, endpoint)| (endpoint.id().clone(), *handle))
-            .collect();
-
-        Self { endpoints, ids }
-    }
-
-    /// Get an iterator over the input endpoints.
-    pub fn inputs(&self) -> impl Iterator<Item = &EndpointType> {
-        self.endpoints
-            .values()
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Input)
-    }
-
-    /// Get an interator over the output endpoints.
-    pub fn outputs(&self) -> impl Iterator<Item = &EndpointType> {
-        self.endpoints
-            .values()
-            .filter(|endpoint| endpoint.direction() == EndpointDirection::Output)
-    }
-
-    /// Get an endpoint by its handle.
-    pub fn get(&self, handle: EndpointHandle) -> Option<&EndpointType> {
-        self.endpoints.get(&handle)
-    }
-
-    /// Get an endpoint by its ID.
-    pub fn get_by_id(&self, id: impl AsRef<str>) -> Option<(EndpointHandle, &EndpointType)> {
-        let handle = self.ids.get(id.as_ref()).copied()?;
-        self.endpoints
-            .get(&handle)
-            .map(|endpoint| (handle, endpoint))
-    }
-
-    /// Get an endpoint's handle by its ID.
-    pub fn get_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
-        self.ids.get(id.as_ref()).copied()
     }
 }

@@ -6,17 +6,16 @@ mod program_details;
 
 use {
     crate::{
-        endpoint::{EndpointHandle, ProgramEndpoints},
+        endpoint::{EndpointHandle, EndpointInfo},
         ffi::EnginePtr,
-        performer::Performer,
+        performer::{Endpoint, EndpointError, Performer, PerformerEndpoint},
         program::Program,
     },
-    serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue},
     std::{
         borrow::Cow,
+        collections::HashMap,
         ffi::{CStr, CString},
         slice::Split,
-        sync::Arc,
     },
 };
 pub use {annotation::Annotation, externals::Externals, program_details::ProgramDetails};
@@ -75,31 +74,33 @@ impl std::fmt::Debug for EngineType {
 
 /// A builder for a [`Engine`].
 pub struct EngineBuilder {
-    pub(crate) build_settings: JsonMap<String, JsonValue>,
+    pub(crate) sample_rate: f64,
     pub(crate) engine: Engine<Idle>,
 }
 
 impl EngineBuilder {
     /// Set the sample rate (in Hertz) to use.
-    pub fn with_sample_rate(mut self, sample_rate: impl Into<JsonNumber>) -> Self {
-        self.build_settings.insert(
-            "frequency".to_string(),
-            JsonValue::Number(sample_rate.into()),
-        );
+    pub fn with_sample_rate(mut self, sample_rate: f64) -> Self {
+        self.sample_rate = sample_rate;
         self
     }
 
     /// Build the engine.
     pub fn build(self) -> Engine {
         let Self {
-            build_settings,
+            sample_rate,
             engine,
         } = self;
 
-        let build_settings =
-            serde_json::to_string(&JsonValue::Object(build_settings)).expect("valid json");
-        let build_settings =
-            CString::new(build_settings).expect("failed to convert build settings JSON to CString");
+        let build_settings = CString::new(
+            serde_json::json!(
+                {
+                    "frequency": sample_rate
+                }
+            )
+            .to_string(),
+        )
+        .expect("failed to convert build settings to C string");
 
         engine.inner.set_build_settings(build_settings.as_c_str());
         engine
@@ -131,12 +132,15 @@ pub struct Idle;
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct Loaded;
+pub struct Loaded {
+    program_details: ProgramDetails,
+    endpoints: HashMap<EndpointHandle, EndpointInfo>,
+}
 
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
-    endpoints: Arc<ProgramEndpoints>,
+    endpoints: HashMap<EndpointHandle, EndpointInfo>,
 }
 
 impl Engine<Idle> {
@@ -159,56 +163,66 @@ impl Engine<Idle> {
         externals: Externals,
     ) -> Result<Engine<Loaded>, Error> {
         match self.inner.load(&program.inner, externals) {
-            Ok(_) => Ok(Engine {
-                inner: self.inner,
-                _state: Loaded,
-            }),
+            Ok(_) => {
+                let program_details = self
+                    .inner
+                    .program_details()
+                    .expect("failed to get program details");
+
+                let program_details = program_details.to_string();
+                let program_details = serde_json::from_str(program_details.as_ref())
+                    .expect("failed to parse program details");
+
+                Ok(Engine {
+                    inner: self.inner,
+                    _state: Loaded {
+                        program_details,
+                        endpoints: HashMap::default(),
+                    },
+                })
+            }
             Err(error) => Err(Error::FailedToLoad(self, error.to_string().into_owned())),
         }
     }
 }
 
 impl Engine<Loaded> {
-    fn get_endpoint_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
-        let id = CString::new(id.as_ref()).ok()?;
+    /// Returns an endpoint handle.
+    pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
+    where
+        T: PerformerEndpoint,
+    {
+        let id = id.as_ref();
 
-        self.inner.get_endpoint_handle(id.as_c_str())
+        let info = self
+            ._state
+            .program_details
+            .endpoints()
+            .find(|endpoint| endpoint.id() == id)
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        let id = CString::new(id).expect("invalid endpoint id");
+        let handle = self
+            .inner
+            .get_endpoint_handle(id.as_c_str())
+            .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        self._state.endpoints.insert(handle, info.clone());
+
+        PerformerEndpoint::make(handle, info)
     }
 
     /// Returns the details of the program loaded into the engine.
-    pub fn program_details(&self) -> Result<ProgramDetails, serde_json::Error> {
-        let program_details = self
-            .inner
-            .program_details()
-            .expect("failed to get program details");
-
-        let program_details = program_details.to_string();
-        serde_json::from_str(program_details.as_ref())
+    pub fn program_details(&self) -> &ProgramDetails {
+        &self._state.program_details
     }
 
     /// Link the program loaded into the engine.
     pub fn link(self) -> Result<Engine<Linked>, Error> {
-        let program_details = match self.program_details() {
-            Ok(program_details) => program_details,
-            Err(error) => {
-                return Err(Error::FailedToLink(
-                    self,
-                    format!("failed to get program details: {}", error),
-                ))
-            }
-        };
-
-        let endpoints = program_details.endpoints().filter_map(|endpoint| {
-            self.get_endpoint_handle(endpoint.id())
-                .map(|handle| (handle, endpoint))
-        });
-
-        let endpoints = ProgramEndpoints::new(endpoints);
-
         match self.inner.link() {
             Ok(_) => {
                 let linked = Linked {
-                    endpoints: Arc::new(endpoints),
+                    endpoints: self._state.endpoints,
                 };
                 Ok(Engine {
                     inner: self.inner,
@@ -223,10 +237,7 @@ impl Engine<Loaded> {
 impl Engine<Linked> {
     /// Create a performer for the linked program.
     pub fn performer(&self) -> Performer {
-        Performer::new(
-            self.inner.create_performer(),
-            Arc::clone(&self._state.endpoints),
-        )
+        Performer::new(self.inner.create_performer(), self._state.endpoints.clone())
     }
 }
 
