@@ -143,6 +143,15 @@ impl EndpointInfo {
         }
     }
 
+    /// Get the endpoints type or types.
+    pub fn types(&self) -> &[Type] {
+        match self {
+            Self::Stream(endpoint) => std::slice::from_ref(&endpoint.ty),
+            Self::Event(endpoint) => &endpoint.ty,
+            Self::Value(endpoint) => std::slice::from_ref(&endpoint.ty),
+        }
+    }
+
     /// Get the endpoint as a value endpoint.
     pub fn as_stream(&self) -> Option<&StreamEndpoint> {
         match self {

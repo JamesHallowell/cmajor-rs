@@ -64,9 +64,6 @@ pub(crate) enum TypeDescriptionError {
     #[error(transparent)]
     InvalidJson(#[from] json::Error),
 
-    #[error("unsupported type: {0:?}")]
-    UnsupportedType(String),
-
     #[error("struct has no class")]
     StructHasNoClass,
 
@@ -124,7 +121,7 @@ impl TryFrom<&TypeDescription> for Type {
 
                 Ok(Array::new(element_ty, size).into())
             }
-            ty => Err(TypeDescriptionError::UnsupportedType(format!("{:?}", ty))),
+            TypeTag::String => Ok(Type::String),
         }
     }
 }

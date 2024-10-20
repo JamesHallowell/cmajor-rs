@@ -192,6 +192,21 @@ impl PerformerPtr {
     pub fn get_latency(&self) -> f64 {
         unsafe { ((*(*self.performer).vtable).get_latency)(self.performer) }
     }
+
+    pub fn get_string_for_handle(&self, handle: u32) -> Option<&str> {
+        let mut length: isize = 0;
+        let ptr = unsafe {
+            ((*(*self.performer).vtable).get_string_for_handle)(self.performer, handle, &mut length)
+        };
+
+        if ptr.is_null() {
+            return None;
+        }
+
+        let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), length as usize) };
+
+        std::str::from_utf8(slice).ok()
+    }
 }
 
 impl Drop for PerformerPtr {
