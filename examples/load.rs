@@ -18,3 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[no_mangle]
+fn sinf(x: f32) -> f32 {
+    x.sin()
+}
