@@ -42,7 +42,7 @@ jobs:
       - name: Repro issue
         run: |
           curl -sSL https://raw.githubusercontent.com/cmajor-lang/cmajor/refs/heads/main/examples/patches/SineSynth/SineSynth.cmajor > SineSynth.cmajor
-          cargo run --example load -- SineSynth.cmajor
+          cargo run --example load -- Repro.cmajor
 
   check-format:
     runs-on: ubuntu-latest

@@ -1,0 +1,12 @@
+processor Repro
+{
+    output value float x;
+
+    void main()
+    {
+        loop {
+            x <- 2.0f ** 3.0f;
+            advance();
+        }
+    }
+}
