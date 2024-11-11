@@ -17,7 +17,7 @@ sealed = "0.6.0"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = { version = "1.0.107", features = ["preserve_order"] }
 smallvec = { version = "1.11.1", features = ["serde"] }
-thiserror = "1.0.48"
+thiserror = "2.0.3"
 
 [dev-dependencies]
 cpal = "0.15.2"
