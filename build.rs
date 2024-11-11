@@ -84,4 +84,8 @@ mod static_linkage {
 fn main() {
     #[cfg(feature = "static")]
     static_linkage::link_cmajor();
+
+    if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    }
 }
