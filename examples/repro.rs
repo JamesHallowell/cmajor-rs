@@ -26,3 +26,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[no_mangle]
+pub extern "C" fn powf(x: f32, y: f32) -> f32 {
+    x.powf(y)
+}
