@@ -39,29 +39,11 @@ impl Library {
     pub fn load(path_to_library: impl AsRef<Path>) -> Result<Self, libloading::Error> {
         const LIBRARY_ENTRY_POINT: &[u8] = b"cmajor_getEntryPointsV10";
 
-        #[cfg(target_os = "linux")]
-        let entry_points = {
-            let library = unsafe {
-                libloading::os::unix::Library::open(
-                    Some(path_to_library.as_ref()),
-                    libloading::os::unix::RTLD_LAZY | libloading::os::unix::RTLD_GLOBAL,
-                )?
-            };
+        let library = unsafe { libloading::Library::new(path_to_library.as_ref()) }?;
+        let entry_point_fn: libloading::Symbol<CMajorGetEntryPointsV10> =
+            unsafe { library.get(LIBRARY_ENTRY_POINT)? };
 
-            let entry_point_fn: libloading::os::unix::Symbol<CMajorGetEntryPointsV10> =
-                unsafe { library.get(LIBRARY_ENTRY_POINT)? };
-
-            unsafe { entry_point_fn() }.cast()
-        };
-
-        #[cfg(not(target_os = "linux"))]
-        let entry_points = {
-            let library = unsafe { libloading::Library::new(path_to_library.as_ref()) }?;
-            let entry_point_fn: libloading::Symbol<CMajorGetEntryPointsV10> =
-                unsafe { library.get(LIBRARY_ENTRY_POINT)? };
-
-            unsafe { entry_point_fn() }.cast()
-        };
+        let entry_points = unsafe { entry_point_fn() }.cast();
 
         Ok(Self { entry_points })
     }

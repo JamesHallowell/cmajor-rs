@@ -84,4 +84,10 @@ mod static_linkage {
 fn main() {
     #[cfg(feature = "static")]
     static_linkage::link_cmajor();
+
+    #[cfg(all(not(feature = "static"), target_os = "linux"))]
+    {
+        println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
+        println!("cargo:rustc-link-arg=-lm");
+    }
 }
