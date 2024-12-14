@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cmajor = "0.6"
+cmajor = "0.7"
 ```
 
 You will also need to [download the Cmajor library](https://github.com/cmajor-lang/cmajor/releases) and tell the crate
