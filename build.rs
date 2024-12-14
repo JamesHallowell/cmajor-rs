@@ -81,7 +81,18 @@ mod static_linkage {
     }
 }
 
+fn link_math_lib() {
+    if cfg!(target_os = "linux") {
+        // see https://github.com/cmajor-lang/cmajor/issues/84
+        println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
+        println!("cargo:rustc-link-arg=-lm");
+    }
+}
+
 fn main() {
     #[cfg(feature = "static")]
     static_linkage::link_cmajor();
+
+    #[cfg(not(feature = "static"))]
+    link_math_lib();
 }
