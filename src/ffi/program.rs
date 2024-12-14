@@ -1,7 +1,7 @@
 use {
     crate::ffi::string::{CmajorString, CmajorStringPtr},
     std::{
-        ffi::{c_char, c_int, CStr},
+        ffi::{c_char, c_int, CString},
         ptr::null,
     },
 };
@@ -36,36 +36,46 @@ pub struct Program {
 
 #[derive(Debug)]
 pub struct ProgramPtr {
-    program: *mut Program,
+    ptr: *mut Program,
 }
 
 impl ProgramPtr {
-    pub unsafe fn new(program: *mut Program) -> Self {
-        Self { program }
+    pub(super) unsafe fn new(program: *mut Program) -> Self {
+        Self { ptr: program }
+    }
+
+    fn vtable(&self) -> &ProgramVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|program| program.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
     }
 
     pub fn get(&self) -> *mut Program {
-        self.program
+        self.ptr
     }
 
     pub fn parse(
         &self,
-        file_name: Option<&CStr>,
+        file_name: Option<impl AsRef<str>>,
         file_content: impl AsRef<str>,
     ) -> Result<(), CmajorStringPtr> {
-        let file_name = file_name.map(CStr::as_ptr).unwrap_or(null());
+        let file_name = file_name.map(|file_name| {
+            CString::new(file_name.as_ref()).expect("string should not contain a null byte")
+        });
+        let file_name = file_name
+            .as_ref()
+            .map(|file_name| file_name.as_ptr())
+            .unwrap_or(null());
 
-        let file_content_len = file_content.as_ref().len() as isize;
-        let file_content = file_content.as_ref().as_ptr().cast();
+        let file_content = file_content.as_ref();
+        let file_content_len = file_content.len() as isize;
+        let file_content = file_content.as_ptr().cast();
 
-        let error = unsafe {
-            ((*(*self.program).vtable).parse)(
-                self.program,
-                file_name,
-                file_content,
-                file_content_len,
-            )
-        };
+        let error =
+            unsafe { (self.vtable().parse)(self.ptr, file_name, file_content, file_content_len) };
 
         if error.is_null() {
             return Ok(());
@@ -77,6 +87,6 @@ impl ProgramPtr {
 
 impl Drop for ProgramPtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.program).vtable).release)(self.program) };
+        unsafe { (self.vtable().release)(self.ptr) };
     }
 }

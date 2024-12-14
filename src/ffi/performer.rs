@@ -47,17 +47,26 @@ pub struct Performer {
 unsafe impl Send for PerformerPtr {}
 
 pub struct PerformerPtr {
-    performer: *mut Performer,
+    ptr: *mut Performer,
 }
 
 impl PerformerPtr {
     pub unsafe fn new(performer: *mut Performer) -> Self {
         assert_ne!(performer, null_mut());
-        Self { performer }
+        Self { ptr: performer }
+    }
+
+    fn vtable(&self) -> &PerformerVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|performer| performer.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
     }
 
     pub fn set_block_size(&self, block_size: u32) {
-        unsafe { ((*(*self.performer).vtable).set_block_size)(self.performer, block_size) };
+        unsafe { (self.vtable().set_block_size)(self.ptr, block_size) };
     }
 
     pub unsafe fn set_input_value<T>(
@@ -67,14 +76,10 @@ impl PerformerPtr {
         num_frames_to_reach_value: u32,
     ) {
         let value = value.cast();
+        let handle = handle.into();
 
         unsafe {
-            ((*(*self.performer).vtable).set_input_value)(
-                self.performer,
-                handle.into(),
-                value,
-                num_frames_to_reach_value,
-            )
+            (self.vtable().set_input_value)(self.ptr, handle, value, num_frames_to_reach_value)
         };
     }
 
@@ -85,19 +90,14 @@ impl PerformerPtr {
         data: &[u8],
     ) {
         let data_ptr = data.as_ptr().cast();
+        let handle = handle.into();
+        let type_index = usize::from(type_index) as u32;
 
-        unsafe {
-            ((*(*self.performer).vtable).add_input_event)(
-                self.performer,
-                handle.into(),
-                usize::from(type_index) as u32,
-                data_ptr,
-            )
-        };
+        unsafe { (self.vtable().add_input_event)(self.ptr, handle, type_index, data_ptr) };
     }
 
     pub fn advance(&self) {
-        unsafe { ((*(*self.performer).vtable).advance)(self.performer) };
+        unsafe { (self.vtable().advance)(self.ptr) };
         check_for_panic();
     }
 
@@ -105,38 +105,29 @@ impl PerformerPtr {
     where
         T: Copy,
     {
+        let handle = handle.into();
         let num_frames = frames.len() as u32;
         let frames = frames.as_ptr().cast();
 
-        ((*(*self.performer).vtable).set_input_frames)(
-            self.performer,
-            handle.into(),
-            frames,
-            num_frames,
-        );
+        (self.vtable().set_input_frames)(self.ptr, handle, frames, num_frames);
     }
 
     pub unsafe fn copy_output_frames<T>(&self, handle: EndpointHandle, frames: &mut [T])
     where
         T: Copy,
     {
+        let handle = handle.into();
         let num_frames = frames.len() as u32;
         let frames = frames.as_mut_ptr().cast();
 
-        ((*(*self.performer).vtable).copy_output_frames)(
-            self.performer,
-            handle.into(),
-            frames,
-            num_frames,
-        );
+        (self.vtable().copy_output_frames)(self.ptr, handle, frames, num_frames);
     }
 
     pub fn copy_output_value(&self, handle: EndpointHandle, buffer: &mut [u8]) {
+        let handle = handle.into();
         let buffer = buffer.as_mut_ptr().cast();
 
-        unsafe {
-            ((*(*self.performer).vtable).copy_output_value)(self.performer, handle.into(), buffer)
-        };
+        unsafe { (self.vtable().copy_output_value)(self.ptr, handle, buffer) };
     }
 
     pub fn iterate_output_events<F>(&self, endpoint: EndpointHandle, mut callback: F)
@@ -172,8 +163,8 @@ impl PerformerPtr {
         let callback = std::ptr::addr_of_mut!(callback).cast();
 
         unsafe {
-            ((*(*self.performer).vtable).iterate_output_events)(
-                self.performer,
+            (self.vtable().iterate_output_events)(
+                self.ptr,
                 endpoint.into(),
                 callback,
                 trampoline::<F>,
@@ -182,22 +173,20 @@ impl PerformerPtr {
     }
 
     pub fn get_xruns(&self) -> usize {
-        unsafe { ((*(*self.performer).vtable).get_xruns)(self.performer) as usize }
+        unsafe { (self.vtable().get_xruns)(self.ptr) as usize }
     }
 
     pub fn get_max_block_size(&self) -> u32 {
-        unsafe { ((*(*self.performer).vtable).get_max_block_size)(self.performer) }
+        unsafe { (self.vtable().get_max_block_size)(self.ptr) }
     }
 
     pub fn get_latency(&self) -> f64 {
-        unsafe { ((*(*self.performer).vtable).get_latency)(self.performer) }
+        unsafe { (self.vtable().get_latency)(self.ptr) }
     }
 
     pub fn get_string_for_handle(&self, handle: u32) -> Option<&str> {
         let mut length: isize = 0;
-        let ptr = unsafe {
-            ((*(*self.performer).vtable).get_string_for_handle)(self.performer, handle, &mut length)
-        };
+        let ptr = unsafe { (self.vtable().get_string_for_handle)(self.ptr, handle, &mut length) };
 
         if ptr.is_null() {
             return None;
@@ -211,6 +200,6 @@ impl PerformerPtr {
 
 impl Drop for PerformerPtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.performer).vtable).release)(self.performer) };
+        unsafe { (self.vtable().release)(self.ptr) };
     }
 }

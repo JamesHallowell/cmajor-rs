@@ -1,7 +1,7 @@
 use std::{
-    borrow::Cow,
     ffi::{c_char, c_int},
     ptr::null_mut,
+    slice, str,
 };
 
 #[repr(C)]
@@ -14,35 +14,43 @@ struct CmajorStringVTable {
 }
 
 #[repr(C)]
-pub struct CmajorString {
+pub(super) struct CmajorString {
     vtable: *const CmajorStringVTable,
 }
 
 pub struct CmajorStringPtr {
-    string: *mut CmajorString,
+    ptr: *mut CmajorString,
 }
 
 impl Drop for CmajorStringPtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.string).vtable).release)(self.string) };
+        unsafe { (self.vtable().release)(self.ptr) };
     }
 }
 
 impl CmajorStringPtr {
-    pub unsafe fn new(string: *mut CmajorString) -> Self {
+    pub(super) unsafe fn new(string: *mut CmajorString) -> Self {
         assert_ne!(string, null_mut());
-        Self { string }
+        Self { ptr: string }
     }
 
-    pub fn to_string(&self) -> Cow<'_, str> {
-        let begin = unsafe { ((*(*self.string).vtable).begin)(self.string) };
-        let end = unsafe { ((*(*self.string).vtable).end)(self.string) };
+    fn vtable(&self) -> &CmajorStringVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|string| string.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
+    }
 
-        let len = unsafe { end.offset_from(begin) };
-        assert!(len >= 0);
+    pub fn to_str(&self) -> &str {
+        let begin = unsafe { (self.vtable().begin)(self.ptr) };
+        let end = unsafe { (self.vtable().end)(self.ptr) };
+        let length: usize = unsafe { end.offset_from(begin) }
+            .try_into()
+            .expect("length should not be negative");
 
-        let slice = unsafe { std::slice::from_raw_parts(begin.cast(), len as usize) };
-
-        String::from_utf8_lossy(slice)
+        let slice = unsafe { slice::from_raw_parts(begin.cast(), length) };
+        str::from_utf8(slice).expect("string should be valid utf-8")
     }
 }

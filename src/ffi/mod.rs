@@ -19,7 +19,7 @@ pub(crate) mod types;
 pub use {engine::EnginePtr, performer::PerformerPtr, program::ProgramPtr};
 
 pub struct Library {
-    entry_points: *mut EntryPoints,
+    ptr: *mut EntryPoints,
 }
 
 type CMajorGetEntryPointsV10 = unsafe extern "C" fn() -> *mut c_void;
@@ -32,8 +32,18 @@ extern "C" {
 impl Library {
     #[cfg(feature = "static")]
     pub fn new() -> Self {
-        let entry_points = unsafe { cmajor_getEntryPointsStatic() }.cast();
-        Self { entry_points }
+        Self {
+            ptr: unsafe { cmajor_getEntryPointsStatic() }.cast(),
+        }
+    }
+
+    fn vtable(&self) -> &EntryPointsVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|library| library.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
     }
 
     pub fn load(path_to_library: impl AsRef<Path>) -> Result<Self, libloading::Error> {
@@ -43,39 +53,37 @@ impl Library {
         let entry_point_fn: libloading::Symbol<CMajorGetEntryPointsV10> =
             unsafe { library.get(LIBRARY_ENTRY_POINT)? };
 
-        let entry_points = unsafe { entry_point_fn() }.cast();
-
-        Ok(Self { entry_points })
+        Ok(Self {
+            ptr: unsafe { entry_point_fn() }.cast(),
+        })
     }
 
     pub fn version(&self) -> &CStr {
-        let vtable = unsafe { (*self.entry_points).vtable };
-        let version = unsafe { ((*vtable).get_version)(self.entry_points) };
+        let version = unsafe { (self.vtable().get_version)(self.ptr) };
         unsafe { CStr::from_ptr(version) }
     }
 
     pub fn engine_types(&self) -> &CStr {
-        let vtable = unsafe { (*self.entry_points).vtable };
-        let engine_types = unsafe { ((*vtable).get_engine_types)(self.entry_points) };
+        let engine_types = unsafe { (self.vtable().get_engine_types)(self.ptr) };
         unsafe { CStr::from_ptr(engine_types) }
     }
 
     pub fn create_program(&self) -> ProgramPtr {
         unsafe {
-            let vtable = (*self.entry_points).vtable;
-            let program = ((*vtable).create_program)(self.entry_points);
+            let program = (self.vtable().create_program)(self.ptr);
             ProgramPtr::new(program)
         }
     }
 
     pub fn create_engine_factory(&self, engine_type: &CStr) -> Option<EngineFactoryPtr> {
-        unsafe {
-            let vtable = (*self.entry_points).vtable;
-            let engine_factory =
-                ((*vtable).create_engine_factory)(self.entry_points, engine_type.as_ptr());
+        let engine_factory =
+            unsafe { (self.vtable().create_engine_factory)(self.ptr, engine_type.as_ptr()) };
 
-            (!engine_factory.is_null()).then(|| EngineFactoryPtr::new(engine_factory))
+        if engine_factory.is_null() {
+            return None;
         }
+
+        Some(EngineFactoryPtr::new(engine_factory))
     }
 }
 

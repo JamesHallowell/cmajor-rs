@@ -20,23 +20,36 @@ pub struct EngineFactory {
     vtable: *const EngineFactoryVTable,
 }
 
-pub struct EngineFactoryPtr(*mut EngineFactory);
+pub struct EngineFactoryPtr {
+    ptr: *mut EngineFactory,
+}
 
 impl EngineFactoryPtr {
     pub fn new(engine_factory: *mut EngineFactory) -> Self {
-        Self(engine_factory)
+        Self {
+            ptr: engine_factory,
+        }
+    }
+
+    fn vtable(&self) -> &EngineFactoryVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|engine_factory| engine_factory.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
     }
 
     pub fn create_engine(&self, options: Option<&CStr>) -> EnginePtr {
         let options = options.map(CStr::as_ptr).unwrap_or(null());
 
-        let engine = unsafe { ((*(*self.0).vtable).create_engine)(self.0, options) };
+        let engine = unsafe { (self.vtable().create_engine)(self.ptr, options) };
         EnginePtr::new(engine.cast())
     }
 }
 
 impl Drop for EngineFactoryPtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.0).vtable).release)(self.0) };
+        unsafe { (self.vtable().release)(self.ptr) };
     }
 }
