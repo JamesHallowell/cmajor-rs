@@ -20,13 +20,12 @@ pub enum ParseError {
 
 impl Program {
     pub(crate) fn parse(&mut self, program: impl AsRef<str>) -> Result<(), ParseError> {
-        let result = self.inner.parse(None, program.as_ref());
+        let file_name: Option<&str> = None;
 
-        match result {
+        match self.inner.parse(file_name, program) {
             Ok(()) => Ok(()),
             Err(error) => {
-                let parser_error: DiagnosticMessage =
-                    serde_json::from_str(error.to_string().as_ref())?;
+                let parser_error = serde_json::from_str(error.to_str())?;
                 Err(ParseError::ParserError(Box::new(parser_error)))
             }
         }

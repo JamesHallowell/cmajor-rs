@@ -64,18 +64,25 @@ pub struct Engine {
 
 #[derive(Debug)]
 pub struct EnginePtr {
-    engine: *mut Engine,
+    ptr: *mut Engine,
 }
 
 impl EnginePtr {
     pub fn new(engine: *mut Engine) -> Self {
-        Self { engine }
+        Self { ptr: engine }
+    }
+
+    fn vtable(&self) -> &EngineVTable {
+        unsafe {
+            self.ptr
+                .as_ref()
+                .and_then(|engine| engine.vtable.as_ref())
+                .expect("failed to get vtable")
+        }
     }
 
     pub fn set_build_settings(&self, build_settings: &CStr) {
-        unsafe {
-            ((*(*self.engine).vtable).set_build_settings)(self.engine, build_settings.as_ptr())
-        };
+        unsafe { (self.vtable().set_build_settings)(self.ptr, build_settings.as_ptr()) };
     }
 
     pub fn load(&self, program: &ProgramPtr, externals: Externals) -> Result<(), CmajorStringPtr> {
@@ -86,8 +93,8 @@ impl EnginePtr {
         let ctx_ptr = std::ptr::addr_of_mut!(ctx);
 
         let error = unsafe {
-            ((*(*self.engine).vtable).load)(
-                self.engine,
+            (self.vtable().load)(
+                self.ptr,
                 program.get(),
                 ctx_ptr.cast(),
                 request_external_variable_callback,
@@ -104,23 +111,22 @@ impl EnginePtr {
     }
 
     pub fn unload(&self) {
-        unsafe { ((*(*self.engine).vtable).unload)(self.engine) };
+        unsafe { (self.vtable().unload)(self.ptr) };
     }
 
     pub fn program_details(&self) -> Option<CmajorStringPtr> {
-        let result = unsafe { ((*(*self.engine).vtable).get_program_details)(self.engine) };
-
-        if !result.is_null() {
-            Some(unsafe { CmajorStringPtr::new(result) })
-        } else {
-            None
+        let result = unsafe { (self.vtable().get_program_details)(self.ptr) };
+        if result.is_null() {
+            return None;
         }
+
+        Some(unsafe { CmajorStringPtr::new(result) })
     }
 
-    pub fn get_endpoint_handle(&self, id: &CStr) -> Option<EndpointHandle> {
-        let handle =
-            unsafe { ((*(*self.engine).vtable).get_endpoint_handle)(self.engine, id.as_ptr()) };
+    pub fn get_endpoint_handle(&self, id: impl AsRef<str>) -> Option<EndpointHandle> {
+        let id = CString::new(id.as_ref()).expect("should not contain a null byte");
 
+        let handle = unsafe { (self.vtable().get_endpoint_handle)(self.ptr, id.as_ptr()) };
         if handle != 0 {
             Some(handle.into())
         } else {
@@ -130,7 +136,7 @@ impl EnginePtr {
 
     pub fn link(&self) -> Result<(), CmajorStringPtr> {
         let cache_database = null_mut();
-        let error = unsafe { ((*(*self.engine).vtable).link)(self.engine, cache_database) };
+        let error = unsafe { (self.vtable().link)(self.ptr, cache_database) };
 
         if error.is_null() {
             Ok(())
@@ -140,7 +146,7 @@ impl EnginePtr {
     }
 
     pub fn create_performer(&self) -> PerformerPtr {
-        let performer = unsafe { ((*(*self.engine).vtable).create_performer)(self.engine) };
+        let performer = unsafe { (self.vtable().create_performer)(self.ptr) };
         unsafe { PerformerPtr::new(performer) }
     }
 
@@ -154,8 +160,8 @@ impl EnginePtr {
         let serialised = value.serialise_as_choc_value();
 
         unsafe {
-            ((*(*self.engine).vtable).set_external_variable)(
-                self.engine,
+            (self.vtable().set_external_variable)(
+                self.ptr,
                 name.as_ptr(),
                 serialised.as_ptr().cast(),
                 serialised.len() as isize,
@@ -166,16 +172,14 @@ impl EnginePtr {
 
 impl Clone for EnginePtr {
     fn clone(&self) -> Self {
-        unsafe { ((*(*self.engine).vtable).add_ref)(self.engine) };
-        Self {
-            engine: self.engine,
-        }
+        unsafe { (self.vtable().add_ref)(self.ptr) };
+        Self { ptr: self.ptr }
     }
 }
 
 impl Drop for EnginePtr {
     fn drop(&mut self) {
-        unsafe { ((*(*self.engine).vtable).release)(self.engine) };
+        unsafe { (self.vtable().release)(self.ptr) };
     }
 }
 

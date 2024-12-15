@@ -171,8 +171,7 @@ impl Engine<Idle> {
                     .program_details()
                     .expect("failed to get program details");
 
-                let program_details = program_details.to_string();
-                let program_details = serde_json::from_str(program_details.as_ref())
+                let program_details = serde_json::from_str(program_details.to_str())
                     .expect("failed to parse program details");
 
                 let mut loaded = Engine {
@@ -186,7 +185,7 @@ impl Engine<Idle> {
                 loaded.state.console = loaded.endpoint("console").ok();
                 Ok(loaded)
             }
-            Err(error) => Err(Error::FailedToLoad(self, error.to_string().into_owned())),
+            Err(error) => Err(Error::FailedToLoad(self, error.to_str().to_owned())),
         }
     }
 }
@@ -206,10 +205,9 @@ impl Engine<Loaded> {
             .find(|endpoint| endpoint.id() == id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        let id = CString::new(id).expect("invalid endpoint id");
         let handle = self
             .inner
-            .get_endpoint_handle(id.as_c_str())
+            .get_endpoint_handle(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
         self.state.endpoints.insert(handle, info.clone());
@@ -235,7 +233,7 @@ impl Engine<Loaded> {
                     state: linked,
                 })
             }
-            Err(error) => Err(Error::FailedToLink(self, error.to_string().into_owned())),
+            Err(error) => Err(Error::FailedToLink(self, error.to_str().to_owned())),
         }
     }
 }
