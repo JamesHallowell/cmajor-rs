@@ -11,8 +11,23 @@ use {
 /// A Cmajor type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
-    /// A primitive type.
-    Primitive(Primitive),
+    /// A void type.
+    Void,
+
+    /// A boolean type.
+    Bool,
+
+    /// A 32-bit signed integer type.
+    Int32,
+
+    /// A 64-bit signed integer type.
+    Int64,
+
+    /// A 32-bit floating-point type.
+    Float32,
+
+    /// A 64-bit floating-point type.
+    Float64,
 
     /// A string type.
     String,
@@ -49,8 +64,23 @@ pub enum Primitive {
 /// A reference to a Cmajor [`Type`].
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TypeRef<'a> {
-    /// A primitive type.
-    Primitive(Primitive),
+    /// A void type.
+    Void,
+
+    /// A boolean type.
+    Bool,
+
+    /// A 32-bit signed integer type.
+    Int32,
+
+    /// A 64-bit signed integer type.
+    Int64,
+
+    /// A 32-bit floating-point type.
+    Float32,
+
+    /// A 64-bit floating-point type.
+    Float64,
 
     /// A string type.
     String,
@@ -93,10 +123,28 @@ impl Type {
     /// Get a reference to the type.
     pub fn as_ref(&self) -> TypeRef<'_> {
         match self {
-            Type::Primitive(primitive) => TypeRef::Primitive(*primitive),
+            Type::Void => TypeRef::Void,
+            Type::Bool => TypeRef::Bool,
+            Type::Int32 => TypeRef::Int32,
+            Type::Int64 => TypeRef::Int64,
+            Type::Float32 => TypeRef::Float32,
+            Type::Float64 => TypeRef::Float64,
             Type::String => TypeRef::String,
             Type::Array(array) => TypeRef::Array(array.as_ref()),
             Type::Object(object) => TypeRef::Object(object.as_ref()),
+        }
+    }
+
+    /// If the type is a primitive, return it.
+    pub fn as_primitive(&self) -> Option<Primitive> {
+        match self {
+            Type::Void => Some(Primitive::Void),
+            Type::Bool => Some(Primitive::Bool),
+            Type::Int32 => Some(Primitive::Int32),
+            Type::Int64 => Some(Primitive::Int64),
+            Type::Float32 => Some(Primitive::Float32),
+            Type::Float64 => Some(Primitive::Float64),
+            _ => None,
         }
     }
 
@@ -111,12 +159,12 @@ impl Type {
     /// Returns the corresponding [`TypeId`] for the type (if any).
     pub(crate) fn type_id(&self) -> Option<TypeId> {
         match self {
-            Type::Primitive(Primitive::Void) => Some(TypeId::of::<()>()),
-            Type::Primitive(Primitive::Bool) => Some(TypeId::of::<bool>()),
-            Type::Primitive(Primitive::Int32) => Some(TypeId::of::<i32>()),
-            Type::Primitive(Primitive::Int64) => Some(TypeId::of::<i64>()),
-            Type::Primitive(Primitive::Float32) => Some(TypeId::of::<f32>()),
-            Type::Primitive(Primitive::Float64) => Some(TypeId::of::<f64>()),
+            Type::Void => Some(TypeId::of::<()>()),
+            Type::Bool => Some(TypeId::of::<bool>()),
+            Type::Int32 => Some(TypeId::of::<i32>()),
+            Type::Int64 => Some(TypeId::of::<i64>()),
+            Type::Float32 => Some(TypeId::of::<f32>()),
+            Type::Float64 => Some(TypeId::of::<f64>()),
             _ => None,
         }
     }
@@ -150,12 +198,12 @@ impl TypeRef<'_> {
     /// The size of the type in bytes.
     pub fn size(&self) -> usize {
         match self {
-            TypeRef::Primitive(Primitive::Void) => 0,
-            TypeRef::Primitive(Primitive::Bool) => 4,
-            TypeRef::Primitive(Primitive::Int32) => 4,
-            TypeRef::Primitive(Primitive::Int64) => 8,
-            TypeRef::Primitive(Primitive::Float32) => 4,
-            TypeRef::Primitive(Primitive::Float64) => 8,
+            TypeRef::Void => 0,
+            TypeRef::Bool => 4,
+            TypeRef::Int32 => 4,
+            TypeRef::Int64 => 8,
+            TypeRef::Float32 => 4,
+            TypeRef::Float64 => 8,
             TypeRef::String => 4,
             TypeRef::Array(array) => array.size(),
             TypeRef::Object(object) => object.size(),
@@ -165,21 +213,26 @@ impl TypeRef<'_> {
     /// Convert the type reference into an owned [`Type`].
     pub fn to_owned(&self) -> Type {
         match *self {
-            TypeRef::Primitive(primitive) => Type::Primitive(primitive),
-            TypeRef::String => Type::String,
-            TypeRef::Array(array) => Type::Array(Box::new(array.clone())),
-            TypeRef::Object(object) => Type::Object(Box::new(object.clone())),
+            Self::Void => Type::Void,
+            Self::Bool => Type::Bool,
+            Self::Int32 => Type::Int32,
+            Self::Int64 => Type::Int64,
+            Self::Float32 => Type::Float32,
+            Self::Float64 => Type::Float64,
+            Self::String => Type::String,
+            Self::Array(array) => Type::Array(Box::new(array.clone())),
+            Self::Object(object) => Type::Object(Box::new(object.clone())),
         }
     }
 
     pub(crate) fn serialise_as_choc_type(&self) -> Vec<u8> {
         match self {
-            TypeRef::Primitive(Primitive::Void) => vec![0],
-            TypeRef::Primitive(Primitive::Int32) => vec![1],
-            TypeRef::Primitive(Primitive::Int64) => vec![2],
-            TypeRef::Primitive(Primitive::Float32) => vec![3],
-            TypeRef::Primitive(Primitive::Float64) => vec![4],
-            TypeRef::Primitive(Primitive::Bool) => vec![5],
+            TypeRef::Void => vec![0],
+            TypeRef::Int32 => vec![1],
+            TypeRef::Int64 => vec![2],
+            TypeRef::Float32 => vec![3],
+            TypeRef::Float64 => vec![4],
+            TypeRef::Bool => vec![5],
             TypeRef::String => todo!("serialising string types is not yet supported"),
             TypeRef::Array(array) => {
                 let mut buffer = vec![];
@@ -272,7 +325,14 @@ impl Object {
 
 impl From<Primitive> for Type {
     fn from(primitive: Primitive) -> Self {
-        Type::Primitive(primitive)
+        match primitive {
+            Primitive::Void => Type::Void,
+            Primitive::Bool => Type::Bool,
+            Primitive::Int32 => Type::Int32,
+            Primitive::Int64 => Type::Int64,
+            Primitive::Float32 => Type::Float32,
+            Primitive::Float64 => Type::Float64,
+        }
     }
 }
 

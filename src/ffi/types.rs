@@ -1,5 +1,5 @@
 use {
-    crate::value::types::{Array, Object, Primitive, Type},
+    crate::value::types::{Array, Object, Type},
     indexmap::IndexMap,
     serde::Deserialize,
     serde_json as json,
@@ -94,12 +94,12 @@ impl TryFrom<&TypeDescription> for Type {
         }: &TypeDescription,
     ) -> Result<Self, Self::Error> {
         match type_tag {
-            TypeTag::Void => Ok(Type::Primitive(Primitive::Void)),
-            TypeTag::Bool => Ok(Type::Primitive(Primitive::Bool)),
-            TypeTag::Int32 => Ok(Type::Primitive(Primitive::Int32)),
-            TypeTag::Int64 => Ok(Type::Primitive(Primitive::Int64)),
-            TypeTag::Float32 => Ok(Type::Primitive(Primitive::Float32)),
-            TypeTag::Float64 => Ok(Type::Primitive(Primitive::Float64)),
+            TypeTag::Void => Ok(Type::Void),
+            TypeTag::Bool => Ok(Type::Bool),
+            TypeTag::Int32 => Ok(Type::Int32),
+            TypeTag::Int64 => Ok(Type::Int64),
+            TypeTag::Float32 => Ok(Type::Float32),
+            TypeTag::Float64 => Ok(Type::Float64),
             TypeTag::Object => {
                 let class = class.clone().ok_or(Self::Error::StructHasNoClass)?;
 

@@ -230,11 +230,7 @@ fn parse_function_signature(string: &CStr) -> Result<Vec<Primitive>, Box<dyn std
         .iter()
         .map(Type::try_from)
         .map(|ty| -> Result<Primitive, Box<dyn std::error::Error>> {
-            match ty {
-                Ok(Type::Primitive(primitive)) => Ok(primitive),
-                Ok(_) => Err("expected primitive type".into()),
-                Err(err) => Err(err.into()),
-            }
+            ty.map(|ty| ty.as_primitive().ok_or("expected a primitive type".into()))?
         })
         .collect::<Result<Vec<_>, _>>()
 }
