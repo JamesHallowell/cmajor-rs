@@ -1,10 +1,7 @@
-use {
-    crate::{
-        endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type},
-        value::ValueRef,
-    },
-    sealed::sealed,
+use crate::{
+    endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
+    performer::{Endpoint, EndpointError, EndpointType, Performer},
+    value::ValueRef,
 };
 
 /// An endpoint for input events.
@@ -19,7 +16,6 @@ pub struct OutputEvent {
     handle: EndpointHandle,
 }
 
-#[sealed]
 impl EndpointType for InputEvent {
     fn make(
         handle: EndpointHandle,
@@ -41,7 +37,6 @@ impl EndpointType for InputEvent {
     }
 }
 
-#[sealed]
 impl EndpointType for OutputEvent {
     fn make(handle: EndpointHandle, endpoint: EndpointInfo) -> Result<Endpoint<Self>, EndpointError>
     where

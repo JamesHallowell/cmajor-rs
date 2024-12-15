@@ -1,12 +1,9 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{
-            endpoints::Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type,
-        },
+        performer::{endpoints::Endpoint, EndpointError, EndpointType, Performer},
         value::{Value, ValueRef},
     },
-    sealed::sealed,
     std::{any::TypeId, marker::PhantomData},
 };
 
@@ -24,7 +21,6 @@ pub struct OutputValue<T = Value> {
     _marker: PhantomData<T>,
 }
 
-#[sealed]
 impl<T> EndpointType for InputValue<T>
 where
     T: 'static,
@@ -46,7 +42,6 @@ where
     }
 }
 
-#[sealed]
 impl<T> EndpointType for OutputValue<T>
 where
     T: 'static,

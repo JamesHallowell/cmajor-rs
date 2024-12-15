@@ -2,7 +2,6 @@
 
 use {
     bytes::BufMut,
-    sealed::sealed,
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
     std::any::TypeId,
@@ -365,14 +364,21 @@ impl Field {
     }
 }
 
+mod private {
+    pub trait Sealed {}
+    impl Sealed for bool {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+}
+
 /// Implemented for primitive types.
-#[sealed]
-pub trait IsPrimitive {}
+pub trait IsPrimitive: private::Sealed {}
 
 macro_rules! impl_is_primitive {
     ($($ty:ty),*) => {
         $(
-            #[sealed]
             impl IsPrimitive for $ty {}
         )*
     };
@@ -381,13 +387,11 @@ macro_rules! impl_is_primitive {
 impl_is_primitive!(bool, i32, i64, f32, f64);
 
 /// Implemented for scalar types.
-#[sealed]
 pub trait IsScalar: IsPrimitive {}
 
 macro_rules! impl_is_scalar {
     ($($ty:ty),*) => {
         $(
-            #[sealed]
             impl IsScalar for $ty {}
         )*
     };
@@ -396,11 +400,8 @@ macro_rules! impl_is_scalar {
 impl_is_scalar!(i32, i64, f32, f64);
 
 /// Implemented for floating point types.
-#[sealed]
-pub trait IsFloatingPoint {}
+pub trait IsFloatingPoint: private::Sealed {}
 
-#[sealed]
 impl IsFloatingPoint for f32 {}
 
-#[sealed]
 impl IsFloatingPoint for f64 {}

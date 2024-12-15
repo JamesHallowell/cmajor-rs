@@ -1,10 +1,9 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{Endpoint, EndpointError, EndpointType, Performer, __seal_endpoint_type},
+        performer::{Endpoint, EndpointError, EndpointType, Performer},
         value::types::{IsScalar, Type},
     },
-    sealed::sealed,
     std::marker::PhantomData,
 };
 
@@ -28,7 +27,6 @@ where
     _marker: PhantomData<T>,
 }
 
-#[sealed]
 impl<T> EndpointType for InputStream<T>
 where
     T: StreamType,
@@ -50,7 +48,6 @@ where
     }
 }
 
-#[sealed]
 impl<T> EndpointType for OutputStream<T>
 where
     T: StreamType,
@@ -125,37 +122,41 @@ pub fn read_stream<T>(
     }
 }
 
-#[sealed]
-pub trait StreamType: Copy {
+pub trait StreamType: Copy + sealed::Sealed {
     type Element: IsScalar + 'static;
     const EXTENT: usize;
 }
 
-#[sealed]
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+    impl<T, const N: usize> Sealed for [T; N] where T: Sealed {}
+}
+
 impl StreamType for i32 {
     type Element = Self;
     const EXTENT: usize = 1;
 }
 
-#[sealed]
 impl StreamType for i64 {
     type Element = Self;
     const EXTENT: usize = 1;
 }
 
-#[sealed]
 impl StreamType for f32 {
     type Element = Self;
     const EXTENT: usize = 1;
 }
 
-#[sealed]
 impl StreamType for f64 {
     type Element = Self;
     const EXTENT: usize = 1;
 }
 
-#[sealed]
 impl<T, const EXTENT: usize> StreamType for [T; EXTENT]
 where
     T: StreamType,
