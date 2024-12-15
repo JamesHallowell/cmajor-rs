@@ -160,7 +160,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use {super::*, crate::value::types::Primitive};
+    use super::*;
 
     #[test]
     fn parse_an_endpoint_with_a_single_data_type() {
@@ -178,10 +178,7 @@ mod test {
 
         assert_eq!(details.id.as_ref(), "out");
         assert_eq!(details.endpoint_type, EndpointVariant::Stream);
-        assert_eq!(
-            details.value_type,
-            vec![Type::Primitive(Primitive::Float32)]
-        );
+        assert_eq!(details.value_type, vec![Type::Float32]);
     }
 
     #[test]
@@ -205,12 +202,6 @@ mod test {
 
         assert_eq!(details.id.as_ref(), "out");
         assert_eq!(details.endpoint_type, EndpointVariant::Event);
-        assert_eq!(
-            details.value_type,
-            vec![
-                Type::Primitive(Primitive::Float32),
-                Type::Primitive(Primitive::Int32)
-            ]
-        );
+        assert_eq!(details.value_type, vec![Type::Float32, Type::Int32]);
     }
 }

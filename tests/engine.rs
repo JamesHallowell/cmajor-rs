@@ -2,10 +2,7 @@ use cmajor::{
     endpoint::EndpointDirection,
     engine::{Engine, Error, Externals, Loaded},
     performer::{OutputValue, Performer},
-    value::{
-        types::{Primitive, Type},
-        Complex32, ValueRef,
-    },
+    value::{types::Type, Complex32, ValueRef},
     Cmajor,
 };
 
@@ -45,10 +42,7 @@ fn program_details() {
         vec!["hello"]
     );
     assert_eq!(input_endpoint.annotation().get("hello").unwrap(), "world");
-    assert!(matches!(
-        input_endpoint.ty(),
-        Type::Primitive(Primitive::Int32)
-    ));
+    assert!(matches!(input_endpoint.ty(), Type::Int32));
 }
 
 fn setup<E>(

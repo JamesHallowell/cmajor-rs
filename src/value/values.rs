@@ -1,5 +1,5 @@
 use {
-    crate::value::types::{Array, IsFloatingPoint, Object, Primitive, Type, TypeRef},
+    crate::value::types::{Array, IsFloatingPoint, Object, Type, TypeRef},
     bytes::{Buf, BufMut},
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
@@ -103,12 +103,12 @@ impl Value {
     /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {
-            Self::Void => TypeRef::Primitive(Primitive::Void),
-            Self::Bool(_) => TypeRef::Primitive(Primitive::Bool),
-            Self::Int32(_) => TypeRef::Primitive(Primitive::Int32),
-            Self::Int64(_) => TypeRef::Primitive(Primitive::Int64),
-            Self::Float32(_) => TypeRef::Primitive(Primitive::Float32),
-            Self::Float64(_) => TypeRef::Primitive(Primitive::Float64),
+            Self::Void => TypeRef::Void,
+            Self::Bool(_) => TypeRef::Bool,
+            Self::Int32(_) => TypeRef::Int32,
+            Self::Int64(_) => TypeRef::Int64,
+            Self::Float32(_) => TypeRef::Float32,
+            Self::Float64(_) => TypeRef::Float64,
             Self::String(_) => TypeRef::String,
             Self::Array(array) => TypeRef::Array(&array.ty),
             Self::Object(object) => TypeRef::Object(&object.ty),
@@ -150,12 +150,12 @@ impl<'a> ValueRef<'a> {
         'b: 'a,
     {
         match ty {
-            TypeRef::Primitive(Primitive::Void) => Self::Void,
-            TypeRef::Primitive(Primitive::Bool) => Self::Bool(data.get_u32_ne() != 0),
-            TypeRef::Primitive(Primitive::Int32) => Self::Int32(data.get_i32_ne()),
-            TypeRef::Primitive(Primitive::Int64) => Self::Int64(data.get_i64_ne()),
-            TypeRef::Primitive(Primitive::Float32) => Self::Float32(data.get_f32_ne()),
-            TypeRef::Primitive(Primitive::Float64) => Self::Float64(data.get_f64_ne()),
+            TypeRef::Void => Self::Void,
+            TypeRef::Bool => Self::Bool(data.get_u32_ne() != 0),
+            TypeRef::Int32 => Self::Int32(data.get_i32_ne()),
+            TypeRef::Int64 => Self::Int64(data.get_i64_ne()),
+            TypeRef::Float32 => Self::Float32(data.get_f32_ne()),
+            TypeRef::Float64 => Self::Float64(data.get_f64_ne()),
             TypeRef::String => Self::String(StringHandle(data.get_u32_ne())),
             TypeRef::Array(array) => Self::Array(ArrayValueRef::new_from_slice(array, data)),
             TypeRef::Object(object) => Self::Object(ObjectValueRef::new_from_slice(object, data)),
@@ -181,12 +181,12 @@ impl<'a> ValueRef<'a> {
     /// Get the type of the value.
     pub fn ty(&self) -> TypeRef<'_> {
         match self {
-            Self::Void => TypeRef::Primitive(Primitive::Void),
-            Self::Bool(_) => TypeRef::Primitive(Primitive::Bool),
-            Self::Int32(_) => TypeRef::Primitive(Primitive::Int32),
-            Self::Int64(_) => TypeRef::Primitive(Primitive::Int64),
-            Self::Float32(_) => TypeRef::Primitive(Primitive::Float32),
-            Self::Float64(_) => TypeRef::Primitive(Primitive::Float64),
+            Self::Void => TypeRef::Void,
+            Self::Bool(_) => TypeRef::Bool,
+            Self::Int32(_) => TypeRef::Int32,
+            Self::Int64(_) => TypeRef::Int64,
+            Self::Float32(_) => TypeRef::Float32,
+            Self::Float64(_) => TypeRef::Float64,
             Self::String(_) => TypeRef::String,
             Self::Array(array) => TypeRef::Array(array.ty),
             Self::Object(object) => TypeRef::Object(object.ty),
@@ -290,11 +290,11 @@ impl<'a> ArrayValueRef<'a> {
     /// # Example
     ///
     /// ```
-    /// # use cmajor::value::{ArrayValue, types::{Type, Primitive}};
+    /// # use cmajor::value::{ArrayValue, types::Type};
     /// let array: ArrayValue = [1, 2, 3].into();
     /// let array_ref = array.as_ref();
     ///
-    /// assert_eq!(array_ref.elem_ty(), &Type::Primitive(Primitive::Int32));
+    /// assert_eq!(array_ref.elem_ty(), &Type::Int32);
     pub fn elem_ty(&self) -> &Type {
         self.ty.elem_ty()
     }
@@ -497,8 +497,8 @@ pub type Complex64 = Complex<f64>;
 impl From<Complex32> for ObjectValue {
     fn from(Complex { real, imag }: Complex32) -> Self {
         let object = Object::new("complex32")
-            .with_field("real", Type::Primitive(Primitive::Float32))
-            .with_field("imag", Type::Primitive(Primitive::Float32));
+            .with_field("real", Type::Float32)
+            .with_field("imag", Type::Float32);
 
         let mut data = SmallVec::new();
         data.extend_from_slice(&real.to_ne_bytes());
@@ -533,8 +533,8 @@ impl TryFrom<ValueRef<'_>> for Complex32 {
 impl From<Complex64> for ObjectValue {
     fn from(Complex { real, imag }: Complex64) -> Self {
         let object = Object::new("complex64")
-            .with_field("real", Type::Primitive(Primitive::Float64))
-            .with_field("imag", Type::Primitive(Primitive::Float64));
+            .with_field("real", Type::Float64)
+            .with_field("imag", Type::Float64);
 
         let mut data = SmallVec::new();
         data.extend_from_slice(&real.to_ne_bytes());
@@ -702,7 +702,7 @@ mod test {
 
     #[test]
     fn array_as_value() {
-        let array: Type = Array::new(Type::Primitive(Primitive::Int32), 3).into();
+        let array: Type = Array::new(Type::Int32, 3).into();
         assert_eq!(array.size(), 12);
 
         let values = [5, 6, 7];
@@ -724,7 +724,7 @@ mod test {
 
     #[test]
     fn multi_dimensional_array_as_value() {
-        let array: Type = Array::new(Array::new(Type::Primitive(Primitive::Int32), 3), 2).into();
+        let array: Type = Array::new(Array::new(Type::Int32, 3), 2).into();
         assert_eq!(array.size(), 24);
 
         let multi_dimensional_array = [[5, 6, 7], [8, 9, 10]];
@@ -761,12 +761,9 @@ mod test {
     #[test]
     fn object_as_value() {
         let ty = Object::new("test")
-            .with_field("a", Type::Primitive(Primitive::Int32))
-            .with_field("b", Type::Primitive(Primitive::Int64))
-            .with_field(
-                "c",
-                Object::new("inner").with_field("d", Type::Primitive(Primitive::Bool)),
-            );
+            .with_field("a", Type::Int32)
+            .with_field("b", Type::Int64)
+            .with_field("c", Object::new("inner").with_field("d", Type::Bool));
 
         let mut data = Vec::new();
         data.extend_from_slice(&5_i32.to_ne_bytes());
@@ -788,6 +785,6 @@ mod test {
 
     #[test]
     fn value_is_16_bytes() {
-        assert_eq!(std::mem::size_of::<Value>(), 16);
+        assert_eq!(size_of::<Value>(), 16);
     }
 }

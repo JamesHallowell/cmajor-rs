@@ -3,7 +3,7 @@ use cmajor::{
     json,
     performer::{EndpointError, InputStream, InputValue, OutputEvent, OutputValue, Performer},
     value::{
-        types::{Object, Primitive, Type},
+        types::{Object, Type},
         Complex32, Complex64, Value, ValueRef,
     },
     Cmajor,
@@ -444,9 +444,7 @@ fn can_query_endpoint_information() {
     assert!(c.types()[0].is::<i32>());
     assert_eq!(
         c.types()[1],
-        Object::new("S")
-            .with_field("d", Type::Primitive(Primitive::Bool))
-            .into()
+        Object::new("S").with_field("d", Type::Bool).into()
     );
 }
 
