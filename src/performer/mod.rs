@@ -19,7 +19,6 @@ use {
         },
         value::{StringHandle, ValueRef},
     },
-    sealed::sealed,
     std::collections::HashMap,
 };
 
@@ -172,8 +171,7 @@ pub enum EndpointError {
 }
 
 #[doc(hidden)]
-#[sealed(pub(crate))]
-pub trait EndpointType {
+pub trait EndpointType: sealed::Sealed {
     fn make(
         handle: EndpointHandle,
         endpoint: EndpointInfo,
@@ -182,4 +180,17 @@ pub trait EndpointType {
         Self: Sized;
 
     fn handle(&self) -> EndpointHandle;
+}
+
+mod sealed {
+    use super::*;
+
+    pub trait Sealed {}
+
+    impl Sealed for InputEvent {}
+    impl Sealed for OutputEvent {}
+    impl<T> Sealed for InputStream<T> where T: StreamType {}
+    impl<T> Sealed for OutputStream<T> where T: StreamType {}
+    impl<T> Sealed for InputValue<T> {}
+    impl<T> Sealed for OutputValue<T> {}
 }
