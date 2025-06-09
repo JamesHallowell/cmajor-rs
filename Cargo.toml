@@ -19,7 +19,7 @@ smallvec = { version = "1.11.1", features = ["serde"] }
 thiserror = "2.0.3"
 
 [dev-dependencies]
-cpal = "0.15.2"
+cpal = "0.16.0"
 assert_no_alloc = "1.1.2"
 
 [build-dependencies]
