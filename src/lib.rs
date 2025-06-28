@@ -4,7 +4,7 @@
 
 pub use {
     library::{Cmajor, LibraryError},
-    program::{ParseError, Program},
+    program::{ast, ParseError, Program},
     serde_json as json,
 };
 
