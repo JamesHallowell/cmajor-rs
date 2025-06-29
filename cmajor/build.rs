@@ -81,6 +81,7 @@ mod static_linkage {
     }
 }
 
+#[cfg(not(feature = "static"))]
 fn link_math_lib() {
     if cfg!(target_os = "linux") {
         // see https://github.com/cmajor-lang/cmajor/issues/84

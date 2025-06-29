@@ -1,0 +1,27 @@
+[package]
+name = "cmajor"
+description = "Rust bindings for the Cmajor JIT engine."
+version = "0.7.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[features]
+static = ["dep:cmake", "dep:dotenvy"]
+
+[dependencies]
+bytes = "1.5.0"
+dotenvy = "0.15.7"
+indexmap = { version = "2.2.6", features = ["serde"] }
+libloading = "0.8.0"
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = { version = "1.0.107", features = ["preserve_order"] }
+smallvec = { version = "1.11.1", features = ["serde"] }
+thiserror = "2.0.3"
+
+[dev-dependencies]
+cpal = "0.16.0"
+assert_no_alloc = "1.1.2"
+
+[build-dependencies]
+cmake = { version = "0.1.50", optional = true }
+dotenvy = { version = "0.15.7", optional = true }
