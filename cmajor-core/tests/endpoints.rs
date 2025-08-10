@@ -1,4 +1,4 @@
-use cmajor::{
+use cmajor_core::{
     engine::{Engine, Loaded},
     json,
     performer::{EndpointError, InputStream, InputValue, OutputEvent, OutputValue, Performer},

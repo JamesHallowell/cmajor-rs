@@ -1,4 +1,4 @@
-use cmajor::{
+use cmajor_core::{
     endpoint::EndpointDirection,
     engine::{Engine, Error, Externals, Loaded},
     performer::{OutputValue, Performer},

@@ -249,7 +249,7 @@ impl<'a> ArrayValueRef<'a> {
     /// # Example
     ///
     /// ```
-    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// # use cmajor_core::value::{ArrayValue, ValueRef};
     /// let array: ArrayValue = [1, 2, 3].into();
     /// let array_ref = array.as_ref();
     ///
@@ -272,7 +272,7 @@ impl<'a> ArrayValueRef<'a> {
     /// # Example
     ///
     /// ```
-    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// # use cmajor_core::value::{ArrayValue, ValueRef};
     /// let array: ArrayValue = [1, 2, 3].into();
     /// let array_ref = array.as_ref();
     ///
@@ -290,7 +290,7 @@ impl<'a> ArrayValueRef<'a> {
     /// # Example
     ///
     /// ```
-    /// # use cmajor::value::{ArrayValue, types::Type};
+    /// # use cmajor_core::value::{ArrayValue, types::Type};
     /// let array: ArrayValue = [1, 2, 3].into();
     /// let array_ref = array.as_ref();
     ///
@@ -304,7 +304,7 @@ impl<'a> ArrayValueRef<'a> {
     /// # Example
     ///
     /// ```
-    /// # use cmajor::value::{ArrayValue, ValueRef};
+    /// # use cmajor_core::value::{ArrayValue, ValueRef};
     /// let array: ArrayValue = [1, 2, 3].into();
     /// let array_ref = array.as_ref();
     ///

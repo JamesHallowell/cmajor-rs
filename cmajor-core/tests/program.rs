@@ -1,4 +1,4 @@
-use cmajor::{
+use cmajor_core::{
     ast,
     diagnostic::{Category, Location, Severity},
     Cmajor,
@@ -19,7 +19,7 @@ fn compile_error() {
     let cmajor = Cmajor::new();
 
     let error = match cmajor.parse(program).unwrap_err() {
-        cmajor::ParseError::ParserError(parser_error) => parser_error,
+        cmajor_core::ParseError::ParserError(parser_error) => parser_error,
         _ => panic!("expected parser error"),
     };
 

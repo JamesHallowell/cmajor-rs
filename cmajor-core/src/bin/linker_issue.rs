@@ -1,4 +1,4 @@
-use cmajor::Cmajor;
+use cmajor_core::Cmajor;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // see https://github.com/cmajor-lang/cmajor/issues/84

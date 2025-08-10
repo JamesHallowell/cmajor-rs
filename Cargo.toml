@@ -1,6 +1,8 @@
 [workspace]
-members = ["cmajor", "examples"]
+members = ["cmajor", "cmajor-core", "cmajor-macros", "examples"]
 resolver = "2"
 
 [workspace.dependencies]
 cmajor = { path = "cmajor" }
+cmajor-core = { path = "cmajor-core" }
+cmajor-macros = { path = "cmajor-macros" }
