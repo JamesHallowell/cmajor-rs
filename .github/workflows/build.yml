@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         os: [ linux, macos ]
-        cmajor_version: [ 1.0.2656, 1.0.2901 ]
+        cmajor_version: [ 1.0.2656, 1.0.2944 ]
         include:
           - os: linux
             runner: ubuntu-latest
