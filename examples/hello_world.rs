@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_output_stream(
             &cpal::StreamConfig {
                 channels: 1,
-                sample_rate: cpal::SampleRate(SAMPLE_RATE as u32),
+                sample_rate: SAMPLE_RATE as u32,
                 buffer_size: cpal::BufferSize::Fixed(BLOCK_SIZE),
             },
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
