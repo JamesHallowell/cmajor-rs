@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .default_output_device()
         .expect("no output device")
         .build_output_stream(
-            &cpal::StreamConfig {
+            cpal::StreamConfig {
                 channels: 1,
                 sample_rate: SAMPLE_RATE as u32,
                 buffer_size: cpal::BufferSize::Fixed(BLOCK_SIZE),
