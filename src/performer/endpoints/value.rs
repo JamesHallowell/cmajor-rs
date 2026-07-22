@@ -1,7 +1,7 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{endpoints::Endpoint, EndpointError, EndpointType, Performer},
+        performer::{endpoints::Endpoint, EndpointError, GetHandle, MakeEndpoint, Performer},
         value::{Value, ValueRef},
     },
     std::{any::TypeId, marker::PhantomData},
@@ -21,7 +21,7 @@ pub struct OutputValue<T = Value> {
     _marker: PhantomData<T>,
 }
 
-impl<T> EndpointType for InputValue<T>
+impl<T> MakeEndpoint for InputValue<T>
 where
     T: 'static,
 {
@@ -36,13 +36,15 @@ where
             _marker: PhantomData,
         }))
     }
+}
 
+impl<T> GetHandle for InputValue<T> {
     fn handle(&self) -> EndpointHandle {
         self.handle
     }
 }
 
-impl<T> EndpointType for OutputValue<T>
+impl<T> MakeEndpoint for OutputValue<T>
 where
     T: 'static,
 {
@@ -57,7 +59,9 @@ where
             _marker: PhantomData,
         }))
     }
+}
 
+impl<T> GetHandle for OutputValue<T> {
     fn handle(&self) -> EndpointHandle {
         self.handle
     }
@@ -225,7 +229,7 @@ impl GetOutputValue for bool {
 }
 
 impl GetOutputValue for Value {
-    type Output<'a> = Result<ValueRef<'a>, ()>;
+    type Output<'a> = ValueRef<'a>;
 
     fn get_output_value(
         performer: &mut Performer,
@@ -237,11 +241,16 @@ impl GetOutputValue for Value {
             .endpoints
             .get(&endpoint.handle)
             .and_then(|endpoint| endpoint.as_value())
-            .map(|value_endpoint| value_endpoint.ty().as_ref())
-            .expect("failed to determine endpoint type");
+            .map(|value_endpoint| value_endpoint.ty().as_ref());
 
-        ptr.copy_output_value(endpoint.handle, buffer);
+        debug_assert!(ty.is_some(), "endpoint should exist and be a value type");
 
-        Ok(ValueRef::new_from_slice(ty, &buffer[..ty.size()]))
+        match ty {
+            Some(ty) => {
+                ptr.copy_output_value(endpoint.handle, buffer);
+                ValueRef::new_from_slice(ty, &buffer[..ty.size()])
+            }
+            None => ValueRef::Void,
+        }
     }
 }

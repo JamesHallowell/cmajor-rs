@@ -1,6 +1,6 @@
 use crate::{
     endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-    performer::{Endpoint, EndpointError, EndpointType, Performer},
+    performer::{Endpoint, EndpointError, GetHandle, MakeEndpoint, Performer},
     value::ValueRef,
 };
 
@@ -16,7 +16,7 @@ pub struct OutputEvent {
     handle: EndpointHandle,
 }
 
-impl EndpointType for InputEvent {
+impl MakeEndpoint for InputEvent {
     fn make(
         handle: EndpointHandle,
         endpoint: EndpointInfo,
@@ -31,13 +31,15 @@ impl EndpointType for InputEvent {
 
         Ok(Endpoint(InputEvent { handle }))
     }
+}
 
+impl GetHandle for InputEvent {
     fn handle(&self) -> EndpointHandle {
         self.handle
     }
 }
 
-impl EndpointType for OutputEvent {
+impl MakeEndpoint for OutputEvent {
     fn make(handle: EndpointHandle, endpoint: EndpointInfo) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized,
@@ -52,7 +54,9 @@ impl EndpointType for OutputEvent {
 
         Ok(Endpoint(Self { handle }))
     }
+}
 
+impl GetHandle for OutputEvent {
     fn handle(&self) -> EndpointHandle {
         self.handle
     }

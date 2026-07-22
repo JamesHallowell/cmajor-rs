@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     performer.advance();
     assert_eq!(
         performer.get::<Value>(value_out_dynamic),
-        Ok(ValueRef::Int32(14))
+        ValueRef::Int32(14)
     );
 
     /*

@@ -8,7 +8,7 @@ use {
     crate::{
         endpoint::{EndpointHandle, EndpointInfo},
         ffi::EnginePtr,
-        performer::{Endpoint, EndpointError, EndpointType, OutputEvent, Performer},
+        performer::{Endpoint, EndpointError, MakeEndpoint, OutputEvent, Performer},
         program::Program,
     },
     std::{
@@ -194,7 +194,7 @@ impl Engine<Loaded> {
     /// Returns an endpoint handle.
     pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
     where
-        T: EndpointType,
+        T: MakeEndpoint,
     {
         let id = id.as_ref();
 
@@ -212,7 +212,7 @@ impl Engine<Loaded> {
 
         self.state.endpoints.insert(handle, info.clone());
 
-        EndpointType::make(handle, info)
+        MakeEndpoint::make(handle, info)
     }
 
     /// Returns the details of the program loaded into the engine.

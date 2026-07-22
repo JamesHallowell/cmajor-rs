@@ -232,7 +232,7 @@ fn loading_external_variables_struct() {
 
     performer.advance();
 
-    let result: Complex32 = performer.get(out).unwrap().try_into().unwrap();
+    let result: Complex32 = performer.get(out).try_into().unwrap();
     assert_eq!(result.real, 42.0);
     assert_eq!(result.imag, 21.0);
 }
@@ -262,7 +262,7 @@ fn loading_external_variables_array() {
 
     performer.advance();
 
-    let value = performer.get(out).unwrap();
+    let value = performer.get(out);
     let array = value.as_array().unwrap();
 
     assert_eq!(array.get(0), Some(ValueRef::Int32(1)));
