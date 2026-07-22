@@ -74,7 +74,7 @@ impl Performer {
     /// Returns information about a given endpoint.
     pub fn endpoint_info<T>(&self, Endpoint(endpoint): Endpoint<T>) -> Option<&EndpointInfo>
     where
-        T: EndpointType,
+        T: GetHandle,
     {
         self.endpoints.get(&endpoint.handle())
     }
@@ -171,14 +171,17 @@ pub enum EndpointError {
 }
 
 #[doc(hidden)]
-pub trait EndpointType: sealed::Sealed {
+pub trait MakeEndpoint: sealed::Sealed {
     fn make(
         handle: EndpointHandle,
         endpoint: EndpointInfo,
     ) -> Result<Endpoint<Self>, EndpointError>
     where
         Self: Sized;
+}
 
+#[doc(hidden)]
+pub trait GetHandle: sealed::Sealed {
     fn handle(&self) -> EndpointHandle;
 }
 

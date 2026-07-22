@@ -1,7 +1,7 @@
 use {
     crate::{
         endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{Endpoint, EndpointError, EndpointType, Performer},
+        performer::{Endpoint, EndpointError, GetHandle, MakeEndpoint, Performer},
         value::types::{IsScalar, Type},
     },
     std::marker::PhantomData,
@@ -27,7 +27,7 @@ where
     _marker: PhantomData<T>,
 }
 
-impl<T> EndpointType for InputStream<T>
+impl<T> MakeEndpoint for InputStream<T>
 where
     T: StreamType,
 {
@@ -42,13 +42,18 @@ where
             _marker: PhantomData,
         }))
     }
+}
 
+impl<T> GetHandle for InputStream<T>
+where
+    T: StreamType,
+{
     fn handle(&self) -> EndpointHandle {
         self.handle
     }
 }
 
-impl<T> EndpointType for OutputStream<T>
+impl<T> MakeEndpoint for OutputStream<T>
 where
     T: StreamType,
 {
@@ -63,7 +68,12 @@ where
             _marker: PhantomData,
         }))
     }
+}
 
+impl<T> GetHandle for OutputStream<T>
+where
+    T: StreamType,
+{
     fn handle(&self) -> EndpointHandle {
         self.handle
     }

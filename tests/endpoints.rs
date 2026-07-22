@@ -132,7 +132,7 @@ fn can_read_and_write_complex32_numbers() {
 
     performer.advance();
 
-    let result: Complex32 = performer.get::<Value>(output).unwrap().try_into().unwrap();
+    let result: Complex32 = performer.get::<Value>(output).try_into().unwrap();
 
     assert_eq!(
         result,
@@ -175,7 +175,7 @@ fn can_read_and_write_complex64_numbers() {
 
     performer.advance();
 
-    let result: Complex64 = performer.get::<Value>(output).unwrap().try_into().unwrap();
+    let result: Complex64 = performer.get::<Value>(output).try_into().unwrap();
 
     assert_eq!(
         result,
@@ -212,7 +212,7 @@ fn can_read_structs() {
 
     performer.advance();
 
-    let value = performer.get::<Value>(output).unwrap();
+    let value = performer.get::<Value>(output);
     let object = value.as_object().unwrap();
 
     assert_eq!(object.field("a").unwrap(), ValueRef::Bool(true));
@@ -247,7 +247,7 @@ fn can_read_and_write_arrays() {
 
     performer.advance();
 
-    let value = performer.get::<Value>(output).unwrap();
+    let value = performer.get::<Value>(output);
     let array = value.as_array().unwrap();
 
     assert_eq!(array.len(), 4);
@@ -511,7 +511,7 @@ fn read_and_write_vectors() {
     performer.set::<Value>(input, [1, 2, 3, 4].into()).unwrap();
     performer.advance();
 
-    let value = performer.get::<Value>(output).unwrap();
+    let value = performer.get::<Value>(output);
     let array = value.as_array().unwrap();
 
     let elems: Vec<_> = array.elems().collect();
@@ -770,7 +770,7 @@ fn string_endpoints() {
 
     performer.advance();
 
-    let value = if let ValueRef::String(string) = performer.get::<Value>(out).unwrap() {
+    let value = if let ValueRef::String(string) = performer.get::<Value>(out) {
         string
     } else {
         panic!("expected string");
