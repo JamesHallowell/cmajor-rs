@@ -2,6 +2,10 @@ mod cursor;
 #[allow(clippy::module_inception)]
 mod lexer;
 mod token;
+mod token_stream;
 
-pub use lexer::tokenize;
-pub use token::{SyntaxKind, Token};
+pub use {
+    lexer::tokenize,
+    token::{Keyword, Token, TokenKind, Trivia},
+    token_stream::{TokenId, TokenStream},
+};

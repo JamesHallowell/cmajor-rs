@@ -1,6 +1,6 @@
 use crate::lexer::{
     cursor::{Cursor, EOF_CHAR},
-    token::{Keyword, SyntaxKind, Token, Trivia},
+    token::{Keyword, Token, TokenKind, Trivia},
 };
 
 pub fn tokenize(input: &str) -> Vec<Token> {
@@ -8,9 +8,8 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     loop {
         let token = lexer.next_token();
-        let is_eof = token.kind == SyntaxKind::EndOfFile;
         tokens.push(token);
-        if is_eof {
+        if token.kind == TokenKind::EndOfFile {
             break;
         }
     }
@@ -38,7 +37,7 @@ impl<'a> Lexer<'a> {
 
         let Some(c) = self.cursor.bump() else {
             return Token {
-                kind: SyntaxKind::EndOfFile,
+                kind: TokenKind::EndOfFile,
                 len: 0,
             };
         };
@@ -46,7 +45,7 @@ impl<'a> Lexer<'a> {
         let kind = match c {
             c if is_whitespace(c) => {
                 self.cursor.eat_while(is_whitespace);
-                SyntaxKind::Trivia(Trivia::Whitespace)
+                TokenKind::Trivia(Trivia::Whitespace)
             }
 
             '/' if self.cursor.peek() == '/' => self.line_comment(),
@@ -56,85 +55,84 @@ impl<'a> Lexer<'a> {
             c if c.is_ascii_digit() => self.number(),
             '"' => self.string(),
 
-            '+' => self.one_or_two('+', SyntaxKind::PlusPlus, SyntaxKind::Plus),
+            '+' => self.one_or_two('+', TokenKind::PlusPlus, TokenKind::Plus),
             '-' => match self.cursor.peek() {
                 '-' => {
                     self.cursor.bump();
-                    SyntaxKind::MinusMinus
+                    TokenKind::MinusMinus
                 }
                 '>' => {
                     self.cursor.bump();
-                    SyntaxKind::ArrowRight
+                    TokenKind::ArrowRight
                 }
-                _ => SyntaxKind::Minus,
+                _ => TokenKind::Minus,
             },
-            '*' => self.one_or_two('*', SyntaxKind::StarStar, SyntaxKind::Star),
-            '/' => SyntaxKind::Slash,
-            '%' => SyntaxKind::Percent,
-            '~' => SyntaxKind::Tilde,
-            '^' => SyntaxKind::Caret,
+            '*' => self.one_or_two('*', TokenKind::StarStar, TokenKind::Star),
+            '/' => TokenKind::Slash,
+            '%' => TokenKind::Percent,
+            '~' => TokenKind::Tilde,
+            '^' => TokenKind::Caret,
 
-            '&' => self.one_or_two('&', SyntaxKind::AmpersandAmpersand, SyntaxKind::Ampersand),
-            '|' => self.one_or_two('|', SyntaxKind::PipePipe, SyntaxKind::Pipe),
+            '&' => self.one_or_two('&', TokenKind::AmpersandAmpersand, TokenKind::Ampersand),
+            '|' => self.one_or_two('|', TokenKind::PipePipe, TokenKind::Pipe),
 
-            '!' => self.one_or_two('=', SyntaxKind::BangEqual, SyntaxKind::Bang),
-            '=' => self.one_or_two('=', SyntaxKind::EqualEqual, SyntaxKind::Equal),
+            '!' => self.one_or_two('=', TokenKind::BangEqual, TokenKind::Bang),
+            '=' => self.one_or_two('=', TokenKind::EqualEqual, TokenKind::Equal),
 
             '<' => match self.cursor.peek() {
                 '<' => {
                     self.cursor.bump();
-                    SyntaxKind::ShiftLeft
+                    TokenKind::ShiftLeft
                 }
                 '=' => {
                     self.cursor.bump();
-                    SyntaxKind::LessThanOrEqual
+                    TokenKind::LessThanOrEqual
                 }
                 '-' => {
                     self.cursor.bump();
-                    SyntaxKind::ArrowLeft
+                    TokenKind::ArrowLeft
                 }
-                _ => SyntaxKind::LessThan,
+                _ => TokenKind::LessThan,
             },
             '>' => match self.cursor.peek() {
                 '>' if self.cursor.peek_second() == '>' => {
                     self.cursor.bump();
                     self.cursor.bump();
-                    SyntaxKind::ShiftRightShiftRight
+                    TokenKind::ShiftRightShiftRight
                 }
                 '>' => {
                     self.cursor.bump();
-                    SyntaxKind::ShiftRight
+                    TokenKind::ShiftRight
                 }
                 '=' => {
                     self.cursor.bump();
-                    SyntaxKind::GreaterThanOrEqual
+                    TokenKind::GreaterThanOrEqual
                 }
-                _ => SyntaxKind::GreaterThan,
+                _ => TokenKind::GreaterThan,
             },
 
-            ':' => self.one_or_two(':', SyntaxKind::ColonColon, SyntaxKind::Colon),
-            ',' => SyntaxKind::Comma,
-            ';' => SyntaxKind::Semicolon,
-            '.' => SyntaxKind::Dot,
-            '?' => SyntaxKind::Question,
-            '(' => SyntaxKind::ParenthesisLeft,
-            ')' => SyntaxKind::ParenthesisRight,
-            '[' => SyntaxKind::BracketLeft,
-            ']' => SyntaxKind::BracketRight,
-            '{' => SyntaxKind::BraceLeft,
-            '}' => SyntaxKind::BraceRight,
-
-            _ => SyntaxKind::Error,
+            ':' => self.one_or_two(':', TokenKind::ColonColon, TokenKind::Colon),
+            ',' => TokenKind::Comma,
+            ';' => TokenKind::Semicolon,
+            '.' => TokenKind::Dot,
+            '?' => TokenKind::Question,
+            '(' => TokenKind::ParenthesisLeft,
+            ')' => TokenKind::ParenthesisRight,
+            '[' => TokenKind::BracketLeft,
+            ']' => TokenKind::BracketRight,
+            '{' => TokenKind::BraceLeft,
+            '}' => TokenKind::BraceRight,
+            _ => TokenKind::Error,
         };
 
         let len = self.cursor.len_consumed();
         self.pos += len;
 
-        let kind = if kind == SyntaxKind::Ident {
+        let kind = if kind == TokenKind::Ident {
             let text = &self.input[start as usize..(start + len) as usize];
             Keyword::try_from(text)
-                .map(SyntaxKind::from)
-                .unwrap_or(SyntaxKind::Ident)
+                .map(TokenKind::from)
+                .unwrap_or(TokenKind::Ident)
         } else {
             kind
         };
@@ -142,7 +140,7 @@ impl<'a> Lexer<'a> {
         Token { kind, len }
     }
 
-    fn one_or_two(&mut self, next: char, two: SyntaxKind, one: SyntaxKind) -> SyntaxKind {
+    fn one_or_two(&mut self, next: char, two: TokenKind, one: TokenKind) -> TokenKind {
         if self.cursor.peek() == next {
             self.cursor.bump();
             two
@@ -151,36 +149,36 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn line_comment(&mut self) -> SyntaxKind {
+    fn line_comment(&mut self) -> TokenKind {
         debug_assert_eq!(self.cursor.peek(), '/');
         self.cursor.bump();
         self.cursor.eat_while(|c| c != '\n');
-        SyntaxKind::Trivia(Trivia::LineComment)
+        TokenKind::Trivia(Trivia::LineComment)
     }
 
-    fn block_comment(&mut self) -> SyntaxKind {
+    fn block_comment(&mut self) -> TokenKind {
         debug_assert_eq!(self.cursor.peek(), '*');
         self.cursor.bump();
 
         loop {
             match self.cursor.bump() {
-                None => return SyntaxKind::Error,
+                None => return TokenKind::Error,
                 Some('*') if self.cursor.peek() == '/' => {
                     self.cursor.bump();
-                    return SyntaxKind::Trivia(Trivia::BlockComment);
+                    return TokenKind::Trivia(Trivia::BlockComment);
                 }
                 _ => {}
             }
         }
     }
 
-    fn ident(&mut self) -> SyntaxKind {
+    fn ident(&mut self) -> TokenKind {
         self.cursor.eat_while(is_ident_continue);
-        SyntaxKind::Ident
+        TokenKind::Ident
     }
 
-    fn number(&mut self) -> SyntaxKind {
-        let mut kind = SyntaxKind::IntLiteral;
+    fn number(&mut self) -> TokenKind {
+        let mut kind = TokenKind::IntLiteral;
 
         if self.cursor.peek() == 'x' || self.cursor.peek() == 'X' {
             self.cursor.bump();
@@ -192,7 +190,7 @@ impl<'a> Lexer<'a> {
             self.cursor.eat_while(|c| c.is_ascii_digit());
 
             if self.cursor.peek() == '.' && self.cursor.peek_second().is_ascii_digit() {
-                kind = SyntaxKind::FloatLiteral;
+                kind = TokenKind::FloatLiteral;
                 self.cursor.bump();
                 self.cursor.eat_while(|c| c.is_ascii_digit());
             }
@@ -204,11 +202,11 @@ impl<'a> Lexer<'a> {
         kind
     }
 
-    fn string(&mut self) -> SyntaxKind {
+    fn string(&mut self) -> TokenKind {
         loop {
             match self.cursor.bump() {
-                None | Some('\n') => return SyntaxKind::Error,
-                Some('"') => return SyntaxKind::StringLiteral,
+                None | Some('\n') => return TokenKind::Error,
+                Some('"') => return TokenKind::StringLiteral,
                 Some('\\') if self.cursor.peek() != EOF_CHAR => {
                     self.cursor.bump();
                 }
@@ -234,11 +232,11 @@ fn is_ident_continue(c: char) -> bool {
 mod tests {
     use {super::*, crate::lexer::token::Keyword};
 
-    fn lex(input: &str) -> Vec<(SyntaxKind, &str)> {
+    fn lex(input: &str) -> Vec<(TokenKind, &str)> {
         let mut pos = 0usize;
         tokenize(input)
             .into_iter()
-            .filter(|token| token.kind != SyntaxKind::EndOfFile)
+            .filter(|token| token.kind != TokenKind::EndOfFile)
             .map(|token| {
                 let start = pos;
                 pos += token.len as usize;
@@ -252,7 +250,7 @@ mod tests {
         assert_eq!(
             tokenize(""),
             vec![Token {
-                kind: SyntaxKind::EndOfFile,
+                kind: TokenKind::EndOfFile,
                 len: 0
             }]
         );
@@ -263,9 +261,9 @@ mod tests {
         assert_eq!(
             lex("processor foo"),
             vec![
-                (SyntaxKind::Keyword(Keyword::Processor), "processor"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), " "),
-                (SyntaxKind::Ident, "foo"),
+                (TokenKind::Keyword(Keyword::Processor), "processor"),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Ident, "foo"),
             ]
         );
     }
@@ -275,10 +273,10 @@ mod tests {
         assert_eq!(
             lex("wrap<4>"),
             vec![
-                (SyntaxKind::Keyword(Keyword::Wrap), "wrap"),
-                (SyntaxKind::LessThan, "<"),
-                (SyntaxKind::IntLiteral, "4"),
-                (SyntaxKind::GreaterThan, ">"),
+                (TokenKind::Keyword(Keyword::Wrap), "wrap"),
+                (TokenKind::LessThan, "<"),
+                (TokenKind::IntLiteral, "4"),
+                (TokenKind::GreaterThan, ">"),
             ]
         );
     }
@@ -287,38 +285,38 @@ mod tests {
     fn integer_literals() {
         assert_eq!(
             lex("-12345").last(),
-            Some(&(SyntaxKind::IntLiteral, "12345"))
+            Some(&(TokenKind::IntLiteral, "12345"))
         );
-        assert_eq!(lex("0x12345")[0], (SyntaxKind::IntLiteral, "0x12345"));
-        assert_eq!(lex("0b101101")[0], (SyntaxKind::IntLiteral, "0b101101"));
-        assert_eq!(lex("12345L")[0], (SyntaxKind::IntLiteral, "12345L"));
-        assert_eq!(lex("12345_i64")[0], (SyntaxKind::IntLiteral, "12345_i64"));
-        assert_eq!(lex("0x12345_L")[0], (SyntaxKind::IntLiteral, "0x12345_L"));
+        assert_eq!(lex("0x12345")[0], (TokenKind::IntLiteral, "0x12345"));
+        assert_eq!(lex("0b101101")[0], (TokenKind::IntLiteral, "0b101101"));
+        assert_eq!(lex("12345L")[0], (TokenKind::IntLiteral, "12345L"));
+        assert_eq!(lex("12345_i64")[0], (TokenKind::IntLiteral, "12345_i64"));
+        assert_eq!(lex("0x12345_L")[0], (TokenKind::IntLiteral, "0x12345_L"));
     }
 
     #[test]
     fn float_literals() {
-        assert_eq!(lex("1234.0")[0], (SyntaxKind::FloatLiteral, "1234.0"));
+        assert_eq!(lex("1234.0")[0], (TokenKind::FloatLiteral, "1234.0"));
         assert_eq!(
             lex("1234.0_f64")[0],
-            (SyntaxKind::FloatLiteral, "1234.0_f64")
+            (TokenKind::FloatLiteral, "1234.0_f64")
         );
-        assert_eq!(lex("1234.0f")[0], (SyntaxKind::FloatLiteral, "1234.0f"));
-        assert_eq!(lex("123.0i")[0], (SyntaxKind::FloatLiteral, "123.0i"));
-        assert_eq!(lex("123.0fi")[0], (SyntaxKind::FloatLiteral, "123.0fi"));
+        assert_eq!(lex("1234.0f")[0], (TokenKind::FloatLiteral, "1234.0f"));
+        assert_eq!(lex("123.0i")[0], (TokenKind::FloatLiteral, "123.0i"));
+        assert_eq!(lex("123.0fi")[0], (TokenKind::FloatLiteral, "123.0fi"));
     }
 
     #[test]
     fn string_literal_with_escapes() {
         assert_eq!(
             lex(r#""Hello\n World\n 😀""#),
-            vec![(SyntaxKind::StringLiteral, r#""Hello\n World\n 😀""#)]
+            vec![(TokenKind::StringLiteral, r#""Hello\n World\n 😀""#)]
         );
     }
 
     #[test]
     fn unterminated_string_is_an_error() {
-        assert_eq!(lex("\"abc")[0].0, SyntaxKind::Error);
+        assert_eq!(lex("\"abc")[0].0, TokenKind::Error);
     }
 
     #[test]
@@ -326,16 +324,16 @@ mod tests {
         assert_eq!(
             lex("// comment\n/* block */"),
             vec![
-                (SyntaxKind::Trivia(Trivia::LineComment), "// comment"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), "\n"),
-                (SyntaxKind::Trivia(Trivia::BlockComment), "/* block */"),
+                (TokenKind::Trivia(Trivia::LineComment), "// comment"),
+                (TokenKind::Trivia(Trivia::Whitespace), "\n"),
+                (TokenKind::Trivia(Trivia::BlockComment), "/* block */"),
             ]
         );
     }
 
     #[test]
     fn unterminated_block_comment_is_an_error() {
-        assert_eq!(lex("/* comment")[0].0, SyntaxKind::Error);
+        assert_eq!(lex("/* comment")[0].0, TokenKind::Error);
     }
 
     #[test]
@@ -343,13 +341,13 @@ mod tests {
         assert_eq!(
             lex("a->b<-c>>>d"),
             vec![
-                (SyntaxKind::Ident, "a"),
-                (SyntaxKind::ArrowRight, "->"),
-                (SyntaxKind::Ident, "b"),
-                (SyntaxKind::ArrowLeft, "<-"),
-                (SyntaxKind::Ident, "c"),
-                (SyntaxKind::ShiftRightShiftRight, ">>>"),
-                (SyntaxKind::Ident, "d"),
+                (TokenKind::Ident, "a"),
+                (TokenKind::ArrowRight, "->"),
+                (TokenKind::Ident, "b"),
+                (TokenKind::ArrowLeft, "<-"),
+                (TokenKind::Ident, "c"),
+                (TokenKind::ShiftRightShiftRight, ">>>"),
+                (TokenKind::Ident, "d"),
             ]
         );
     }
@@ -359,20 +357,20 @@ mod tests {
         assert_eq!(
             lex("b ? x[3:5] : y"),
             vec![
-                (SyntaxKind::Ident, "b"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), " "),
-                (SyntaxKind::Question, "?"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), " "),
-                (SyntaxKind::Ident, "x"),
-                (SyntaxKind::BracketLeft, "["),
-                (SyntaxKind::IntLiteral, "3"),
-                (SyntaxKind::Colon, ":"),
-                (SyntaxKind::IntLiteral, "5"),
-                (SyntaxKind::BracketRight, "]"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), " "),
-                (SyntaxKind::Colon, ":"),
-                (SyntaxKind::Trivia(Trivia::Whitespace), " "),
-                (SyntaxKind::Ident, "y"),
+                (TokenKind::Ident, "b"),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Question, "?"),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Ident, "x"),
+                (TokenKind::BracketLeft, "["),
+                (TokenKind::IntLiteral, "3"),
+                (TokenKind::Colon, ":"),
+                (TokenKind::IntLiteral, "5"),
+                (TokenKind::BracketRight, "]"),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Colon, ":"),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Ident, "y"),
             ]
         );
     }
@@ -382,11 +380,11 @@ mod tests {
         assert_eq!(
             lex("std::intrinsics::sin"),
             vec![
-                (SyntaxKind::Ident, "std"),
-                (SyntaxKind::ColonColon, "::"),
-                (SyntaxKind::Ident, "intrinsics"),
-                (SyntaxKind::ColonColon, "::"),
-                (SyntaxKind::Ident, "sin"),
+                (TokenKind::Ident, "std"),
+                (TokenKind::ColonColon, "::"),
+                (TokenKind::Ident, "intrinsics"),
+                (TokenKind::ColonColon, "::"),
+                (TokenKind::Ident, "sin"),
             ]
         );
     }

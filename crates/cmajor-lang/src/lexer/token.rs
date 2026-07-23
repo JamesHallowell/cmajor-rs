@@ -131,7 +131,7 @@ pub enum Trivia {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SyntaxKind {
+pub enum TokenKind {
     Trivia(Trivia),
     Keyword(Keyword),
     Ident,
@@ -181,20 +181,20 @@ pub enum SyntaxKind {
     Error,
 }
 
-impl SyntaxKind {
+impl TokenKind {
     pub fn is_trivia(self) -> bool {
-        matches!(self, SyntaxKind::Trivia(_))
+        matches!(self, TokenKind::Trivia(_))
     }
 }
 
-impl From<Keyword> for SyntaxKind {
+impl From<Keyword> for TokenKind {
     fn from(keyword: Keyword) -> Self {
-        SyntaxKind::Keyword(keyword)
+        TokenKind::Keyword(keyword)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Token {
-    pub kind: SyntaxKind,
+    pub kind: TokenKind,
     pub len: u32,
 }
