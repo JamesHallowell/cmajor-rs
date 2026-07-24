@@ -3,6 +3,8 @@ use cmajor_lang::{ast, parser};
 const SOURCE: &str = r#"
 let x = 1 + 2 * 3;
 var y;
+wrap<5> w;
+clamp<5> c;
 
 if (x > 5)
 {

@@ -53,28 +53,7 @@ pub fn parse_type(source: &str) -> Parse {
 }
 
 fn is_type_name_start(kind: TokenKind) -> bool {
-    if kind == TokenKind::Ident {
-        return true;
-    }
-    let TokenKind::Keyword(keyword) = kind else {
-        return false;
-    };
-    matches!(
-        keyword,
-        Keyword::Bool
-            | Keyword::Int
-            | Keyword::Int32
-            | Keyword::Int64
-            | Keyword::Float
-            | Keyword::Float32
-            | Keyword::Float64
-            | Keyword::Double
-            | Keyword::Complex
-            | Keyword::Complex32
-            | Keyword::Complex64
-            | Keyword::String
-            | Keyword::Void
-    )
+    kind == TokenKind::Ident || kind.is_type()
 }
 
 mod bp {
@@ -446,8 +425,26 @@ impl Parser<'_> {
                 self.expect(TokenKind::Semicolon);
                 self.ast.push(Node::ContinueStmt { keyword })
             }
+            Some(TokenKind::Keyword(keyword))
+                if is_type_name_start(TokenKind::Keyword(keyword)) =>
+            {
+                self.parse_var_decl()
+            }
             _ => self.parse_expr_stmt(),
         }
+    }
+
+    fn parse_var_decl(&mut self) -> NodeId {
+        let ty = self.parse_type();
+        let name = self.expect(TokenKind::Ident);
+        let init = if self.peek_kind() == Some(TokenKind::Equal) {
+            self.bump();
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
+        } else {
+            None
+        };
+        self.expect(TokenKind::Semicolon);
+        self.ast.push(Node::VarDeclStmt { ty, name, init })
     }
 
     fn parse_block(&mut self) -> NodeId {
@@ -644,6 +641,7 @@ mod tests {
         ExprStmt,
         LetStmt,
         VarStmt,
+        VarDeclStmt,
         IfStmt,
         WhileStmt,
         LoopStmt,
@@ -739,6 +737,11 @@ mod tests {
                 text_of(name),
                 init.iter().map(|&i| child(i)).collect(),
             ),
+            Node::VarDeclStmt { ty, name, init } => {
+                let mut children = vec![child(*ty)];
+                children.extend(init.iter().map(|&i| child(i)));
+                node(Tag::VarDeclStmt, text_of(name), children)
+            }
             Node::IfStmt {
                 keyword,
                 cond,
@@ -1146,6 +1149,35 @@ mod tests {
                 vec![
                     node(LetStmt, "x", vec![leaf(IntLiteral, "1")]),
                     node(VarStmt, "y", vec![]),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn typed_var_decl_statements() {
+        use Tag::*;
+        assert_eq!(
+            parse_source("wrap<5> w; clamp<5> c; int n = 1;"),
+            node(
+                Block,
+                "wrap",
+                vec![
+                    node(
+                        VarDeclStmt,
+                        "w",
+                        vec![node(TypeWrap, "wrap", vec![leaf(IntLiteral, "5")])]
+                    ),
+                    node(
+                        VarDeclStmt,
+                        "c",
+                        vec![node(TypeClamp, "clamp", vec![leaf(IntLiteral, "5")])]
+                    ),
+                    node(
+                        VarDeclStmt,
+                        "n",
+                        vec![leaf(TypeName, "int"), leaf(IntLiteral, "1")]
+                    ),
                 ]
             )
         );

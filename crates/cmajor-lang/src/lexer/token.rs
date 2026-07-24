@@ -184,6 +184,31 @@ impl TokenKind {
     pub fn is_trivia(self) -> bool {
         matches!(self, TokenKind::Trivia(_))
     }
+
+    pub fn is_type(self) -> bool {
+        let Self::Keyword(keyword) = self else {
+            return false;
+        };
+
+        use Keyword::*;
+        matches!(
+            keyword,
+            Bool | Complex
+                | Complex32
+                | Complex64
+                | Double
+                | Float
+                | Float32
+                | Float64
+                | Int
+                | Int32
+                | Int64
+                | String
+                | Void
+                | Clamp
+                | Wrap
+        )
+    }
 }
 
 impl From<Keyword> for TokenKind {

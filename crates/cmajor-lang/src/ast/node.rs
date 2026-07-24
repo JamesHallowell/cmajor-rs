@@ -87,6 +87,11 @@ pub enum Node {
         name: TokenId,
         init: Option<NodeId>,
     },
+    VarDeclStmt {
+        ty: NodeId,
+        name: TokenId,
+        init: Option<NodeId>,
+    },
     IfStmt {
         keyword: TokenId,
         cond: NodeId,

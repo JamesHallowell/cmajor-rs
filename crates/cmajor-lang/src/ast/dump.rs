@@ -109,6 +109,13 @@ fn write_node(
                 child(init, out);
             }
         }
+        Node::VarDeclStmt { ty, name, init } => {
+            let _ = writeln!(out, "{indent}VarDeclStmt {:?}", text(name));
+            child(ty, out);
+            if let Some(init) = init {
+                child(init, out);
+            }
+        }
 
         Node::IfStmt {
             cond,
