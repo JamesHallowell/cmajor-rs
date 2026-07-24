@@ -6,12 +6,8 @@ use crate::lexer::{
 pub fn tokenize(input: &str) -> Vec<Token> {
     let mut lexer = Lexer::new(input);
     let mut tokens = Vec::new();
-    loop {
-        let token = lexer.next_token();
+    while let Some(token) = lexer.next_token() {
         tokens.push(token);
-        if token.kind == TokenKind::EndOfFile {
-            break;
-        }
     }
     tokens
 }
@@ -31,16 +27,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Token {
+    fn next_token(&mut self) -> Option<Token> {
         self.cursor.reset_bytes_taken();
         let start = self.pos;
 
-        let Some(c) = self.cursor.take() else {
-            return Token {
-                kind: TokenKind::EndOfFile,
-                len: 0,
-            };
-        };
+        let c = self.cursor.take()?;
 
         let kind = match c {
             c if is_whitespace(c) => {
@@ -137,7 +128,7 @@ impl<'a> Lexer<'a> {
             kind
         };
 
-        Token { kind, len }
+        Some(Token { kind, len })
     }
 
     fn one_or_two(&mut self, next: char, two: TokenKind, one: TokenKind) -> TokenKind {
@@ -242,7 +233,6 @@ mod tests {
         let mut pos = 0usize;
         tokenize(input)
             .into_iter()
-            .filter(|token| token.kind != TokenKind::EndOfFile)
             .map(|token| {
                 let start = pos;
                 pos += token.len as usize;
@@ -252,14 +242,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_is_just_eof() {
-        assert_eq!(
-            tokenize(""),
-            vec![Token {
-                kind: TokenKind::EndOfFile,
-                len: 0
-            }]
-        );
+    fn empty_input_produces_no_tokens() {
+        assert_eq!(tokenize(""), vec![]);
     }
 
     #[test]

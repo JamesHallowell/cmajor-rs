@@ -177,7 +177,6 @@ pub enum TokenKind {
     BracketRight,
     BraceLeft,
     BraceRight,
-    EndOfFile,
     Error,
 }
 

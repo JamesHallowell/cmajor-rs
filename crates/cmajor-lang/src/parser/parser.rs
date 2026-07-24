@@ -21,7 +21,7 @@ pub fn parse(source: &str) -> Parse {
     };
 
     let mut stmts = Vec::new();
-    while parser.peek().kind != TokenKind::EndOfFile {
+    while parser.peek().is_some() {
         stmts.push(parser.parse_statement());
     }
     let root = parser.ast.push(Node::Block {
@@ -257,20 +257,24 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    fn peek(&self) -> Token {
+    fn peek(&self) -> Option<Token> {
         self.tokens.token(TokenId(self.pos))
+    }
+
+    fn peek_kind(&self) -> Option<TokenKind> {
+        self.peek().map(|token| token.kind)
     }
 
     fn bump(&mut self) -> TokenId {
         let id = TokenId(self.pos);
-        if (self.pos as usize) + 1 < self.tokens.len() {
+        if (self.pos as usize) < self.tokens.len() {
             self.pos += 1;
         }
         id
     }
 
     fn expect(&mut self, kind: TokenKind) -> TokenId {
-        if self.peek().kind == kind {
+        if self.peek_kind() == Some(kind) {
             self.bump()
         } else {
             TokenId(self.pos)
@@ -278,16 +282,14 @@ impl Parser<'_> {
     }
 
     fn at_keyword(&self, keyword: Keyword) -> bool {
-        self.peek().kind == TokenKind::Keyword(keyword)
+        self.peek_kind() == Some(TokenKind::Keyword(keyword))
     }
 
     fn parse_expr(&mut self, min_binding_power: BindingPower) -> NodeId {
         let mut lhs = self.parse_prefix();
 
-        loop {
-            let kind = self.peek().kind;
-
-            let Some(infix) = Infix::from_token(kind) else {
+        while let Some(token) = self.peek() {
+            let Some(infix) = Infix::from_token(token.kind) else {
                 break;
             };
             let binding_power = infix.binding_power();
@@ -328,7 +330,7 @@ impl Parser<'_> {
     }
 
     fn parse_prefix(&mut self) -> NodeId {
-        if is_prefix_op(self.peek().kind) {
+        if self.peek_kind().is_some_and(is_prefix_op) {
             let op = self.bump();
             let operand = self.parse_expr(PrecedenceLevel::Unary.base());
             self.ast.push(Node::Unary { op, operand })
@@ -341,10 +343,10 @@ impl Parser<'_> {
         let mut expr = self.parse_primary();
 
         loop {
-            expr = match self.peek().kind {
-                TokenKind::ParenthesisLeft => self.parse_call(expr),
-                TokenKind::BracketLeft => self.parse_index(expr),
-                TokenKind::Dot => self.parse_field(expr),
+            expr = match self.peek_kind() {
+                Some(TokenKind::ParenthesisLeft) => self.parse_call(expr),
+                Some(TokenKind::BracketLeft) => self.parse_index(expr),
+                Some(TokenKind::Dot) => self.parse_field(expr),
                 _ => break,
             };
         }
@@ -355,10 +357,10 @@ impl Parser<'_> {
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
         let paren = self.bump();
         let mut args = Vec::new();
-        if self.peek().kind != TokenKind::ParenthesisRight {
+        if self.peek_kind() != Some(TokenKind::ParenthesisRight) {
             loop {
                 args.push(self.parse_expr(PrecedenceLevel::lowest()));
-                if self.peek().kind == TokenKind::Comma {
+                if self.peek_kind() == Some(TokenKind::Comma) {
                     self.bump();
                 } else {
                     break;
@@ -391,28 +393,28 @@ impl Parser<'_> {
     }
 
     fn parse_primary(&mut self) -> NodeId {
-        match self.peek().kind {
-            TokenKind::IntLiteral => {
+        match self.peek_kind() {
+            Some(TokenKind::IntLiteral) => {
                 let token = self.bump();
                 self.ast.push(Node::IntLiteral { token })
             }
-            TokenKind::FloatLiteral => {
+            Some(TokenKind::FloatLiteral) => {
                 let token = self.bump();
                 self.ast.push(Node::FloatLiteral { token })
             }
-            TokenKind::StringLiteral => {
+            Some(TokenKind::StringLiteral) => {
                 let token = self.bump();
                 self.ast.push(Node::StringLiteral { token })
             }
-            TokenKind::Keyword(Keyword::True) | TokenKind::Keyword(Keyword::False) => {
+            Some(TokenKind::Keyword(Keyword::True)) | Some(TokenKind::Keyword(Keyword::False)) => {
                 let token = self.bump();
                 self.ast.push(Node::BoolLiteral { token })
             }
-            TokenKind::Ident => {
+            Some(TokenKind::Ident) => {
                 let token = self.bump();
                 self.ast.push(Node::Ident { token })
             }
-            TokenKind::ParenthesisLeft => {
+            Some(TokenKind::ParenthesisLeft) => {
                 let paren = self.bump();
                 let inner = self.parse_expr(PrecedenceLevel::lowest());
                 self.expect(TokenKind::ParenthesisRight);
@@ -426,20 +428,20 @@ impl Parser<'_> {
     }
 
     fn parse_statement(&mut self) -> NodeId {
-        match self.peek().kind {
-            TokenKind::BraceLeft => self.parse_block(),
-            TokenKind::Keyword(Keyword::Let) => self.parse_let(),
-            TokenKind::Keyword(Keyword::Var) => self.parse_var(),
-            TokenKind::Keyword(Keyword::If) => self.parse_if(),
-            TokenKind::Keyword(Keyword::While) => self.parse_while(),
-            TokenKind::Keyword(Keyword::Loop) => self.parse_loop(),
-            TokenKind::Keyword(Keyword::Return) => self.parse_return(),
-            TokenKind::Keyword(Keyword::Break) => {
+        match self.peek_kind() {
+            Some(TokenKind::BraceLeft) => self.parse_block(),
+            Some(TokenKind::Keyword(Keyword::Let)) => self.parse_let(),
+            Some(TokenKind::Keyword(Keyword::Var)) => self.parse_var(),
+            Some(TokenKind::Keyword(Keyword::If)) => self.parse_if(),
+            Some(TokenKind::Keyword(Keyword::While)) => self.parse_while(),
+            Some(TokenKind::Keyword(Keyword::Loop)) => self.parse_loop(),
+            Some(TokenKind::Keyword(Keyword::Return)) => self.parse_return(),
+            Some(TokenKind::Keyword(Keyword::Break)) => {
                 let keyword = self.bump();
                 self.expect(TokenKind::Semicolon);
                 self.ast.push(Node::BreakStmt { keyword })
             }
-            TokenKind::Keyword(Keyword::Continue) => {
+            Some(TokenKind::Keyword(Keyword::Continue)) => {
                 let keyword = self.bump();
                 self.expect(TokenKind::Semicolon);
                 self.ast.push(Node::ContinueStmt { keyword })
@@ -452,10 +454,7 @@ impl Parser<'_> {
         let brace = self.bump();
 
         let mut stmts = Vec::new();
-        while !matches!(
-            self.peek().kind,
-            TokenKind::BraceRight | TokenKind::EndOfFile
-        ) {
+        while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
             stmts.push(self.parse_statement());
         }
         self.expect(TokenKind::BraceRight);
@@ -474,7 +473,7 @@ impl Parser<'_> {
     fn parse_var(&mut self) -> NodeId {
         self.bump();
         let name = self.expect(TokenKind::Ident);
-        let init = if self.peek().kind == TokenKind::Equal {
+        let init = if self.peek_kind() == Some(TokenKind::Equal) {
             self.bump();
             Some(self.parse_expr(PrecedenceLevel::lowest()))
         } else {
@@ -519,7 +518,7 @@ impl Parser<'_> {
 
     fn parse_loop(&mut self) -> NodeId {
         let keyword = self.bump();
-        let count = if self.peek().kind == TokenKind::ParenthesisLeft {
+        let count = if self.peek_kind() == Some(TokenKind::ParenthesisLeft) {
             self.bump();
             let count = self.parse_expr(PrecedenceLevel::lowest());
             self.expect(TokenKind::ParenthesisRight);
@@ -537,7 +536,7 @@ impl Parser<'_> {
 
     fn parse_return(&mut self) -> NodeId {
         let keyword = self.bump();
-        let value = if self.peek().kind == TokenKind::Semicolon {
+        let value = if self.peek_kind() == Some(TokenKind::Semicolon) {
             None
         } else {
             Some(self.parse_expr(PrecedenceLevel::lowest()))
@@ -553,10 +552,10 @@ impl Parser<'_> {
     }
 
     fn parse_type(&mut self) -> NodeId {
-        let mut ty = match self.peek().kind {
-            TokenKind::Keyword(Keyword::Wrap) => self.parse_wrap_or_clamp(true),
-            TokenKind::Keyword(Keyword::Clamp) => self.parse_wrap_or_clamp(false),
-            kind if is_type_name_start(kind) => self.parse_type_name(),
+        let mut ty = match self.peek_kind() {
+            Some(TokenKind::Keyword(Keyword::Wrap)) => self.parse_wrap_or_clamp(true),
+            Some(TokenKind::Keyword(Keyword::Clamp)) => self.parse_wrap_or_clamp(false),
+            Some(kind) if is_type_name_start(kind) => self.parse_type_name(),
             _ => {
                 let token = self.bump();
                 self.ast.push(Node::Error { token })
@@ -564,9 +563,9 @@ impl Parser<'_> {
         };
 
         loop {
-            ty = match self.peek().kind {
-                TokenKind::BracketLeft => self.parse_array(ty),
-                TokenKind::LessThan => self.parse_vector(ty),
+            ty = match self.peek_kind() {
+                Some(TokenKind::BracketLeft) => self.parse_array(ty),
+                Some(TokenKind::LessThan) => self.parse_vector(ty),
                 _ => break,
             };
         }
@@ -588,7 +587,7 @@ impl Parser<'_> {
 
     fn parse_type_name(&mut self) -> NodeId {
         let mut segments = vec![self.bump()];
-        while self.peek().kind == TokenKind::ColonColon {
+        while self.peek_kind() == Some(TokenKind::ColonColon) {
             self.bump();
             segments.push(self.expect(TokenKind::Ident));
         }
@@ -597,7 +596,7 @@ impl Parser<'_> {
 
     fn parse_array(&mut self, element: NodeId) -> NodeId {
         let bracket = self.bump();
-        let size = if self.peek().kind == TokenKind::BracketRight {
+        let size = if self.peek_kind() == Some(TokenKind::BracketRight) {
             None
         } else {
             Some(self.parse_expr(PrecedenceLevel::lowest()))
@@ -679,25 +678,24 @@ mod tests {
     }
 
     fn walk(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Tree {
-        let text_of = |token: TokenId| tokens.text(source, token).to_string();
+        let text_of = |token: &TokenId| tokens.text(source, *token).expect("invalid token");
         let child = |id: NodeId| walk(ast, tokens, source, id);
 
         match ast.get(id) {
-            Node::IntLiteral { token } => leaf(Tag::IntLiteral, &text_of(*token)),
-            Node::FloatLiteral { token } => leaf(Tag::FloatLiteral, &text_of(*token)),
-            Node::StringLiteral { token } => leaf(Tag::StringLiteral, &text_of(*token)),
-            Node::BoolLiteral { token } => leaf(Tag::BoolLiteral, &text_of(*token)),
-            Node::Ident { token } => leaf(Tag::Ident, &text_of(*token)),
-            Node::Error { token } => leaf(Tag::Error, &text_of(*token)),
-
-            Node::Paren { paren, inner } => node(Tag::Paren, &text_of(*paren), vec![child(*inner)]),
-            Node::Unary { op, operand } => node(Tag::Unary, &text_of(*op), vec![child(*operand)]),
+            Node::IntLiteral { token } => leaf(Tag::IntLiteral, text_of(token)),
+            Node::FloatLiteral { token } => leaf(Tag::FloatLiteral, text_of(token)),
+            Node::StringLiteral { token } => leaf(Tag::StringLiteral, text_of(token)),
+            Node::BoolLiteral { token } => leaf(Tag::BoolLiteral, text_of(token)),
+            Node::Ident { token } => leaf(Tag::Ident, text_of(token)),
+            Node::Error { token } => leaf(Tag::Error, text_of(token)),
+            Node::Paren { paren, inner } => node(Tag::Paren, text_of(paren), vec![child(*inner)]),
+            Node::Unary { op, operand } => node(Tag::Unary, text_of(op), vec![child(*operand)]),
             Node::Binary { op, lhs, rhs } => {
-                node(Tag::Binary, &text_of(*op), vec![child(*lhs), child(*rhs)])
+                node(Tag::Binary, text_of(op), vec![child(*lhs), child(*rhs)])
             }
             Node::Assign { op, target, value } => node(
                 Tag::Assign,
-                &text_of(*op),
+                text_of(op),
                 vec![child(*target), child(*value)],
             ),
             Node::Ternary {
@@ -707,7 +705,7 @@ mod tests {
                 else_branch,
             } => node(
                 Tag::Ternary,
-                &text_of(*question),
+                text_of(question),
                 vec![child(*cond), child(*then_branch), child(*else_branch)],
             ),
             Node::Call {
@@ -717,7 +715,7 @@ mod tests {
             } => {
                 let mut children = vec![child(*callee)];
                 children.extend(args.iter().map(|&arg| child(arg)));
-                node(Tag::Call, &text_of(*paren), children)
+                node(Tag::Call, text_of(paren), children)
             }
             Node::Index {
                 bracket,
@@ -725,20 +723,20 @@ mod tests {
                 index,
             } => node(
                 Tag::Index,
-                &text_of(*bracket),
+                text_of(bracket),
                 vec![child(*base), child(*index)],
             ),
-            Node::Field { name, base } => node(Tag::Field, &text_of(*name), vec![child(*base)]),
+            Node::Field { name, base } => node(Tag::Field, text_of(name), vec![child(*base)]),
             Node::Block { brace, stmts } => node(
                 Tag::Block,
-                &text_of(*brace),
+                text_of(brace),
                 stmts.iter().map(|&s| child(s)).collect(),
             ),
             Node::ExprStmt { expr } => node(Tag::ExprStmt, "", vec![child(*expr)]),
-            Node::LetStmt { name, init } => node(Tag::LetStmt, &text_of(*name), vec![child(*init)]),
+            Node::LetStmt { name, init } => node(Tag::LetStmt, text_of(name), vec![child(*init)]),
             Node::VarStmt { name, init } => node(
                 Tag::VarStmt,
-                &text_of(*name),
+                text_of(name),
                 init.iter().map(|&i| child(i)).collect(),
             ),
             Node::IfStmt {
@@ -749,7 +747,7 @@ mod tests {
             } => {
                 let mut children = vec![child(*cond), child(*then_branch)];
                 children.extend(else_branch.iter().map(|&e| child(e)));
-                node(Tag::IfStmt, &text_of(*keyword), children)
+                node(Tag::IfStmt, text_of(keyword), children)
             }
             Node::WhileStmt {
                 keyword,
@@ -757,7 +755,7 @@ mod tests {
                 body,
             } => node(
                 Tag::WhileStmt,
-                &text_of(*keyword),
+                text_of(keyword),
                 vec![child(*cond), child(*body)],
             ),
             Node::LoopStmt {
@@ -767,29 +765,29 @@ mod tests {
             } => {
                 let mut children: Vec<_> = count.iter().map(|&c| child(c)).collect();
                 children.push(child(*body));
-                node(Tag::LoopStmt, &text_of(*keyword), children)
+                node(Tag::LoopStmt, text_of(keyword), children)
             }
             Node::ReturnStmt { keyword, value } => node(
                 Tag::ReturnStmt,
-                &text_of(*keyword),
+                text_of(keyword),
                 value.iter().map(|&v| child(v)).collect(),
             ),
-            Node::BreakStmt { keyword } => leaf(Tag::BreakStmt, &text_of(*keyword)),
-            Node::ContinueStmt { keyword } => leaf(Tag::ContinueStmt, &text_of(*keyword)),
+            Node::BreakStmt { keyword } => leaf(Tag::BreakStmt, text_of(keyword)),
+            Node::ContinueStmt { keyword } => leaf(Tag::ContinueStmt, text_of(keyword)),
 
             Node::TypeName { segments } => {
                 let path = segments
                     .iter()
-                    .map(|&t| text_of(t))
+                    .map(|t| text_of(t))
                     .collect::<Vec<_>>()
                     .join("::");
                 leaf(Tag::TypeName, &path)
             }
             Node::Wrap { keyword, size } => {
-                node(Tag::TypeWrap, &text_of(*keyword), vec![child(*size)])
+                node(Tag::TypeWrap, text_of(keyword), vec![child(*size)])
             }
             Node::Clamp { keyword, size } => {
-                node(Tag::TypeClamp, &text_of(*keyword), vec![child(*size)])
+                node(Tag::TypeClamp, text_of(keyword), vec![child(*size)])
             }
             Node::Array {
                 bracket,
@@ -798,7 +796,7 @@ mod tests {
             } => {
                 let mut children = vec![child(*element)];
                 children.extend(size.iter().map(|&s| child(s)));
-                node(Tag::TypeArray, &text_of(*bracket), children)
+                node(Tag::TypeArray, text_of(bracket), children)
             }
             Node::Vector {
                 angle,
@@ -806,7 +804,7 @@ mod tests {
                 size,
             } => node(
                 Tag::TypeVector,
-                &text_of(*angle),
+                text_of(angle),
                 vec![child(*element), child(*size)],
             ),
         }

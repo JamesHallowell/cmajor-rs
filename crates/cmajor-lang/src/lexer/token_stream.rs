@@ -42,18 +42,17 @@ impl TokenStream {
         self.tokens.is_empty()
     }
 
-    pub fn token(&self, id: TokenId) -> Token {
-        self.tokens[id.index()]
+    pub fn token(&self, id: TokenId) -> Option<Token> {
+        self.tokens.get(id.index()).copied()
     }
 
-    pub fn span(&self, id: TokenId) -> Range<u32> {
-        let start = self.positions[id.index()];
-        let len = self.tokens[id.index()].len;
-        start..start + len
+    pub fn span(&self, id: TokenId) -> Option<Range<u32>> {
+        let start = *self.positions.get(id.index())?;
+        Some(start..start + self.tokens[id.index()].len)
     }
 
-    pub fn text<'src>(&self, source: &'src str, id: TokenId) -> &'src str {
-        let span = self.span(id);
-        &source[span.start as usize..span.end as usize]
+    pub fn text<'src>(&self, source: &'src str, id: TokenId) -> Option<&'src str> {
+        let span = self.span(id)?;
+        Some(&source[span.start as usize..span.end as usize])
     }
 }
