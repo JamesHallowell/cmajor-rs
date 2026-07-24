@@ -1,6 +1,9 @@
-use crate::{
-    ast::{Ast, Node, NodeId},
-    lexer::{Keyword, Token, TokenId, TokenKind, TokenStream},
+use {
+    crate::{
+        ast::{Ast, Node, NodeId},
+        lexer::{Keyword, Token, TokenId, TokenKind, TokenStream},
+    },
+    bp::{BindingPower, InfixBindingPower, PrecedenceLevel},
 };
 
 pub struct Parse {
@@ -53,11 +56,11 @@ fn is_type_name_start(kind: TokenKind) -> bool {
     if kind == TokenKind::Ident {
         return true;
     }
-    let TokenKind::Keyword(kw) = kind else {
+    let TokenKind::Keyword(keyword) = kind else {
         return false;
     };
     matches!(
-        kw,
+        keyword,
         Keyword::Bool
             | Keyword::Int
             | Keyword::Int32
@@ -74,30 +77,173 @@ fn is_type_name_start(kind: TokenKind) -> bool {
     )
 }
 
-fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
-    use TokenKind::*;
-    Some(match kind {
-        Equal | ArrowLeft => (2, 1),
-        PipePipe => (4, 5),
-        AmpersandAmpersand => (6, 7),
-        Pipe => (8, 9),
-        Caret => (10, 11),
-        Ampersand => (12, 13),
-        EqualEqual | BangEqual => (14, 15),
-        LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual => (16, 17),
-        ShiftLeft | ShiftRight | ShiftRightShiftRight => (18, 19),
-        Plus | Minus => (20, 21),
-        Star | Slash | Percent => (22, 23),
-        StarStar => (25, 24),
-        _ => return None,
-    })
+mod bp {
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+    pub struct BindingPower(u8);
+
+    #[derive(Debug, Copy, Clone)]
+    pub struct InfixBindingPower {
+        pub binds_at: BindingPower,
+        pub min_for_rhs: BindingPower,
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub enum PrecedenceLevel {
+        Assign,
+        Ternary,
+        Or,
+        And,
+        BitwiseOr,
+        BitwiseXor,
+        BitwiseAnd,
+        Equality,
+        Relational,
+        Shift,
+        Additive,
+        Multiplicative,
+        Power,
+        Unary,
+    }
+
+    impl PrecedenceLevel {
+        pub const fn lowest() -> BindingPower {
+            BindingPower(0)
+        }
+
+        pub const fn base(self) -> BindingPower {
+            BindingPower(2 * (self as u8 + 1))
+        }
+
+        pub const fn left_associative(self) -> InfixBindingPower {
+            let base = self.base();
+            InfixBindingPower {
+                binds_at: base,
+                min_for_rhs: BindingPower(base.0 + 1),
+            }
+        }
+
+        pub const fn right_associative(self) -> InfixBindingPower {
+            let base = self.base();
+            InfixBindingPower {
+                binds_at: BindingPower(base.0 + 1),
+                min_for_rhs: base,
+            }
+        }
+    }
 }
 
-const TERNARY_BP: u8 = 3;
-const TERNARY_RIGHT_BP: u8 = 3;
-const UNARY_BP: u8 = 26;
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum BinaryOp {
+    Assign,
+    Write,
+    Or,
+    And,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseAnd,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    ShiftLeft,
+    ShiftRight,
+    UnsignedShiftRight,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Power,
+}
 
-const TYPE_SIZE_BP: u8 = 18;
+impl BinaryOp {
+    fn from_token(kind: TokenKind) -> Option<Self> {
+        Some(match kind {
+            TokenKind::Equal => Self::Assign,
+            TokenKind::ArrowLeft => Self::Write,
+            TokenKind::PipePipe => Self::Or,
+            TokenKind::AmpersandAmpersand => Self::And,
+            TokenKind::Pipe => Self::BitwiseOr,
+            TokenKind::Caret => Self::BitwiseXor,
+            TokenKind::Ampersand => Self::BitwiseAnd,
+            TokenKind::EqualEqual => Self::Equal,
+            TokenKind::BangEqual => Self::NotEqual,
+            TokenKind::LessThan => Self::LessThan,
+            TokenKind::LessThanOrEqual => Self::LessThanOrEqual,
+            TokenKind::GreaterThan => Self::GreaterThan,
+            TokenKind::GreaterThanOrEqual => Self::GreaterThanOrEqual,
+            TokenKind::ShiftLeft => Self::ShiftLeft,
+            TokenKind::ShiftRight => Self::ShiftRight,
+            TokenKind::ShiftRightShiftRight => Self::UnsignedShiftRight,
+            TokenKind::Plus => Self::Add,
+            TokenKind::Minus => Self::Subtract,
+            TokenKind::Star => Self::Multiply,
+            TokenKind::Slash => Self::Divide,
+            TokenKind::Percent => Self::Remainder,
+            TokenKind::StarStar => Self::Power,
+            _ => return None,
+        })
+    }
+
+    fn binding_power(self) -> InfixBindingPower {
+        match self {
+            Self::Assign | Self::Write => PrecedenceLevel::Assign.right_associative(),
+            Self::Or => PrecedenceLevel::Or.left_associative(),
+            Self::And => PrecedenceLevel::And.left_associative(),
+            Self::BitwiseOr => PrecedenceLevel::BitwiseOr.left_associative(),
+            Self::BitwiseXor => PrecedenceLevel::BitwiseXor.left_associative(),
+            Self::BitwiseAnd => PrecedenceLevel::BitwiseAnd.left_associative(),
+            Self::Equal | Self::NotEqual => PrecedenceLevel::Equality.left_associative(),
+            Self::LessThan
+            | Self::LessThanOrEqual
+            | Self::GreaterThan
+            | Self::GreaterThanOrEqual => PrecedenceLevel::Relational.left_associative(),
+            Self::ShiftLeft | Self::ShiftRight | Self::UnsignedShiftRight => {
+                PrecedenceLevel::Shift.left_associative()
+            }
+            Self::Add | Self::Subtract => PrecedenceLevel::Additive.left_associative(),
+            Self::Multiply | Self::Divide | Self::Remainder => {
+                PrecedenceLevel::Multiplicative.left_associative()
+            }
+            Self::Power => PrecedenceLevel::Power.right_associative(),
+        }
+    }
+
+    fn is_assignment(self) -> bool {
+        matches!(self, Self::Assign | Self::Write)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Infix {
+    Binary(BinaryOp),
+    Ternary,
+}
+
+impl Infix {
+    fn from_token(kind: TokenKind) -> Option<Self> {
+        if kind == TokenKind::Question {
+            Some(Self::Ternary)
+        } else {
+            BinaryOp::from_token(kind).map(Self::Binary)
+        }
+    }
+
+    fn binding_power(self) -> InfixBindingPower {
+        match self {
+            Self::Ternary => {
+                let base = PrecedenceLevel::Ternary.base();
+                InfixBindingPower {
+                    binds_at: base,
+                    min_for_rhs: base,
+                }
+            }
+            Self::Binary(op) => op.binding_power(),
+        }
+    }
+}
 
 fn is_prefix_op(kind: TokenKind) -> bool {
     use TokenKind::*;
@@ -135,43 +281,47 @@ impl Parser<'_> {
         self.peek().kind == TokenKind::Keyword(keyword)
     }
 
-    fn parse_expr(&mut self, min_bp: u8) -> NodeId {
+    fn parse_expr(&mut self, min_binding_power: BindingPower) -> NodeId {
         let mut lhs = self.parse_prefix();
 
         loop {
             let kind = self.peek().kind;
 
-            if kind == TokenKind::Question && TERNARY_BP >= min_bp {
-                let question = self.bump();
-                let then_branch = self.parse_expr(0);
-                self.expect(TokenKind::Colon);
-                let else_branch = self.parse_expr(TERNARY_RIGHT_BP);
-                lhs = self.ast.push(Node::Ternary {
-                    question,
-                    cond: lhs,
-                    then_branch,
-                    else_branch,
-                });
-                continue;
-            }
-
-            let Some((l_bp, r_bp)) = infix_binding_power(kind) else {
+            let Some(infix) = Infix::from_token(kind) else {
                 break;
             };
-            if l_bp < min_bp {
+            let binding_power = infix.binding_power();
+            if binding_power.binds_at < min_binding_power {
                 break;
             }
 
-            let op = self.bump();
-            let rhs = self.parse_expr(r_bp);
-            lhs = self.ast.push(match kind {
-                TokenKind::Equal | TokenKind::ArrowLeft => Node::Assign {
-                    op,
-                    target: lhs,
-                    value: rhs,
-                },
-                _ => Node::Binary { op, lhs, rhs },
-            });
+            lhs = match infix {
+                Infix::Ternary => {
+                    let question = self.bump();
+                    let then_branch = self.parse_expr(PrecedenceLevel::lowest());
+                    self.expect(TokenKind::Colon);
+                    let else_branch = self.parse_expr(binding_power.min_for_rhs);
+                    self.ast.push(Node::Ternary {
+                        question,
+                        cond: lhs,
+                        then_branch,
+                        else_branch,
+                    })
+                }
+                Infix::Binary(bin_op) => {
+                    let op = self.bump();
+                    let rhs = self.parse_expr(binding_power.min_for_rhs);
+                    self.ast.push(if bin_op.is_assignment() {
+                        Node::Assign {
+                            op,
+                            target: lhs,
+                            value: rhs,
+                        }
+                    } else {
+                        Node::Binary { op, lhs, rhs }
+                    })
+                }
+            };
         }
 
         lhs
@@ -180,7 +330,7 @@ impl Parser<'_> {
     fn parse_prefix(&mut self) -> NodeId {
         if is_prefix_op(self.peek().kind) {
             let op = self.bump();
-            let operand = self.parse_expr(UNARY_BP);
+            let operand = self.parse_expr(PrecedenceLevel::Unary.base());
             self.ast.push(Node::Unary { op, operand })
         } else {
             self.parse_postfix()
@@ -207,7 +357,7 @@ impl Parser<'_> {
         let mut args = Vec::new();
         if self.peek().kind != TokenKind::ParenthesisRight {
             loop {
-                args.push(self.parse_expr(0));
+                args.push(self.parse_expr(PrecedenceLevel::lowest()));
                 if self.peek().kind == TokenKind::Comma {
                     self.bump();
                 } else {
@@ -225,7 +375,7 @@ impl Parser<'_> {
 
     fn parse_index(&mut self, base: NodeId) -> NodeId {
         let bracket = self.bump();
-        let index = self.parse_expr(0);
+        let index = self.parse_expr(PrecedenceLevel::lowest());
         self.expect(TokenKind::BracketRight);
         self.ast.push(Node::Index {
             bracket,
@@ -264,7 +414,7 @@ impl Parser<'_> {
             }
             TokenKind::ParenthesisLeft => {
                 let paren = self.bump();
-                let inner = self.parse_expr(0);
+                let inner = self.parse_expr(PrecedenceLevel::lowest());
                 self.expect(TokenKind::ParenthesisRight);
                 self.ast.push(Node::Paren { paren, inner })
             }
@@ -285,14 +435,14 @@ impl Parser<'_> {
             TokenKind::Keyword(Keyword::Loop) => self.parse_loop(),
             TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::Break) => {
-                let kw = self.bump();
+                let keyword = self.bump();
                 self.expect(TokenKind::Semicolon);
-                self.ast.push(Node::BreakStmt { kw })
+                self.ast.push(Node::BreakStmt { keyword })
             }
             TokenKind::Keyword(Keyword::Continue) => {
-                let kw = self.bump();
+                let keyword = self.bump();
                 self.expect(TokenKind::Semicolon);
-                self.ast.push(Node::ContinueStmt { kw })
+                self.ast.push(Node::ContinueStmt { keyword })
             }
             _ => self.parse_expr_stmt(),
         }
@@ -316,7 +466,7 @@ impl Parser<'_> {
         self.bump();
         let name = self.expect(TokenKind::Ident);
         self.expect(TokenKind::Equal);
-        let init = self.parse_expr(0);
+        let init = self.parse_expr(PrecedenceLevel::lowest());
         self.expect(TokenKind::Semicolon);
         self.ast.push(Node::LetStmt { name, init })
     }
@@ -326,7 +476,7 @@ impl Parser<'_> {
         let name = self.expect(TokenKind::Ident);
         let init = if self.peek().kind == TokenKind::Equal {
             self.bump();
-            Some(self.parse_expr(0))
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
         } else {
             None
         };
@@ -335,9 +485,9 @@ impl Parser<'_> {
     }
 
     fn parse_if(&mut self) -> NodeId {
-        let kw = self.bump();
+        let keyword = self.bump();
         self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr(0);
+        let cond = self.parse_expr(PrecedenceLevel::lowest());
         self.expect(TokenKind::ParenthesisRight);
         let then_branch = self.parse_statement();
         let else_branch = if self.at_keyword(Keyword::Else) {
@@ -347,7 +497,7 @@ impl Parser<'_> {
             None
         };
         self.ast.push(Node::IfStmt {
-            kw,
+            keyword,
             cond,
             then_branch,
             else_branch,
@@ -355,41 +505,49 @@ impl Parser<'_> {
     }
 
     fn parse_while(&mut self) -> NodeId {
-        let kw = self.bump();
+        let keyword = self.bump();
         self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr(0);
+        let cond = self.parse_expr(PrecedenceLevel::lowest());
         self.expect(TokenKind::ParenthesisRight);
         let body = self.parse_statement();
-        self.ast.push(Node::WhileStmt { kw, cond, body })
+        self.ast.push(Node::WhileStmt {
+            keyword,
+            cond,
+            body,
+        })
     }
 
     fn parse_loop(&mut self) -> NodeId {
-        let kw = self.bump();
+        let keyword = self.bump();
         let count = if self.peek().kind == TokenKind::ParenthesisLeft {
             self.bump();
-            let count = self.parse_expr(0);
+            let count = self.parse_expr(PrecedenceLevel::lowest());
             self.expect(TokenKind::ParenthesisRight);
             Some(count)
         } else {
             None
         };
         let body = self.parse_block();
-        self.ast.push(Node::LoopStmt { kw, count, body })
+        self.ast.push(Node::LoopStmt {
+            keyword,
+            count,
+            body,
+        })
     }
 
     fn parse_return(&mut self) -> NodeId {
-        let kw = self.bump();
+        let keyword = self.bump();
         let value = if self.peek().kind == TokenKind::Semicolon {
             None
         } else {
-            Some(self.parse_expr(0))
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
         };
         self.expect(TokenKind::Semicolon);
-        self.ast.push(Node::ReturnStmt { kw, value })
+        self.ast.push(Node::ReturnStmt { keyword, value })
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
-        let expr = self.parse_expr(0);
+        let expr = self.parse_expr(PrecedenceLevel::lowest());
         self.expect(TokenKind::Semicolon);
         self.ast.push(Node::ExprStmt { expr })
     }
@@ -407,8 +565,8 @@ impl Parser<'_> {
 
         loop {
             ty = match self.peek().kind {
-                TokenKind::BracketLeft => self.parse_type_array(ty),
-                TokenKind::LessThan => self.parse_type_vector(ty),
+                TokenKind::BracketLeft => self.parse_array(ty),
+                TokenKind::LessThan => self.parse_vector(ty),
                 _ => break,
             };
         }
@@ -417,14 +575,14 @@ impl Parser<'_> {
     }
 
     fn parse_wrap_or_clamp(&mut self, is_wrap: bool) -> NodeId {
-        let kw = self.bump();
+        let keyword = self.bump();
         self.expect(TokenKind::LessThan);
-        let size = self.parse_expr(TYPE_SIZE_BP);
+        let size = self.parse_expr(PrecedenceLevel::Shift.base());
         self.expect(TokenKind::GreaterThan);
         self.ast.push(if is_wrap {
-            Node::TypeWrap { kw, size }
+            Node::Wrap { keyword, size }
         } else {
-            Node::TypeClamp { kw, size }
+            Node::Clamp { keyword, size }
         })
     }
 
@@ -437,26 +595,26 @@ impl Parser<'_> {
         self.ast.push(Node::TypeName { segments })
     }
 
-    fn parse_type_array(&mut self, element: NodeId) -> NodeId {
+    fn parse_array(&mut self, element: NodeId) -> NodeId {
         let bracket = self.bump();
         let size = if self.peek().kind == TokenKind::BracketRight {
             None
         } else {
-            Some(self.parse_expr(0))
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
         };
         self.expect(TokenKind::BracketRight);
-        self.ast.push(Node::TypeArray {
+        self.ast.push(Node::Array {
             bracket,
             element,
             size,
         })
     }
 
-    fn parse_type_vector(&mut self, element: NodeId) -> NodeId {
+    fn parse_vector(&mut self, element: NodeId) -> NodeId {
         let angle = self.bump();
-        let size = self.parse_expr(TYPE_SIZE_BP);
+        let size = self.parse_expr(PrecedenceLevel::Shift.base());
         self.expect(TokenKind::GreaterThan);
-        self.ast.push(Node::TypeVector {
+        self.ast.push(Node::Vector {
             angle,
             element,
             size,
@@ -571,7 +729,6 @@ mod tests {
                 vec![child(*base), child(*index)],
             ),
             Node::Field { name, base } => node(Tag::Field, &text_of(*name), vec![child(*base)]),
-
             Node::Block { brace, stmts } => node(
                 Tag::Block,
                 &text_of(*brace),
@@ -585,32 +742,40 @@ mod tests {
                 init.iter().map(|&i| child(i)).collect(),
             ),
             Node::IfStmt {
-                kw,
+                keyword,
                 cond,
                 then_branch,
                 else_branch,
             } => {
                 let mut children = vec![child(*cond), child(*then_branch)];
                 children.extend(else_branch.iter().map(|&e| child(e)));
-                node(Tag::IfStmt, &text_of(*kw), children)
+                node(Tag::IfStmt, &text_of(*keyword), children)
             }
-            Node::WhileStmt { kw, cond, body } => node(
+            Node::WhileStmt {
+                keyword,
+                cond,
+                body,
+            } => node(
                 Tag::WhileStmt,
-                &text_of(*kw),
+                &text_of(*keyword),
                 vec![child(*cond), child(*body)],
             ),
-            Node::LoopStmt { kw, count, body } => {
+            Node::LoopStmt {
+                keyword,
+                count,
+                body,
+            } => {
                 let mut children: Vec<_> = count.iter().map(|&c| child(c)).collect();
                 children.push(child(*body));
-                node(Tag::LoopStmt, &text_of(*kw), children)
+                node(Tag::LoopStmt, &text_of(*keyword), children)
             }
-            Node::ReturnStmt { kw, value } => node(
+            Node::ReturnStmt { keyword, value } => node(
                 Tag::ReturnStmt,
-                &text_of(*kw),
+                &text_of(*keyword),
                 value.iter().map(|&v| child(v)).collect(),
             ),
-            Node::BreakStmt { kw } => leaf(Tag::BreakStmt, &text_of(*kw)),
-            Node::ContinueStmt { kw } => leaf(Tag::ContinueStmt, &text_of(*kw)),
+            Node::BreakStmt { keyword } => leaf(Tag::BreakStmt, &text_of(*keyword)),
+            Node::ContinueStmt { keyword } => leaf(Tag::ContinueStmt, &text_of(*keyword)),
 
             Node::TypeName { segments } => {
                 let path = segments
@@ -620,9 +785,13 @@ mod tests {
                     .join("::");
                 leaf(Tag::TypeName, &path)
             }
-            Node::TypeWrap { kw, size } => node(Tag::TypeWrap, &text_of(*kw), vec![child(*size)]),
-            Node::TypeClamp { kw, size } => node(Tag::TypeClamp, &text_of(*kw), vec![child(*size)]),
-            Node::TypeArray {
+            Node::Wrap { keyword, size } => {
+                node(Tag::TypeWrap, &text_of(*keyword), vec![child(*size)])
+            }
+            Node::Clamp { keyword, size } => {
+                node(Tag::TypeClamp, &text_of(*keyword), vec![child(*size)])
+            }
+            Node::Array {
                 bracket,
                 element,
                 size,
@@ -631,7 +800,7 @@ mod tests {
                 children.extend(size.iter().map(|&s| child(s)));
                 node(Tag::TypeArray, &text_of(*bracket), children)
             }
-            Node::TypeVector {
+            Node::Vector {
                 angle,
                 element,
                 size,

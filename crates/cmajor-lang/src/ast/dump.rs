@@ -155,22 +155,22 @@ fn write_node(
                 .join("::");
             let _ = writeln!(out, "{indent}TypeName {path:?}");
         }
-        Node::TypeWrap { size, .. } => {
+        Node::Wrap { size, .. } => {
             let _ = writeln!(out, "{indent}TypeWrap");
             child(*size, out);
         }
-        Node::TypeClamp { size, .. } => {
+        Node::Clamp { size, .. } => {
             let _ = writeln!(out, "{indent}TypeClamp");
             child(*size, out);
         }
-        Node::TypeArray { element, size, .. } => {
+        Node::Array { element, size, .. } => {
             let _ = writeln!(out, "{indent}TypeArray");
             child(*element, out);
             if let Some(size) = size {
                 child(*size, out);
             }
         }
-        Node::TypeVector { element, size, .. } => {
+        Node::Vector { element, size, .. } => {
             let _ = writeln!(out, "{indent}TypeVector");
             child(*element, out);
             child(*size, out);

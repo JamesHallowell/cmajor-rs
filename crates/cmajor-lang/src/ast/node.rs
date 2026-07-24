@@ -34,7 +34,6 @@ pub enum Node {
     Ident {
         token: TokenId,
     },
-
     Paren {
         paren: TokenId,
         inner: NodeId,
@@ -73,7 +72,6 @@ pub enum Node {
         name: TokenId,
         base: NodeId,
     },
-
     Block {
         brace: TokenId,
         stmts: Vec<NodeId>,
@@ -90,54 +88,52 @@ pub enum Node {
         init: Option<NodeId>,
     },
     IfStmt {
-        kw: TokenId,
+        keyword: TokenId,
         cond: NodeId,
         then_branch: NodeId,
         else_branch: Option<NodeId>,
     },
     WhileStmt {
-        kw: TokenId,
+        keyword: TokenId,
         cond: NodeId,
         body: NodeId,
     },
     LoopStmt {
-        kw: TokenId,
+        keyword: TokenId,
         count: Option<NodeId>,
         body: NodeId,
     },
     ReturnStmt {
-        kw: TokenId,
+        keyword: TokenId,
         value: Option<NodeId>,
     },
     BreakStmt {
-        kw: TokenId,
+        keyword: TokenId,
     },
     ContinueStmt {
-        kw: TokenId,
+        keyword: TokenId,
     },
-
     TypeName {
         segments: Vec<TokenId>,
     },
-    TypeWrap {
-        kw: TokenId,
+    Wrap {
+        keyword: TokenId,
         size: NodeId,
     },
-    TypeClamp {
-        kw: TokenId,
+    Clamp {
+        keyword: TokenId,
         size: NodeId,
     },
-    TypeArray {
+    Array {
         bracket: TokenId,
         element: NodeId,
         size: Option<NodeId>,
     },
-    TypeVector {
+    Vector {
         angle: TokenId,
         element: NodeId,
         size: NodeId,
     },
-
     Error {
         token: TokenId,
     },
