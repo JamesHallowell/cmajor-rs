@@ -1,51 +1,50 @@
 use std::str::Chars;
 
-pub(crate) const EOF_CHAR: char = '\0';
-
 pub(crate) struct Cursor<'a> {
-    len_consumed: u32,
     chars: Chars<'a>,
+    bytes_taken: u32,
 }
 
 impl<'a> Cursor<'a> {
-    pub(crate) fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str) -> Self {
         Self {
-            len_consumed: 0,
             chars: input.chars(),
+            bytes_taken: 0,
         }
     }
 
-    pub(crate) fn len_consumed(&self) -> u32 {
-        self.len_consumed
+    pub fn bytes_taken(&self) -> u32 {
+        self.bytes_taken
     }
 
-    pub(crate) fn reset_len_consumed(&mut self) {
-        self.len_consumed = 0;
+    pub fn reset_bytes_taken(&mut self) {
+        self.bytes_taken = 0;
     }
 
-    pub(crate) fn peek(&self) -> char {
-        self.chars.clone().next().unwrap_or(EOF_CHAR)
+    pub fn peek(&self) -> Option<char> {
+        self.chars.clone().next()
     }
 
-    pub(crate) fn peek_second(&self) -> char {
+    pub fn peek_twice(&self) -> Option<(char, char)> {
         let mut chars = self.chars.clone();
-        chars.next();
-        chars.next().unwrap_or(EOF_CHAR)
+        let first = chars.next()?;
+        let second = chars.next()?;
+        Some((first, second))
     }
 
-    pub(crate) fn is_eof(&self) -> bool {
+    pub fn exhausted(&self) -> bool {
         self.chars.as_str().is_empty()
     }
 
-    pub(crate) fn bump(&mut self) -> Option<char> {
+    pub fn take(&mut self) -> Option<char> {
         let c = self.chars.next()?;
-        self.len_consumed += c.len_utf8() as u32;
+        self.bytes_taken += c.len_utf8() as u32;
         Some(c)
     }
 
-    pub(crate) fn eat_while(&mut self, mut predicate: impl FnMut(char) -> bool) {
-        while predicate(self.peek()) && !self.is_eof() {
-            self.bump();
+    pub fn take_while(&mut self, mut predicate: impl FnMut(char) -> bool) {
+        while !self.exhausted() && predicate(self.peek().unwrap()) {
+            self.take();
         }
     }
 }

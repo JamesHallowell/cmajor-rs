@@ -1,5 +1,5 @@
 use crate::lexer::{
-    cursor::{Cursor, EOF_CHAR},
+    cursor::Cursor,
     token::{Keyword, Token, TokenKind, Trivia},
 };
 
@@ -32,10 +32,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn next_token(&mut self) -> Token {
-        self.cursor.reset_len_consumed();
+        self.cursor.reset_bytes_taken();
         let start = self.pos;
 
-        let Some(c) = self.cursor.bump() else {
+        let Some(c) = self.cursor.take() else {
             return Token {
                 kind: TokenKind::EndOfFile,
                 len: 0,
@@ -44,12 +44,12 @@ impl<'a> Lexer<'a> {
 
         let kind = match c {
             c if is_whitespace(c) => {
-                self.cursor.eat_while(is_whitespace);
+                self.cursor.take_while(is_whitespace);
                 TokenKind::Trivia(Trivia::Whitespace)
             }
 
-            '/' if self.cursor.peek() == '/' => self.line_comment(),
-            '/' if self.cursor.peek() == '*' => self.block_comment(),
+            '/' if self.cursor.peek() == Some('/') => self.line_comment(),
+            '/' if self.cursor.peek() == Some('*') => self.block_comment(),
 
             c if is_ident_start(c) => self.ident(),
             c if c.is_ascii_digit() => self.number(),
@@ -57,12 +57,12 @@ impl<'a> Lexer<'a> {
 
             '+' => self.one_or_two('+', TokenKind::PlusPlus, TokenKind::Plus),
             '-' => match self.cursor.peek() {
-                '-' => {
-                    self.cursor.bump();
+                Some('-') => {
+                    self.cursor.take();
                     TokenKind::MinusMinus
                 }
-                '>' => {
-                    self.cursor.bump();
+                Some('>') => {
+                    self.cursor.take();
                     TokenKind::ArrowRight
                 }
                 _ => TokenKind::Minus,
@@ -80,32 +80,32 @@ impl<'a> Lexer<'a> {
             '=' => self.one_or_two('=', TokenKind::EqualEqual, TokenKind::Equal),
 
             '<' => match self.cursor.peek() {
-                '<' => {
-                    self.cursor.bump();
+                Some('<') => {
+                    self.cursor.take();
                     TokenKind::ShiftLeft
                 }
-                '=' => {
-                    self.cursor.bump();
+                Some('=') => {
+                    self.cursor.take();
                     TokenKind::LessThanOrEqual
                 }
-                '-' => {
-                    self.cursor.bump();
+                Some('-') => {
+                    self.cursor.take();
                     TokenKind::ArrowLeft
                 }
                 _ => TokenKind::LessThan,
             },
             '>' => match self.cursor.peek() {
-                '>' if self.cursor.peek_second() == '>' => {
-                    self.cursor.bump();
-                    self.cursor.bump();
+                Some('>') if self.cursor.peek_twice() == Some(('>', '>')) => {
+                    self.cursor.take();
+                    self.cursor.take();
                     TokenKind::ShiftRightShiftRight
                 }
-                '>' => {
-                    self.cursor.bump();
+                Some('>') => {
+                    self.cursor.take();
                     TokenKind::ShiftRight
                 }
-                '=' => {
-                    self.cursor.bump();
+                Some('=') => {
+                    self.cursor.take();
                     TokenKind::GreaterThanOrEqual
                 }
                 _ => TokenKind::GreaterThan,
@@ -125,7 +125,7 @@ impl<'a> Lexer<'a> {
             _ => TokenKind::Error,
         };
 
-        let len = self.cursor.len_consumed();
+        let len = self.cursor.bytes_taken();
         self.pos += len;
 
         let kind = if kind == TokenKind::Ident {
@@ -141,8 +141,8 @@ impl<'a> Lexer<'a> {
     }
 
     fn one_or_two(&mut self, next: char, two: TokenKind, one: TokenKind) -> TokenKind {
-        if self.cursor.peek() == next {
-            self.cursor.bump();
+        if self.cursor.peek() == Some(next) {
+            self.cursor.take();
             two
         } else {
             one
@@ -150,21 +150,21 @@ impl<'a> Lexer<'a> {
     }
 
     fn line_comment(&mut self) -> TokenKind {
-        debug_assert_eq!(self.cursor.peek(), '/');
-        self.cursor.bump();
-        self.cursor.eat_while(|c| c != '\n');
+        debug_assert_eq!(self.cursor.peek(), Some('/'));
+        self.cursor.take();
+        self.cursor.take_while(|c| c != '\n');
         TokenKind::Trivia(Trivia::LineComment)
     }
 
     fn block_comment(&mut self) -> TokenKind {
-        debug_assert_eq!(self.cursor.peek(), '*');
-        self.cursor.bump();
+        debug_assert_eq!(self.cursor.peek(), Some('*'));
+        self.cursor.take();
 
         loop {
-            match self.cursor.bump() {
+            match self.cursor.take() {
                 None => return TokenKind::Error,
-                Some('*') if self.cursor.peek() == '/' => {
-                    self.cursor.bump();
+                Some('*') if self.cursor.peek() == Some('/') => {
+                    self.cursor.take();
                     return TokenKind::Trivia(Trivia::BlockComment);
                 }
                 _ => {}
@@ -173,42 +173,48 @@ impl<'a> Lexer<'a> {
     }
 
     fn ident(&mut self) -> TokenKind {
-        self.cursor.eat_while(is_ident_continue);
+        self.cursor.take_while(is_ident_continue);
         TokenKind::Ident
     }
 
     fn number(&mut self) -> TokenKind {
         let mut kind = TokenKind::IntLiteral;
 
-        if self.cursor.peek() == 'x' || self.cursor.peek() == 'X' {
-            self.cursor.bump();
-            self.cursor.eat_while(|c| c.is_ascii_hexdigit());
-        } else if self.cursor.peek() == 'b' || self.cursor.peek() == 'B' {
-            self.cursor.bump();
-            self.cursor.eat_while(|c| c == '0' || c == '1');
+        if self.cursor.peek() == Some('x') || self.cursor.peek() == Some('X') {
+            self.cursor.take();
+            self.cursor.take_while(|c| c.is_ascii_hexdigit());
+        } else if self.cursor.peek() == Some('b') || self.cursor.peek() == Some('B') {
+            self.cursor.take();
+            self.cursor.take_while(|c| c == '0' || c == '1');
         } else {
-            self.cursor.eat_while(|c| c.is_ascii_digit());
+            self.cursor.take_while(|c| c.is_ascii_digit());
 
-            if self.cursor.peek() == '.' && self.cursor.peek_second().is_ascii_digit() {
+            if self.cursor.peek() == Some('.')
+                && self
+                    .cursor
+                    .peek_twice()
+                    .map(|(_, c)| c.is_ascii_digit())
+                    .unwrap_or(false)
+            {
                 kind = TokenKind::FloatLiteral;
-                self.cursor.bump();
-                self.cursor.eat_while(|c| c.is_ascii_digit());
+                self.cursor.take();
+                self.cursor.take_while(|c| c.is_ascii_digit());
             }
         }
 
         self.cursor
-            .eat_while(|c| c.is_ascii_alphanumeric() || c == '_');
+            .take_while(|c| c.is_ascii_alphanumeric() || c == '_');
 
         kind
     }
 
     fn string(&mut self) -> TokenKind {
         loop {
-            match self.cursor.bump() {
+            match self.cursor.take() {
                 None | Some('\n') => return TokenKind::Error,
                 Some('"') => return TokenKind::StringLiteral,
-                Some('\\') if self.cursor.peek() != EOF_CHAR => {
-                    self.cursor.bump();
+                Some('\\') if self.cursor.peek().is_some() => {
+                    self.cursor.take();
                 }
                 _ => {}
             }
