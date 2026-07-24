@@ -115,6 +115,19 @@ mod bp {
 enum BinaryOp {
     Assign,
     Write,
+    AddAssign,
+    SubtractAssign,
+    MultiplyAssign,
+    DivideAssign,
+    RemainderAssign,
+    BitwiseAndAssign,
+    BitwiseOrAssign,
+    BitwiseXorAssign,
+    ShiftLeftAssign,
+    ShiftRightAssign,
+    UnsignedShiftRightAssign,
+    LogicalAndAssign,
+    LogicalOrAssign,
     Or,
     And,
     BitwiseOr,
@@ -142,6 +155,19 @@ impl BinaryOp {
         Some(match kind {
             TokenKind::Equal => Self::Assign,
             TokenKind::ArrowLeft => Self::Write,
+            TokenKind::PlusEqual => Self::AddAssign,
+            TokenKind::MinusEqual => Self::SubtractAssign,
+            TokenKind::StarEqual => Self::MultiplyAssign,
+            TokenKind::SlashEqual => Self::DivideAssign,
+            TokenKind::PercentEqual => Self::RemainderAssign,
+            TokenKind::AmpersandEqual => Self::BitwiseAndAssign,
+            TokenKind::PipeEqual => Self::BitwiseOrAssign,
+            TokenKind::CaretEqual => Self::BitwiseXorAssign,
+            TokenKind::ShiftLeftEqual => Self::ShiftLeftAssign,
+            TokenKind::ShiftRightEqual => Self::ShiftRightAssign,
+            TokenKind::ShiftRightShiftRightEqual => Self::UnsignedShiftRightAssign,
+            TokenKind::AmpersandAmpersandEqual => Self::LogicalAndAssign,
+            TokenKind::PipePipeEqual => Self::LogicalOrAssign,
             TokenKind::PipePipe => Self::Or,
             TokenKind::AmpersandAmpersand => Self::And,
             TokenKind::Pipe => Self::BitwiseOr,
@@ -168,7 +194,21 @@ impl BinaryOp {
 
     fn binding_power(self) -> InfixBindingPower {
         match self {
-            Self::Assign | Self::Write => PrecedenceLevel::Assign.right_associative(),
+            Self::Assign
+            | Self::Write
+            | Self::AddAssign
+            | Self::SubtractAssign
+            | Self::MultiplyAssign
+            | Self::DivideAssign
+            | Self::RemainderAssign
+            | Self::BitwiseAndAssign
+            | Self::BitwiseOrAssign
+            | Self::BitwiseXorAssign
+            | Self::ShiftLeftAssign
+            | Self::ShiftRightAssign
+            | Self::UnsignedShiftRightAssign
+            | Self::LogicalAndAssign
+            | Self::LogicalOrAssign => PrecedenceLevel::Assign.right_associative(),
             Self::Or => PrecedenceLevel::Or.left_associative(),
             Self::And => PrecedenceLevel::And.left_associative(),
             Self::BitwiseOr => PrecedenceLevel::BitwiseOr.left_associative(),
@@ -191,7 +231,24 @@ impl BinaryOp {
     }
 
     fn is_assignment(self) -> bool {
-        matches!(self, Self::Assign | Self::Write)
+        matches!(
+            self,
+            Self::Assign
+                | Self::Write
+                | Self::AddAssign
+                | Self::SubtractAssign
+                | Self::MultiplyAssign
+                | Self::DivideAssign
+                | Self::RemainderAssign
+                | Self::BitwiseAndAssign
+                | Self::BitwiseOrAssign
+                | Self::BitwiseXorAssign
+                | Self::ShiftLeftAssign
+                | Self::ShiftRightAssign
+                | Self::UnsignedShiftRightAssign
+                | Self::LogicalAndAssign
+                | Self::LogicalOrAssign
+        )
     }
 }
 
@@ -326,11 +383,22 @@ impl Parser<'_> {
                 Some(TokenKind::ParenthesisLeft) => self.parse_call(expr),
                 Some(TokenKind::BracketLeft) => self.parse_index(expr),
                 Some(TokenKind::Dot) => self.parse_field(expr),
+                Some(TokenKind::ColonColon) => self.parse_scope_access(expr),
+                Some(TokenKind::PlusPlus) | Some(TokenKind::MinusMinus) => {
+                    let op = self.bump();
+                    self.ast.push(Node::PostfixUnary { op, operand: expr })
+                }
                 _ => break,
             };
         }
 
         expr
+    }
+
+    fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
+        self.bump();
+        let name = self.expect(TokenKind::Ident);
+        self.ast.push(Node::ScopeAccess { name, base })
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
@@ -393,6 +461,10 @@ impl Parser<'_> {
                 let token = self.bump();
                 self.ast.push(Node::Ident { token })
             }
+            Some(kind) if kind == TokenKind::Keyword(Keyword::Processor) || kind.is_type() => {
+                let token = self.bump();
+                self.ast.push(Node::Ident { token })
+            }
             Some(TokenKind::ParenthesisLeft) => {
                 let paren = self.bump();
                 let inner = self.parse_expr(PrecedenceLevel::lowest());
@@ -425,26 +497,265 @@ impl Parser<'_> {
                 self.expect(TokenKind::Semicolon);
                 self.ast.push(Node::ContinueStmt { keyword })
             }
+            Some(TokenKind::Keyword(Keyword::Namespace)) => self.parse_namespace(),
+            Some(TokenKind::Keyword(Keyword::Processor | Keyword::Graph | Keyword::Struct)) => {
+                self.parse_container()
+            }
+            Some(TokenKind::Keyword(Keyword::Input | Keyword::Output)) => {
+                self.parse_endpoint_group()
+            }
+            Some(TokenKind::Keyword(Keyword::Event)) => self.parse_event_handler(),
+            Some(TokenKind::Keyword(Keyword::Const)) => {
+                self.bump();
+                self.parse_typed_decl(true)
+            }
             Some(TokenKind::Keyword(keyword))
                 if is_type_name_start(TokenKind::Keyword(keyword)) =>
             {
-                self.parse_var_decl()
+                self.parse_typed_decl(false)
             }
+            Some(TokenKind::Ident) if self.looks_like_typed_decl() => self.parse_typed_decl(false),
             _ => self.parse_expr_stmt(),
         }
     }
 
-    fn parse_var_decl(&mut self) -> NodeId {
+    fn parse_typed_decl(&mut self, is_const: bool) -> NodeId {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Ident);
-        let init = if self.peek_kind() == Some(TokenKind::Equal) {
+        if self.peek_kind() == Some(TokenKind::ParenthesisLeft) {
+            self.parse_function_decl(ty, name)
+        } else {
+            let init = if self.peek_kind() == Some(TokenKind::Equal) {
+                self.bump();
+                Some(self.parse_expr(PrecedenceLevel::lowest()))
+            } else {
+                None
+            };
+            self.expect(TokenKind::Semicolon);
+            self.ast.push(Node::VarDeclStmt {
+                ty,
+                name,
+                init,
+                is_const,
+            })
+        }
+    }
+
+    fn parse_params(&mut self) -> Vec<NodeId> {
+        self.expect(TokenKind::ParenthesisLeft);
+        let mut params = Vec::new();
+        if self.peek_kind() != Some(TokenKind::ParenthesisRight) {
+            loop {
+                let ty = self.parse_type();
+                let name = self.expect(TokenKind::Ident);
+                params.push(self.ast.push(Node::Param { ty, name }));
+                if self.peek_kind() == Some(TokenKind::Comma) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::ParenthesisRight);
+        params
+    }
+
+    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId) -> NodeId {
+        let params = self.parse_params();
+        let body = self.parse_block();
+        self.ast.push(Node::FunctionDecl {
+            ty,
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn parse_event_handler(&mut self) -> NodeId {
+        let keyword = self.bump();
+        let name = self.expect(TokenKind::Ident);
+        let params = self.parse_params();
+        let body = self.parse_block();
+        self.ast.push(Node::EventHandlerDecl {
+            keyword,
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn parse_namespace(&mut self) -> NodeId {
+        let keyword = self.bump();
+        let mut segments = vec![self.expect(TokenKind::Ident)];
+        while self.peek_kind() == Some(TokenKind::ColonColon) {
             self.bump();
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            segments.push(self.expect(TokenKind::Ident));
+        }
+        self.expect(TokenKind::BraceLeft);
+        let mut items = Vec::new();
+        while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
+            items.push(self.parse_statement());
+        }
+        self.expect(TokenKind::BraceRight);
+        self.ast.push(Node::NamespaceDecl {
+            keyword,
+            segments,
+            items,
+        })
+    }
+
+    fn parse_container(&mut self) -> NodeId {
+        let keyword = self.bump();
+        let name = self.expect(TokenKind::Ident);
+        self.expect(TokenKind::BraceLeft);
+        let mut items = Vec::new();
+        while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
+            items.push(self.parse_statement());
+        }
+        self.expect(TokenKind::BraceRight);
+        self.ast.push(Node::ContainerDecl {
+            keyword,
+            name,
+            items,
+        })
+    }
+
+    fn at(&self, offset: u32, kind: TokenKind) -> bool {
+        self.tokens
+            .token(TokenId(self.pos + offset))
+            .is_some_and(|token| token.kind == kind)
+    }
+
+    fn looks_like_typed_decl(&self) -> bool {
+        let mut offset = 0u32;
+        if !self.at(offset, TokenKind::Ident) {
+            return false;
+        }
+        offset += 1;
+        while self.at(offset, TokenKind::ColonColon) {
+            offset += 1;
+            if !self.at(offset, TokenKind::Ident) {
+                return false;
+            }
+            offset += 1;
+        }
+        loop {
+            let next = if self.at(offset, TokenKind::LessThan) {
+                self.skip_to_matching_angle_bracket(offset)
+            } else if self.at(offset, TokenKind::BracketLeft) {
+                self.skip_to_matching_bracket(offset)
+            } else {
+                break;
+            };
+            match next {
+                Some(next) => offset = next,
+                None => return false,
+            }
+        }
+        self.at(offset, TokenKind::Ident)
+    }
+
+    fn skip_to_matching_angle_bracket(&self, mut offset: u32) -> Option<u32> {
+        offset += 1;
+        loop {
+            match self
+                .tokens
+                .token(TokenId(self.pos + offset))
+                .map(|t| t.kind)
+            {
+                Some(TokenKind::GreaterThan) => return Some(offset + 1),
+                Some(TokenKind::Semicolon | TokenKind::BraceLeft | TokenKind::BraceRight)
+                | None => {
+                    return None;
+                }
+                Some(_) => offset += 1,
+            }
+        }
+    }
+
+    fn skip_to_matching_bracket(&self, mut offset: u32) -> Option<u32> {
+        let mut depth = 0i32;
+        loop {
+            match self
+                .tokens
+                .token(TokenId(self.pos + offset))
+                .map(|t| t.kind)
+            {
+                Some(TokenKind::BracketLeft) => {
+                    depth += 1;
+                    offset += 1;
+                }
+                Some(TokenKind::BracketRight) => {
+                    depth -= 1;
+                    offset += 1;
+                    if depth == 0 {
+                        return Some(offset);
+                    }
+                }
+                Some(TokenKind::Semicolon | TokenKind::BraceLeft | TokenKind::BraceRight)
+                | None => {
+                    return None;
+                }
+                Some(_) => offset += 1,
+            }
+        }
+    }
+
+    fn parse_attribute_list(&mut self) -> NodeId {
+        self.bump();
+        let mut attrs = Vec::new();
+        if self.peek_kind() != Some(TokenKind::DoubleBracketRight) {
+            loop {
+                let key = self.expect(TokenKind::Ident);
+                self.expect(TokenKind::Colon);
+                let value = self.parse_expr(PrecedenceLevel::lowest());
+                attrs.push((key, value));
+                if self.peek_kind() == Some(TokenKind::Comma) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::DoubleBracketRight);
+        self.ast.push(Node::AttributeList { attrs })
+    }
+
+    fn parse_endpoint_member(&mut self) -> NodeId {
+        let ty = self.parse_type();
+        let name = self.expect(TokenKind::Ident);
+        let attributes = if self.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
+            Some(self.parse_attribute_list())
         } else {
             None
         };
         self.expect(TokenKind::Semicolon);
-        self.ast.push(Node::VarDeclStmt { ty, name, init })
+        self.ast.push(Node::EndpointDecl {
+            ty,
+            name,
+            attributes,
+        })
+    }
+
+    fn parse_endpoint_group(&mut self) -> NodeId {
+        let direction = self.bump();
+        let kind = self.bump();
+        let endpoints = if self.peek_kind() == Some(TokenKind::BraceLeft) {
+            self.bump();
+            let mut endpoints = Vec::new();
+            while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
+                endpoints.push(self.parse_endpoint_member());
+            }
+            self.expect(TokenKind::BraceRight);
+            endpoints
+        } else {
+            vec![self.parse_endpoint_member()]
+        };
+        self.ast.push(Node::EndpointGroup {
+            direction,
+            kind,
+            endpoints,
+        })
     }
 
     fn parse_block(&mut self) -> NodeId {
@@ -550,8 +861,6 @@ impl Parser<'_> {
 
     fn parse_type(&mut self) -> NodeId {
         let mut ty = match self.peek_kind() {
-            Some(TokenKind::Keyword(Keyword::Wrap)) => self.parse_wrap_or_clamp(true),
-            Some(TokenKind::Keyword(Keyword::Clamp)) => self.parse_wrap_or_clamp(false),
             Some(kind) if is_type_name_start(kind) => self.parse_type_name(),
             _ => {
                 let token = self.bump();
@@ -562,24 +871,12 @@ impl Parser<'_> {
         loop {
             ty = match self.peek_kind() {
                 Some(TokenKind::BracketLeft) => self.parse_array(ty),
-                Some(TokenKind::LessThan) => self.parse_vector(ty),
+                Some(TokenKind::LessThan) => self.parse_chevroned_suffix(ty),
                 _ => break,
             };
         }
 
         ty
-    }
-
-    fn parse_wrap_or_clamp(&mut self, is_wrap: bool) -> NodeId {
-        let keyword = self.bump();
-        self.expect(TokenKind::LessThan);
-        let size = self.parse_expr(PrecedenceLevel::Shift.base());
-        self.expect(TokenKind::GreaterThan);
-        self.ast.push(if is_wrap {
-            Node::Wrap { keyword, size }
-        } else {
-            Node::Clamp { keyword, size }
-        })
     }
 
     fn parse_type_name(&mut self) -> NodeId {
@@ -606,14 +903,14 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_vector(&mut self, element: NodeId) -> NodeId {
+    fn parse_chevroned_suffix(&mut self, element: NodeId) -> NodeId {
         let angle = self.bump();
-        let size = self.parse_expr(PrecedenceLevel::Shift.base());
+        let term = self.parse_expr(PrecedenceLevel::Shift.base());
         self.expect(TokenKind::GreaterThan);
-        self.ast.push(Node::Vector {
+        self.ast.push(Node::ChevronSuffix {
             angle,
             element,
-            size,
+            term,
         })
     }
 }
@@ -624,36 +921,44 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     enum Tag {
-        IntLiteral,
-        FloatLiteral,
-        StringLiteral,
-        BoolLiteral,
-        Ident,
-        Paren,
-        Unary,
-        Binary,
         Assign,
-        Ternary,
-        Call,
-        Index,
-        Field,
+        AttributeList,
+        Binary,
         Block,
-        ExprStmt,
-        LetStmt,
-        VarStmt,
-        VarDeclStmt,
-        IfStmt,
-        WhileStmt,
-        LoopStmt,
-        ReturnStmt,
+        BoolLiteral,
         BreakStmt,
+        Call,
+        ChevronSuffix,
+        ContainerDecl,
         ContinueStmt,
-        TypeName,
-        TypeWrap,
-        TypeClamp,
-        TypeArray,
-        TypeVector,
+        EndpointDecl,
+        EndpointGroup,
         Error,
+        EventHandlerDecl,
+        ExprStmt,
+        Field,
+        FloatLiteral,
+        FunctionDecl,
+        Ident,
+        IfStmt,
+        Index,
+        IntLiteral,
+        LetStmt,
+        LoopStmt,
+        NamespaceDecl,
+        Param,
+        Paren,
+        PostfixUnary,
+        ReturnStmt,
+        ScopeAccess,
+        StringLiteral,
+        Ternary,
+        TypeArray,
+        TypeName,
+        Unary,
+        VarDeclStmt,
+        VarStmt,
+        WhileStmt,
     }
 
     #[derive(Debug, PartialEq)]
@@ -677,7 +982,7 @@ mod tests {
 
     fn walk(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Tree {
         let text_of = |token: &TokenId| tokens.text(source, *token).expect("invalid token");
-        let child = |id: NodeId| walk(ast, tokens, source, id);
+        let child = |id: &NodeId| walk(ast, tokens, source, *id);
 
         match ast.get(id) {
             Node::IntLiteral { token } => leaf(Tag::IntLiteral, text_of(token)),
@@ -686,16 +991,17 @@ mod tests {
             Node::BoolLiteral { token } => leaf(Tag::BoolLiteral, text_of(token)),
             Node::Ident { token } => leaf(Tag::Ident, text_of(token)),
             Node::Error { token } => leaf(Tag::Error, text_of(token)),
-            Node::Paren { paren, inner } => node(Tag::Paren, text_of(paren), vec![child(*inner)]),
-            Node::Unary { op, operand } => node(Tag::Unary, text_of(op), vec![child(*operand)]),
-            Node::Binary { op, lhs, rhs } => {
-                node(Tag::Binary, text_of(op), vec![child(*lhs), child(*rhs)])
+            Node::Paren { paren, inner } => node(Tag::Paren, text_of(paren), vec![child(inner)]),
+            Node::Unary { op, operand } => node(Tag::Unary, text_of(op), vec![child(operand)]),
+            Node::PostfixUnary { op, operand } => {
+                node(Tag::PostfixUnary, text_of(op), vec![child(operand)])
             }
-            Node::Assign { op, target, value } => node(
-                Tag::Assign,
-                text_of(op),
-                vec![child(*target), child(*value)],
-            ),
+            Node::Binary { op, lhs, rhs } => {
+                node(Tag::Binary, text_of(op), vec![child(lhs), child(rhs)])
+            }
+            Node::Assign { op, target, value } => {
+                node(Tag::Assign, text_of(op), vec![child(target), child(value)])
+            }
             Node::Ternary {
                 question,
                 cond,
@@ -704,15 +1010,15 @@ mod tests {
             } => node(
                 Tag::Ternary,
                 text_of(question),
-                vec![child(*cond), child(*then_branch), child(*else_branch)],
+                vec![child(cond), child(then_branch), child(else_branch)],
             ),
             Node::Call {
                 paren,
                 callee,
                 args,
             } => {
-                let mut children = vec![child(*callee)];
-                children.extend(args.iter().map(|&arg| child(arg)));
+                let mut children = vec![child(callee)];
+                children.extend(args.iter().map(child));
                 node(Tag::Call, text_of(paren), children)
             }
             Node::Index {
@@ -722,24 +1028,24 @@ mod tests {
             } => node(
                 Tag::Index,
                 text_of(bracket),
-                vec![child(*base), child(*index)],
+                vec![child(base), child(index)],
             ),
-            Node::Field { name, base } => node(Tag::Field, text_of(name), vec![child(*base)]),
+            Node::Field { name, base } => node(Tag::Field, text_of(name), vec![child(base)]),
             Node::Block { brace, stmts } => node(
                 Tag::Block,
                 text_of(brace),
-                stmts.iter().map(|&s| child(s)).collect(),
+                stmts.iter().map(child).collect(),
             ),
-            Node::ExprStmt { expr } => node(Tag::ExprStmt, "", vec![child(*expr)]),
-            Node::LetStmt { name, init } => node(Tag::LetStmt, text_of(name), vec![child(*init)]),
+            Node::ExprStmt { expr } => node(Tag::ExprStmt, "", vec![child(expr)]),
+            Node::LetStmt { name, init } => node(Tag::LetStmt, text_of(name), vec![child(init)]),
             Node::VarStmt { name, init } => node(
                 Tag::VarStmt,
                 text_of(name),
-                init.iter().map(|&i| child(i)).collect(),
+                init.iter().map(child).collect(),
             ),
-            Node::VarDeclStmt { ty, name, init } => {
-                let mut children = vec![child(*ty)];
-                children.extend(init.iter().map(|&i| child(i)));
+            Node::VarDeclStmt { ty, name, init, .. } => {
+                let mut children = vec![child(ty)];
+                children.extend(init.iter().map(child));
                 node(Tag::VarDeclStmt, text_of(name), children)
             }
             Node::IfStmt {
@@ -748,8 +1054,8 @@ mod tests {
                 then_branch,
                 else_branch,
             } => {
-                let mut children = vec![child(*cond), child(*then_branch)];
-                children.extend(else_branch.iter().map(|&e| child(e)));
+                let mut children = vec![child(cond), child(then_branch)];
+                children.extend(else_branch.iter().map(child));
                 node(Tag::IfStmt, text_of(keyword), children)
             }
             Node::WhileStmt {
@@ -759,57 +1065,124 @@ mod tests {
             } => node(
                 Tag::WhileStmt,
                 text_of(keyword),
-                vec![child(*cond), child(*body)],
+                vec![child(cond), child(body)],
             ),
             Node::LoopStmt {
                 keyword,
                 count,
                 body,
             } => {
-                let mut children: Vec<_> = count.iter().map(|&c| child(c)).collect();
-                children.push(child(*body));
+                let mut children: Vec<_> = count.iter().map(child).collect();
+                children.push(child(body));
                 node(Tag::LoopStmt, text_of(keyword), children)
             }
             Node::ReturnStmt { keyword, value } => node(
                 Tag::ReturnStmt,
                 text_of(keyword),
-                value.iter().map(|&v| child(v)).collect(),
+                value.iter().map(child).collect(),
             ),
             Node::BreakStmt { keyword } => leaf(Tag::BreakStmt, text_of(keyword)),
             Node::ContinueStmt { keyword } => leaf(Tag::ContinueStmt, text_of(keyword)),
 
             Node::TypeName { segments } => {
-                let path = segments
-                    .iter()
-                    .map(|t| text_of(t))
-                    .collect::<Vec<_>>()
-                    .join("::");
+                let path = segments.iter().map(&text_of).collect::<Vec<_>>().join("::");
                 leaf(Tag::TypeName, &path)
-            }
-            Node::Wrap { keyword, size } => {
-                node(Tag::TypeWrap, text_of(keyword), vec![child(*size)])
-            }
-            Node::Clamp { keyword, size } => {
-                node(Tag::TypeClamp, text_of(keyword), vec![child(*size)])
             }
             Node::Array {
                 bracket,
                 element,
                 size,
             } => {
-                let mut children = vec![child(*element)];
-                children.extend(size.iter().map(|&s| child(s)));
+                let mut children = vec![child(element)];
+                children.extend(size.iter().map(child));
                 node(Tag::TypeArray, text_of(bracket), children)
             }
-            Node::Vector {
+            Node::ChevronSuffix {
                 angle,
                 element,
-                size,
+                term,
             } => node(
-                Tag::TypeVector,
+                Tag::ChevronSuffix,
                 text_of(angle),
-                vec![child(*element), child(*size)],
+                vec![child(element), child(term)],
             ),
+
+            Node::NamespaceDecl {
+                keyword,
+                segments,
+                items,
+            } => {
+                let path = segments.iter().map(&text_of).collect::<Vec<_>>().join("::");
+                node(
+                    Tag::NamespaceDecl,
+                    &format!("{} {path}", text_of(keyword)),
+                    items.iter().map(child).collect(),
+                )
+            }
+            Node::ContainerDecl {
+                keyword,
+                name,
+                items,
+            } => node(
+                Tag::ContainerDecl,
+                &format!("{} {}", text_of(keyword), text_of(name)),
+                items.iter().map(child).collect(),
+            ),
+            Node::EndpointGroup {
+                direction,
+                kind,
+                endpoints,
+            } => node(
+                Tag::EndpointGroup,
+                &format!("{} {}", text_of(direction), text_of(kind)),
+                endpoints.iter().map(child).collect(),
+            ),
+            Node::EndpointDecl {
+                ty,
+                name,
+                attributes,
+            } => {
+                let mut children = vec![child(ty)];
+                children.extend(attributes.iter().map(child));
+                node(Tag::EndpointDecl, text_of(name), children)
+            }
+            Node::AttributeList { attrs } => node(
+                Tag::AttributeList,
+                "",
+                attrs
+                    .iter()
+                    .map(|(key, value)| node(Tag::Param, text_of(key), vec![child(value)]))
+                    .collect(),
+            ),
+            Node::FunctionDecl {
+                ty,
+                name,
+                params,
+                body,
+            } => {
+                let mut children = vec![child(ty)];
+                children.extend(params.iter().map(child));
+                children.push(child(body));
+                node(Tag::FunctionDecl, text_of(name), children)
+            }
+            Node::Param { ty, name } => node(Tag::Param, text_of(name), vec![child(ty)]),
+            Node::EventHandlerDecl {
+                keyword,
+                name,
+                params,
+                body,
+            } => {
+                let mut children: Vec<_> = params.iter().map(child).collect();
+                children.push(child(body));
+                node(
+                    Tag::EventHandlerDecl,
+                    &format!("{} {}", text_of(keyword), text_of(name)),
+                    children,
+                )
+            }
+            Node::ScopeAccess { name, base } => {
+                node(Tag::ScopeAccess, text_of(name), vec![child(base)])
+            }
         }
     }
 
@@ -884,7 +1257,7 @@ mod tests {
         assert_eq!(
             parse_type_source("int<4>"),
             node(
-                TypeVector,
+                ChevronSuffix,
                 "<",
                 vec![leaf(TypeName, "int"), leaf(IntLiteral, "4")]
             )
@@ -892,15 +1265,23 @@ mod tests {
     }
 
     #[test]
-    fn wrap_and_clamp_types() {
+    fn wrap_and_clamp_are_not_keywords_and_parse_as_generic_type_names() {
         use Tag::*;
         assert_eq!(
             parse_type_source("wrap<4>"),
-            node(TypeWrap, "wrap", vec![leaf(IntLiteral, "4")])
+            node(
+                ChevronSuffix,
+                "<",
+                vec![leaf(TypeName, "wrap"), leaf(IntLiteral, "4")]
+            )
         );
         assert_eq!(
             parse_type_source("clamp<10>"),
-            node(TypeClamp, "clamp", vec![leaf(IntLiteral, "10")])
+            node(
+                ChevronSuffix,
+                "<",
+                vec![leaf(TypeName, "clamp"), leaf(IntLiteral, "10")]
+            )
         );
     }
 
@@ -910,13 +1291,16 @@ mod tests {
         assert_eq!(
             parse_type_source("wrap<1 + 2>"),
             node(
-                TypeWrap,
-                "wrap",
-                vec![node(
-                    Binary,
-                    "+",
-                    vec![leaf(IntLiteral, "1"), leaf(IntLiteral, "2")]
-                )]
+                ChevronSuffix,
+                "<",
+                vec![
+                    leaf(TypeName, "wrap"),
+                    node(
+                        Binary,
+                        "+",
+                        vec![leaf(IntLiteral, "1"), leaf(IntLiteral, "2")]
+                    )
+                ]
             )
         );
     }
@@ -931,7 +1315,7 @@ mod tests {
                 "[",
                 vec![
                     node(
-                        TypeVector,
+                        ChevronSuffix,
                         "<",
                         vec![leaf(TypeName, "int"), leaf(IntLiteral, "4")]
                     ),
@@ -1093,6 +1477,20 @@ mod tests {
     }
 
     #[test]
+    fn prefix_and_postfix_increment() {
+        use Tag::*;
+        assert_eq!(parse_expr("++x"), node(Unary, "++", vec![leaf(Ident, "x")]));
+        assert_eq!(
+            parse_expr("x++"),
+            node(PostfixUnary, "++", vec![leaf(Ident, "x")])
+        );
+        assert_eq!(
+            parse_expr("x--"),
+            node(PostfixUnary, "--", vec![leaf(Ident, "x")])
+        );
+    }
+
+    #[test]
     fn call_with_args() {
         use Tag::*;
         assert_eq!(
@@ -1166,12 +1564,20 @@ mod tests {
                     node(
                         VarDeclStmt,
                         "w",
-                        vec![node(TypeWrap, "wrap", vec![leaf(IntLiteral, "5")])]
+                        vec![node(
+                            ChevronSuffix,
+                            "<",
+                            vec![leaf(TypeName, "wrap"), leaf(IntLiteral, "5")]
+                        )]
                     ),
                     node(
                         VarDeclStmt,
                         "c",
-                        vec![node(TypeClamp, "clamp", vec![leaf(IntLiteral, "5")])]
+                        vec![node(
+                            ChevronSuffix,
+                            "<",
+                            vec![leaf(TypeName, "clamp"), leaf(IntLiteral, "5")]
+                        )]
                     ),
                     node(
                         VarDeclStmt,

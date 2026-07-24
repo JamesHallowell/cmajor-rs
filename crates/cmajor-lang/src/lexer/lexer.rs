@@ -46,7 +46,17 @@ impl<'a> Lexer<'a> {
             c if c.is_ascii_digit() => self.number(),
             '"' => self.string(),
 
-            '+' => self.one_or_two('+', TokenKind::PlusPlus, TokenKind::Plus),
+            '+' => match self.cursor.peek() {
+                Some('+') => {
+                    self.cursor.take();
+                    TokenKind::PlusPlus
+                }
+                Some('=') => {
+                    self.cursor.take();
+                    TokenKind::PlusEqual
+                }
+                _ => TokenKind::Plus,
+            },
             '-' => match self.cursor.peek() {
                 Some('-') => {
                     self.cursor.take();
@@ -56,21 +66,70 @@ impl<'a> Lexer<'a> {
                     self.cursor.take();
                     TokenKind::ArrowRight
                 }
+                Some('=') => {
+                    self.cursor.take();
+                    TokenKind::MinusEqual
+                }
                 _ => TokenKind::Minus,
             },
-            '*' => self.one_or_two('*', TokenKind::StarStar, TokenKind::Star),
-            '/' => TokenKind::Slash,
-            '%' => TokenKind::Percent,
+            '*' => match self.cursor.peek() {
+                Some('*') => {
+                    self.cursor.take();
+                    TokenKind::StarStar
+                }
+                Some('=') => {
+                    self.cursor.take();
+                    TokenKind::StarEqual
+                }
+                _ => TokenKind::Star,
+            },
+            '/' => self.one_or_two('=', TokenKind::SlashEqual, TokenKind::Slash),
+            '%' => self.one_or_two('=', TokenKind::PercentEqual, TokenKind::Percent),
             '~' => TokenKind::Tilde,
-            '^' => TokenKind::Caret,
+            '^' => self.one_or_two('=', TokenKind::CaretEqual, TokenKind::Caret),
 
-            '&' => self.one_or_two('&', TokenKind::AmpersandAmpersand, TokenKind::Ampersand),
-            '|' => self.one_or_two('|', TokenKind::PipePipe, TokenKind::Pipe),
+            '&' if self.cursor.peek_at(0) == Some('&') && self.cursor.peek_at(1) == Some('=') => {
+                self.cursor.take();
+                self.cursor.take();
+                TokenKind::AmpersandAmpersandEqual
+            }
+            '&' => match self.cursor.peek() {
+                Some('&') => {
+                    self.cursor.take();
+                    TokenKind::AmpersandAmpersand
+                }
+                Some('=') => {
+                    self.cursor.take();
+                    TokenKind::AmpersandEqual
+                }
+                _ => TokenKind::Ampersand,
+            },
+            '|' if self.cursor.peek_at(0) == Some('|') && self.cursor.peek_at(1) == Some('=') => {
+                self.cursor.take();
+                self.cursor.take();
+                TokenKind::PipePipeEqual
+            }
+            '|' => match self.cursor.peek() {
+                Some('|') => {
+                    self.cursor.take();
+                    TokenKind::PipePipe
+                }
+                Some('=') => {
+                    self.cursor.take();
+                    TokenKind::PipeEqual
+                }
+                _ => TokenKind::Pipe,
+            },
 
             '!' => self.one_or_two('=', TokenKind::BangEqual, TokenKind::Bang),
             '=' => self.one_or_two('=', TokenKind::EqualEqual, TokenKind::Equal),
 
             '<' => match self.cursor.peek() {
+                Some('<') if self.cursor.peek_twice() == Some(('<', '=')) => {
+                    self.cursor.take();
+                    self.cursor.take();
+                    TokenKind::ShiftLeftEqual
+                }
                 Some('<') => {
                     self.cursor.take();
                     TokenKind::ShiftLeft
@@ -85,12 +144,26 @@ impl<'a> Lexer<'a> {
                 }
                 _ => TokenKind::LessThan,
             },
+            '>' if self.cursor.peek_at(0) == Some('>')
+                && self.cursor.peek_at(1) == Some('>')
+                && self.cursor.peek_at(2) == Some('=') =>
+            {
+                self.cursor.take();
+                self.cursor.take();
+                self.cursor.take();
+                TokenKind::ShiftRightShiftRightEqual
+            }
+            '>' if self.cursor.peek_at(0) == Some('>') && self.cursor.peek_at(1) == Some('>') => {
+                self.cursor.take();
+                self.cursor.take();
+                TokenKind::ShiftRightShiftRight
+            }
+            '>' if self.cursor.peek_at(0) == Some('>') && self.cursor.peek_at(1) == Some('=') => {
+                self.cursor.take();
+                self.cursor.take();
+                TokenKind::ShiftRightEqual
+            }
             '>' => match self.cursor.peek() {
-                Some('>') if self.cursor.peek_twice() == Some(('>', '>')) => {
-                    self.cursor.take();
-                    self.cursor.take();
-                    TokenKind::ShiftRightShiftRight
-                }
                 Some('>') => {
                     self.cursor.take();
                     TokenKind::ShiftRight
@@ -109,8 +182,8 @@ impl<'a> Lexer<'a> {
             '?' => TokenKind::Question,
             '(' => TokenKind::ParenthesisLeft,
             ')' => TokenKind::ParenthesisRight,
-            '[' => TokenKind::BracketLeft,
-            ']' => TokenKind::BracketRight,
+            '[' => self.one_or_two('[', TokenKind::DoubleBracketLeft, TokenKind::BracketLeft),
+            ']' => self.one_or_two(']', TokenKind::DoubleBracketRight, TokenKind::BracketRight),
             '{' => TokenKind::BraceLeft,
             '}' => TokenKind::BraceRight,
             _ => TokenKind::Error,
@@ -180,13 +253,7 @@ impl<'a> Lexer<'a> {
         } else {
             self.cursor.take_while(|c| c.is_ascii_digit());
 
-            if self.cursor.peek() == Some('.')
-                && self
-                    .cursor
-                    .peek_twice()
-                    .map(|(_, c)| c.is_ascii_digit())
-                    .unwrap_or(false)
-            {
+            if self.cursor.peek() == Some('.') {
                 kind = TokenKind::FloatLiteral;
                 self.cursor.take();
                 self.cursor.take_while(|c| c.is_ascii_digit());
@@ -259,11 +326,11 @@ mod tests {
     }
 
     #[test]
-    fn wrap_and_clamp_are_keywords() {
+    fn wrap_and_clamp_are_not_keywords() {
         assert_eq!(
             lex("wrap<4>"),
             vec![
-                (TokenKind::Keyword(Keyword::Wrap), "wrap"),
+                (TokenKind::Ident, "wrap"),
                 (TokenKind::LessThan, "<"),
                 (TokenKind::IntLiteral, "4"),
                 (TokenKind::GreaterThan, ">"),
@@ -294,6 +361,12 @@ mod tests {
         assert_eq!(lex("1234.0f")[0], (TokenKind::FloatLiteral, "1234.0f"));
         assert_eq!(lex("123.0i")[0], (TokenKind::FloatLiteral, "123.0i"));
         assert_eq!(lex("123.0fi")[0], (TokenKind::FloatLiteral, "123.0fi"));
+    }
+
+    #[test]
+    fn float_literal_with_no_digits_after_dot() {
+        assert_eq!(lex("0.f")[0], (TokenKind::FloatLiteral, "0.f"));
+        assert_eq!(lex("100.f")[0], (TokenKind::FloatLiteral, "100.f"));
     }
 
     #[test]
@@ -338,6 +411,54 @@ mod tests {
                 (TokenKind::Ident, "c"),
                 (TokenKind::ShiftRightShiftRight, ">>>"),
                 (TokenKind::Ident, "d"),
+            ]
+        );
+    }
+
+    #[test]
+    fn compound_assignment_operators() {
+        assert_eq!(
+            lex("a+=b-=c*=d/=e%=f^=g&=h|=i<<=j>>=k>>>=l&&=m||=n"),
+            vec![
+                (TokenKind::Ident, "a"),
+                (TokenKind::PlusEqual, "+="),
+                (TokenKind::Ident, "b"),
+                (TokenKind::MinusEqual, "-="),
+                (TokenKind::Ident, "c"),
+                (TokenKind::StarEqual, "*="),
+                (TokenKind::Ident, "d"),
+                (TokenKind::SlashEqual, "/="),
+                (TokenKind::Ident, "e"),
+                (TokenKind::PercentEqual, "%="),
+                (TokenKind::Ident, "f"),
+                (TokenKind::CaretEqual, "^="),
+                (TokenKind::Ident, "g"),
+                (TokenKind::AmpersandEqual, "&="),
+                (TokenKind::Ident, "h"),
+                (TokenKind::PipeEqual, "|="),
+                (TokenKind::Ident, "i"),
+                (TokenKind::ShiftLeftEqual, "<<="),
+                (TokenKind::Ident, "j"),
+                (TokenKind::ShiftRightEqual, ">>="),
+                (TokenKind::Ident, "k"),
+                (TokenKind::ShiftRightShiftRightEqual, ">>>="),
+                (TokenKind::Ident, "l"),
+                (TokenKind::AmpersandAmpersandEqual, "&&="),
+                (TokenKind::Ident, "m"),
+                (TokenKind::PipePipeEqual, "||="),
+                (TokenKind::Ident, "n"),
+            ]
+        );
+    }
+
+    #[test]
+    fn double_bracket_attribute_tokens() {
+        assert_eq!(
+            lex("[[a]]"),
+            vec![
+                (TokenKind::DoubleBracketLeft, "[["),
+                (TokenKind::Ident, "a"),
+                (TokenKind::DoubleBracketRight, "]]"),
             ]
         );
     }

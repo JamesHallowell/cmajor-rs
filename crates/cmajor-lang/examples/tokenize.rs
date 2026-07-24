@@ -1,37 +1,18 @@
 use cmajor_lang::lexer::tokenize;
 
-const SOURCE: &str = r#"
-processor Gain
-{
-    input stream float in;
-    output stream float out;
-    input event float volume [[ name: "Volume", min: 0.0f, max: 1.0f, init: 1.0f ]];
-
-    float gain = 1.0f;
-
-    event volume (float v)
-    {
-        gain = v;
-    }
-
-    void main()
-    {
-        loop
-        {
-            out <- in * gain;
-            advance();
-        }
-    }
-}
-"#;
-
 fn main() {
+    let path = std::env::args().nth(1).expect("Usage: tokenize <input>");
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+        eprintln!("failed to read {path}: {err}");
+        std::process::exit(1);
+    });
+
     let mut pos = 0usize;
 
-    for token in tokenize(SOURCE) {
+    for token in tokenize(&source) {
         let start = pos;
         pos += token.len as usize;
-        let text = &SOURCE[start..pos];
+        let text = &source[start..pos];
 
         if token.kind.is_trivia() {
             continue;

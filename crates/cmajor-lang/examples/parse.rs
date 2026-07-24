@@ -1,36 +1,14 @@
 use cmajor_lang::{ast, parser};
 
-const SOURCE: &str = r#"
-let x = 1 + 2 * 3;
-var y;
-wrap<5> w;
-clamp<5> c;
-
-if (x > 5)
-{
-    y = x - 1;
-}
-else
-{
-    y = x + 1;
-}
-
-while (y > 0)
-{
-    y = y - 1;
-}
-
-loop (4)
-{
-    advance();
-}
-
-return x + y;
-"#;
-
 fn main() {
-    let parser::Parse { ast, root, tokens } = parser::parse(SOURCE);
+    let path = std::env::args().nth(1).expect("Usage: parse <input>");
+    let source = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+        eprintln!("failed to read {path}: {err}");
+        std::process::exit(1);
+    });
+
+    let parser::Parse { ast, root, tokens } = parser::parse(&source);
 
     println!("{} tokens, {} AST nodes\n", tokens.len(), ast.len());
-    print!("{}", ast::dump(&ast, &tokens, SOURCE, root));
+    print!("{}", ast::dump(&ast, &tokens, &source, root));
 }

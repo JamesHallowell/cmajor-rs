@@ -32,6 +32,10 @@ impl<'a> Cursor<'a> {
         Some((first, second))
     }
 
+    pub fn peek_at(&self, n: usize) -> Option<char> {
+        self.chars.clone().nth(n)
+    }
+
     pub fn exhausted(&self) -> bool {
         self.chars.as_str().is_empty()
     }

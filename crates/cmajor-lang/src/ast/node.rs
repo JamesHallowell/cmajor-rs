@@ -42,6 +42,10 @@ pub enum Node {
         op: TokenId,
         operand: NodeId,
     },
+    PostfixUnary {
+        op: TokenId,
+        operand: NodeId,
+    },
     Binary {
         op: TokenId,
         lhs: NodeId,
@@ -91,6 +95,7 @@ pub enum Node {
         ty: NodeId,
         name: TokenId,
         init: Option<NodeId>,
+        is_const: bool,
     },
     IfStmt {
         keyword: TokenId,
@@ -121,26 +126,61 @@ pub enum Node {
     TypeName {
         segments: Vec<TokenId>,
     },
-    Wrap {
-        keyword: TokenId,
-        size: NodeId,
-    },
-    Clamp {
-        keyword: TokenId,
-        size: NodeId,
-    },
     Array {
         bracket: TokenId,
         element: NodeId,
         size: Option<NodeId>,
     },
-    Vector {
+    ChevronSuffix {
         angle: TokenId,
         element: NodeId,
-        size: NodeId,
+        term: NodeId,
     },
     Error {
         token: TokenId,
+    },
+    NamespaceDecl {
+        keyword: TokenId,
+        segments: Vec<TokenId>,
+        items: Vec<NodeId>,
+    },
+    ContainerDecl {
+        keyword: TokenId,
+        name: TokenId,
+        items: Vec<NodeId>,
+    },
+    EndpointGroup {
+        direction: TokenId,
+        kind: TokenId,
+        endpoints: Vec<NodeId>,
+    },
+    EndpointDecl {
+        ty: NodeId,
+        name: TokenId,
+        attributes: Option<NodeId>,
+    },
+    AttributeList {
+        attrs: Vec<(TokenId, NodeId)>,
+    },
+    FunctionDecl {
+        ty: NodeId,
+        name: TokenId,
+        params: Vec<NodeId>,
+        body: NodeId,
+    },
+    Param {
+        ty: NodeId,
+        name: TokenId,
+    },
+    EventHandlerDecl {
+        keyword: TokenId,
+        name: TokenId,
+        params: Vec<NodeId>,
+        body: NodeId,
+    },
+    ScopeAccess {
+        name: TokenId,
+        base: NodeId,
     },
 }
 
