@@ -25,6 +25,9 @@ pub enum Node {
     FloatLiteral {
         token: TokenId,
     },
+    ImaginaryLiteral {
+        token: TokenId,
+    },
     StringLiteral {
         token: TokenId,
     },

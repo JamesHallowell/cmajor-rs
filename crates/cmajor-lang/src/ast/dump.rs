@@ -34,14 +34,13 @@ fn write_node(
         | Node::FloatLiteral { token }
         | Node::StringLiteral { token }
         | Node::BoolLiteral { token }
+        | Node::ImaginaryLiteral { token }
         | Node::Ident { token } => {
             write(text(token));
         }
-
         Node::Error { token } => {
             write(&format!("Error at {:?}", text(token)));
         }
-
         Node::Paren { inner, .. } => {
             write("Paren");
             child(inner, out);
@@ -54,7 +53,6 @@ fn write_node(
             write(&format!("PostfixUnary {:?}", text(op)));
             child(operand, out);
         }
-
         Node::Binary { op, lhs, rhs } => {
             write(&format!("Binary {:?}", text(op)));
             child(lhs, out);
@@ -65,7 +63,6 @@ fn write_node(
             child(target, out);
             child(value, out);
         }
-
         Node::Ternary {
             cond,
             then_branch,
@@ -77,7 +74,6 @@ fn write_node(
             child(then_branch, out);
             child(else_branch, out);
         }
-
         Node::Call { callee, args, .. } => {
             write("Call");
             child(callee, out);
@@ -85,7 +81,6 @@ fn write_node(
                 child(arg, out);
             }
         }
-
         Node::Index { base, index, .. } => {
             write("Index");
             child(base, out);
@@ -95,7 +90,6 @@ fn write_node(
             write(&format!("Field {:?}", text(name)));
             child(base, out);
         }
-
         Node::Block { stmts, .. } => {
             write("Block");
             for stmt in stmts {
@@ -106,7 +100,6 @@ fn write_node(
             write("ExprStmt");
             child(expr, out);
         }
-
         Node::LetStmt { name, init } => {
             write(&format!("LetStmt {:?}", text(name)));
             child(init, out);
@@ -130,7 +123,6 @@ fn write_node(
                 child(init, out);
             }
         }
-
         Node::IfStmt {
             cond,
             then_branch,
@@ -168,7 +160,6 @@ fn write_node(
         Node::ContinueStmt { .. } => {
             write("ContinueStmt");
         }
-
         Node::TypeName { segments } => {
             let path = segments.iter().map(text).collect::<Vec<_>>().join("::");
             write(&format!("TypeName {path:?}"));

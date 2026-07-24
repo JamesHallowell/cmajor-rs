@@ -25,11 +25,14 @@ impl<'a> Cursor<'a> {
         self.chars.clone().next()
     }
 
-    pub fn peek_twice(&self) -> Option<(char, char)> {
+    pub fn peek_two(&self) -> (Option<char>, Option<char>) {
         let mut chars = self.chars.clone();
-        let first = chars.next()?;
-        let second = chars.next()?;
-        Some((first, second))
+        (chars.next(), chars.next())
+    }
+
+    pub fn peek_three(&self) -> (Option<char>, Option<char>, Option<char>) {
+        let mut chars = self.chars.clone();
+        (chars.next(), chars.next(), chars.next())
     }
 
     pub fn peek_at(&self, n: usize) -> Option<char> {
@@ -44,6 +47,14 @@ impl<'a> Cursor<'a> {
         let c = self.chars.next()?;
         self.bytes_taken += c.len_utf8() as u32;
         Some(c)
+    }
+
+    pub fn take_n(&mut self, n: usize) {
+        for _ in 0..n {
+            if self.take().is_none() {
+                break;
+            }
+        }
     }
 
     pub fn take_while(&mut self, mut predicate: impl FnMut(char) -> bool) {

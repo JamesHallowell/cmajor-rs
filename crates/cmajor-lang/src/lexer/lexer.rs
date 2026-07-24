@@ -1,6 +1,6 @@
 use crate::lexer::{
     cursor::Cursor,
-    token::{Keyword, Token, TokenKind, Trivia},
+    token::{Keyword, Literal, Token, TokenKind, Trivia},
 };
 
 pub fn tokenize(input: &str) -> Vec<Token> {
@@ -38,14 +38,11 @@ impl<'a> Lexer<'a> {
                 self.cursor.take_while(is_whitespace);
                 TokenKind::Trivia(Trivia::Whitespace)
             }
-
             '/' if self.cursor.peek() == Some('/') => self.line_comment(),
             '/' if self.cursor.peek() == Some('*') => self.block_comment(),
-
             c if is_ident_start(c) => self.ident(),
             c if c.is_ascii_digit() => self.number(),
             '"' => self.string(),
-
             '+' => match self.cursor.peek() {
                 Some('+') => {
                     self.cursor.take();
@@ -87,7 +84,6 @@ impl<'a> Lexer<'a> {
             '%' => self.one_or_two('=', TokenKind::PercentEqual, TokenKind::Percent),
             '~' => TokenKind::Tilde,
             '^' => self.one_or_two('=', TokenKind::CaretEqual, TokenKind::Caret),
-
             '&' if self.cursor.peek_at(0) == Some('&') && self.cursor.peek_at(1) == Some('=') => {
                 self.cursor.take();
                 self.cursor.take();
@@ -120,12 +116,10 @@ impl<'a> Lexer<'a> {
                 }
                 _ => TokenKind::Pipe,
             },
-
             '!' => self.one_or_two('=', TokenKind::BangEqual, TokenKind::Bang),
             '=' => self.one_or_two('=', TokenKind::EqualEqual, TokenKind::Equal),
-
             '<' => match self.cursor.peek() {
-                Some('<') if self.cursor.peek_twice() == Some(('<', '=')) => {
+                Some('<') if self.cursor.peek_two() == (Some('<'), Some('=')) => {
                     self.cursor.take();
                     self.cursor.take();
                     TokenKind::ShiftLeftEqual
@@ -174,7 +168,6 @@ impl<'a> Lexer<'a> {
                 }
                 _ => TokenKind::GreaterThan,
             },
-
             ':' => self.one_or_two(':', TokenKind::ColonColon, TokenKind::Colon),
             ',' => TokenKind::Comma,
             ';' => TokenKind::Semicolon,
@@ -192,11 +185,11 @@ impl<'a> Lexer<'a> {
         let len = self.cursor.bytes_taken();
         self.pos += len;
 
-        let kind = if kind == TokenKind::Ident {
+        let kind = if kind == TokenKind::Identifier {
             let text = &self.input[start as usize..(start + len) as usize];
             Keyword::try_from(text)
                 .map(TokenKind::from)
-                .unwrap_or(TokenKind::Ident)
+                .unwrap_or(TokenKind::Identifier)
         } else {
             kind
         };
@@ -238,39 +231,78 @@ impl<'a> Lexer<'a> {
 
     fn ident(&mut self) -> TokenKind {
         self.cursor.take_while(is_ident_continue);
-        TokenKind::Ident
+        TokenKind::Identifier
     }
 
     fn number(&mut self) -> TokenKind {
-        let mut kind = TokenKind::IntLiteral;
-
-        if self.cursor.peek() == Some('x') || self.cursor.peek() == Some('X') {
-            self.cursor.take();
-            self.cursor.take_while(|c| c.is_ascii_hexdigit());
-        } else if self.cursor.peek() == Some('b') || self.cursor.peek() == Some('B') {
-            self.cursor.take();
-            self.cursor.take_while(|c| c == '0' || c == '1');
-        } else {
-            self.cursor.take_while(|c| c.is_ascii_digit());
-
-            if self.cursor.peek() == Some('.') {
-                kind = TokenKind::FloatLiteral;
+        let kind = match self.cursor.peek() {
+            Some('x' | 'X') => {
                 self.cursor.take();
-                self.cursor.take_while(|c| c.is_ascii_digit());
+                self.cursor.take_while(|c| c.is_ascii_hexdigit());
+                Literal::Int32
             }
+            Some('b' | 'B') => {
+                self.cursor.take();
+                self.cursor.take_while(is_binary_digit);
+                Literal::Int32
+            }
+            _ => {
+                self.cursor.take_while(|c| c.is_ascii_digit());
+
+                if self.cursor.peek() == Some('.') {
+                    self.cursor.take();
+                    self.cursor.take_while(|c| c.is_ascii_digit());
+                    Literal::Float64
+                } else {
+                    Literal::Int32
+                }
+            }
+        };
+
+        if let Some('_') = self.cursor.peek() {
+            self.cursor.take();
         }
 
-        self.cursor
-            .take_while(|c| c.is_ascii_alphanumeric() || c == '_');
+        let kind = match self.cursor.peek_three() {
+            (Some('f'), Some('3'), Some('2')) => {
+                self.cursor.take_n(3);
+                Literal::Float32
+            }
+            (Some('f'), Some('6'), Some('4')) => {
+                self.cursor.take_n(3);
+                Literal::Float64
+            }
+            (Some('f'), Some('i'), _) => {
+                self.cursor.take_n(2);
+                Literal::Imaginary32
+            }
+            (Some('f'), _, _) => {
+                self.cursor.take();
+                Literal::Float32
+            }
+            (Some('i'), Some('6'), Some('4')) => {
+                self.cursor.take_n(3);
+                Literal::Int64
+            }
+            (Some('i'), _, _) => {
+                self.cursor.take();
+                Literal::Imaginary64
+            }
+            (Some('L'), _, _) => {
+                self.cursor.take();
+                Literal::Int64
+            }
+            _ => kind,
+        };
 
-        kind
+        TokenKind::Literal(kind)
     }
 
     fn string(&mut self) -> TokenKind {
         loop {
             match self.cursor.take() {
                 None | Some('\n') => return TokenKind::Error,
-                Some('"') => return TokenKind::StringLiteral,
+                Some('"') => return TokenKind::Literal(Literal::String),
                 Some('\\') if self.cursor.peek().is_some() => {
                     self.cursor.take();
                 }
@@ -290,6 +322,10 @@ fn is_ident_start(c: char) -> bool {
 
 fn is_ident_continue(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
+}
+
+fn is_binary_digit(c: char) -> bool {
+    c == '0' || c == '1'
 }
 
 #[cfg(test)]
@@ -320,7 +356,7 @@ mod tests {
             vec![
                 (TokenKind::Keyword(Keyword::Processor), "processor"),
                 (TokenKind::Trivia(Trivia::Whitespace), " "),
-                (TokenKind::Ident, "foo"),
+                (TokenKind::Identifier, "foo"),
             ]
         );
     }
@@ -330,9 +366,9 @@ mod tests {
         assert_eq!(
             lex("wrap<4>"),
             vec![
-                (TokenKind::Ident, "wrap"),
+                (TokenKind::Identifier, "wrap"),
                 (TokenKind::LessThan, "<"),
-                (TokenKind::IntLiteral, "4"),
+                (TokenKind::Literal(Literal::Int32), "4"),
                 (TokenKind::GreaterThan, ">"),
             ]
         );
@@ -341,45 +377,100 @@ mod tests {
     #[test]
     fn integer_literals() {
         assert_eq!(
-            lex("-12345").last(),
-            Some(&(TokenKind::IntLiteral, "12345"))
+            lex("12345"),
+            vec![(TokenKind::Literal(Literal::Int32), "12345")]
         );
-        assert_eq!(lex("0x12345")[0], (TokenKind::IntLiteral, "0x12345"));
-        assert_eq!(lex("0b101101")[0], (TokenKind::IntLiteral, "0b101101"));
-        assert_eq!(lex("12345L")[0], (TokenKind::IntLiteral, "12345L"));
-        assert_eq!(lex("12345_i64")[0], (TokenKind::IntLiteral, "12345_i64"));
-        assert_eq!(lex("0x12345_L")[0], (TokenKind::IntLiteral, "0x12345_L"));
+        assert_eq!(
+            lex("-12345"),
+            vec![
+                (TokenKind::Minus, "-"),
+                (TokenKind::Literal(Literal::Int32), "12345")
+            ]
+        );
+        assert_eq!(
+            lex("0x12345"),
+            vec![(TokenKind::Literal(Literal::Int32), "0x12345")]
+        );
+        assert_eq!(
+            lex("0b101101"),
+            vec![(TokenKind::Literal(Literal::Int32), "0b101101")]
+        );
+        assert_eq!(
+            lex("12345L"),
+            vec![(TokenKind::Literal(Literal::Int64), "12345L")]
+        );
+        assert_eq!(
+            lex("0x12345_L"),
+            vec![(TokenKind::Literal(Literal::Int64), "0x12345_L")]
+        );
+        assert_eq!(
+            lex("12345i64"),
+            vec![(TokenKind::Literal(Literal::Int64), "12345i64")]
+        );
+        assert_eq!(
+            lex("12345_i64"),
+            vec![(TokenKind::Literal(Literal::Int64), "12345_i64")]
+        );
     }
 
     #[test]
     fn float_literals() {
-        assert_eq!(lex("1234.0")[0], (TokenKind::FloatLiteral, "1234.0"));
         assert_eq!(
-            lex("1234.0_f64")[0],
-            (TokenKind::FloatLiteral, "1234.0_f64")
+            lex("0.0"),
+            vec![(TokenKind::Literal(Literal::Float64), "0.0")]
         );
-        assert_eq!(lex("1234.0f")[0], (TokenKind::FloatLiteral, "1234.0f"));
-        assert_eq!(lex("123.0i")[0], (TokenKind::FloatLiteral, "123.0i"));
-        assert_eq!(lex("123.0fi")[0], (TokenKind::FloatLiteral, "123.0fi"));
+        assert_eq!(
+            lex("1234.0"),
+            vec![(TokenKind::Literal(Literal::Float64), "1234.0")]
+        );
+        assert_eq!(
+            lex("1234.0_f64"),
+            vec![(TokenKind::Literal(Literal::Float64), "1234.0_f64")]
+        );
+        assert_eq!(
+            lex("1234.0f"),
+            vec![(TokenKind::Literal(Literal::Float32), "1234.0f")]
+        );
+        assert_eq!(
+            lex("1234.0_f32"),
+            vec![(TokenKind::Literal(Literal::Float32), "1234.0_f32")]
+        )
     }
 
     #[test]
-    fn float_literal_with_no_digits_after_dot() {
-        assert_eq!(lex("0.f")[0], (TokenKind::FloatLiteral, "0.f"));
-        assert_eq!(lex("100.f")[0], (TokenKind::FloatLiteral, "100.f"));
+    fn complex_literals() {
+        assert_eq!(
+            lex("123.0i"),
+            vec![(TokenKind::Literal(Literal::Imaginary64), "123.0i")]
+        );
+        assert_eq!(
+            lex("123.0fi"),
+            vec![(TokenKind::Literal(Literal::Imaginary32), "123.0fi")]
+        );
+        assert_eq!(
+            lex("123.0_i"),
+            vec![(TokenKind::Literal(Literal::Imaginary64), "123.0_i")]
+        );
+        assert_eq!(
+            lex("123.0_fi"),
+            vec![(TokenKind::Literal(Literal::Imaginary32), "123.0_fi")]
+        );
     }
 
     #[test]
     fn string_literal_with_escapes() {
         assert_eq!(
             lex(r#""Hello\n World\n 😀""#),
-            vec![(TokenKind::StringLiteral, r#""Hello\n World\n 😀""#)]
+            vec![(
+                TokenKind::Literal(Literal::String),
+                r#""Hello\n World\n 😀""#
+            )]
         );
     }
 
     #[test]
     fn unterminated_string_is_an_error() {
-        assert_eq!(lex("\"abc")[0].0, TokenKind::Error);
+        assert_eq!(lex("\"abc"), vec![(TokenKind::Error, "\"abc")]);
     }
 
     #[test]
@@ -396,7 +487,7 @@ mod tests {
 
     #[test]
     fn unterminated_block_comment_is_an_error() {
-        assert_eq!(lex("/* comment")[0].0, TokenKind::Error);
+        assert_eq!(lex("/* comment"), vec![(TokenKind::Error, "/* comment")]);
     }
 
     #[test]
@@ -404,13 +495,13 @@ mod tests {
         assert_eq!(
             lex("a->b<-c>>>d"),
             vec![
-                (TokenKind::Ident, "a"),
+                (TokenKind::Identifier, "a"),
                 (TokenKind::ArrowRight, "->"),
-                (TokenKind::Ident, "b"),
+                (TokenKind::Identifier, "b"),
                 (TokenKind::ArrowLeft, "<-"),
-                (TokenKind::Ident, "c"),
+                (TokenKind::Identifier, "c"),
                 (TokenKind::ShiftRightShiftRight, ">>>"),
-                (TokenKind::Ident, "d"),
+                (TokenKind::Identifier, "d"),
             ]
         );
     }
@@ -420,33 +511,33 @@ mod tests {
         assert_eq!(
             lex("a+=b-=c*=d/=e%=f^=g&=h|=i<<=j>>=k>>>=l&&=m||=n"),
             vec![
-                (TokenKind::Ident, "a"),
+                (TokenKind::Identifier, "a"),
                 (TokenKind::PlusEqual, "+="),
-                (TokenKind::Ident, "b"),
+                (TokenKind::Identifier, "b"),
                 (TokenKind::MinusEqual, "-="),
-                (TokenKind::Ident, "c"),
+                (TokenKind::Identifier, "c"),
                 (TokenKind::StarEqual, "*="),
-                (TokenKind::Ident, "d"),
+                (TokenKind::Identifier, "d"),
                 (TokenKind::SlashEqual, "/="),
-                (TokenKind::Ident, "e"),
+                (TokenKind::Identifier, "e"),
                 (TokenKind::PercentEqual, "%="),
-                (TokenKind::Ident, "f"),
+                (TokenKind::Identifier, "f"),
                 (TokenKind::CaretEqual, "^="),
-                (TokenKind::Ident, "g"),
+                (TokenKind::Identifier, "g"),
                 (TokenKind::AmpersandEqual, "&="),
-                (TokenKind::Ident, "h"),
+                (TokenKind::Identifier, "h"),
                 (TokenKind::PipeEqual, "|="),
-                (TokenKind::Ident, "i"),
+                (TokenKind::Identifier, "i"),
                 (TokenKind::ShiftLeftEqual, "<<="),
-                (TokenKind::Ident, "j"),
+                (TokenKind::Identifier, "j"),
                 (TokenKind::ShiftRightEqual, ">>="),
-                (TokenKind::Ident, "k"),
+                (TokenKind::Identifier, "k"),
                 (TokenKind::ShiftRightShiftRightEqual, ">>>="),
-                (TokenKind::Ident, "l"),
+                (TokenKind::Identifier, "l"),
                 (TokenKind::AmpersandAmpersandEqual, "&&="),
-                (TokenKind::Ident, "m"),
+                (TokenKind::Identifier, "m"),
                 (TokenKind::PipePipeEqual, "||="),
-                (TokenKind::Ident, "n"),
+                (TokenKind::Identifier, "n"),
             ]
         );
     }
@@ -457,7 +548,7 @@ mod tests {
             lex("[[a]]"),
             vec![
                 (TokenKind::DoubleBracketLeft, "[["),
-                (TokenKind::Ident, "a"),
+                (TokenKind::Identifier, "a"),
                 (TokenKind::DoubleBracketRight, "]]"),
             ]
         );
@@ -468,20 +559,20 @@ mod tests {
         assert_eq!(
             lex("b ? x[3:5] : y"),
             vec![
-                (TokenKind::Ident, "b"),
+                (TokenKind::Identifier, "b"),
                 (TokenKind::Trivia(Trivia::Whitespace), " "),
                 (TokenKind::Question, "?"),
                 (TokenKind::Trivia(Trivia::Whitespace), " "),
-                (TokenKind::Ident, "x"),
+                (TokenKind::Identifier, "x"),
                 (TokenKind::BracketLeft, "["),
-                (TokenKind::IntLiteral, "3"),
+                (TokenKind::Literal(Literal::Int32), "3"),
                 (TokenKind::Colon, ":"),
-                (TokenKind::IntLiteral, "5"),
+                (TokenKind::Literal(Literal::Int32), "5"),
                 (TokenKind::BracketRight, "]"),
                 (TokenKind::Trivia(Trivia::Whitespace), " "),
                 (TokenKind::Colon, ":"),
                 (TokenKind::Trivia(Trivia::Whitespace), " "),
-                (TokenKind::Ident, "y"),
+                (TokenKind::Identifier, "y"),
             ]
         );
     }
@@ -491,11 +582,11 @@ mod tests {
         assert_eq!(
             lex("std::intrinsics::sin"),
             vec![
-                (TokenKind::Ident, "std"),
+                (TokenKind::Identifier, "std"),
                 (TokenKind::ColonColon, "::"),
-                (TokenKind::Ident, "intrinsics"),
+                (TokenKind::Identifier, "intrinsics"),
                 (TokenKind::ColonColon, "::"),
-                (TokenKind::Ident, "sin"),
+                (TokenKind::Identifier, "sin"),
             ]
         );
     }

@@ -127,6 +127,19 @@ pub enum Trivia {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+
+pub enum Literal {
+    Int32,
+    Int64,
+    Float32,
+    Float64,
+    Imaginary32,
+    Imaginary64,
+    String,
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenKind {
     Ampersand,
     AmpersandAmpersand,
@@ -151,14 +164,13 @@ pub enum TokenKind {
     Equal,
     EqualEqual,
     Error,
-    FloatLiteral,
     GreaterThan,
     GreaterThanOrEqual,
-    Ident,
-    IntLiteral,
+    Identifier,
     Keyword(Keyword),
     LessThan,
     LessThanOrEqual,
+    Literal(Literal),
     Minus,
     MinusEqual,
     MinusMinus,
@@ -186,7 +198,6 @@ pub enum TokenKind {
     Star,
     StarEqual,
     StarStar,
-    StringLiteral,
     Tilde,
     Trivia(Trivia),
 }
