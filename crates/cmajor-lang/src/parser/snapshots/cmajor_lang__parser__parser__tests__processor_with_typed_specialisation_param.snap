@@ -1,0 +1,10 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"processor SquareWave (int length) { output stream int out; }\",\nParser::parse_statement)"
+---
+ProcessorDecl "SquareWave"
+  SpecialisationParam value "length"
+    TypeName "int"
+  EndpointGroup output stream
+    EndpointDecl "out"
+      TypeName "int"

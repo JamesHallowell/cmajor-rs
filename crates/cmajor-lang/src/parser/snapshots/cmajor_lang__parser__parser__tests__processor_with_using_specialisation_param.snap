@@ -1,0 +1,9 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"processor Source (using DataType) { output stream int out; }\",\nParser::parse_statement)"
+---
+ProcessorDecl "Source"
+  SpecialisationParam using "DataType"
+  EndpointGroup output stream
+    EndpointDecl "out"
+      TypeName "int"

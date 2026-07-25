@@ -1,0 +1,7 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"namespace n (processor p, namespace ns) {}\", Parser::parse_statement)"
+---
+NamespaceDecl "n"
+  SpecialisationParam processor "p"
+  SpecialisationParam namespace "ns"

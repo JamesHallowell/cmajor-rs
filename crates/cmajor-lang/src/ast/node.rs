@@ -17,6 +17,14 @@ impl NodeId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialisationParamKind {
+    Using,
+    Processor,
+    Namespace,
+    Value { ty: NodeId },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     IntLiteral {
@@ -154,17 +162,25 @@ pub enum Node {
     NamespaceDecl {
         keyword: TokenId,
         segments: Vec<TokenId>,
+        params: Vec<NodeId>,
         items: Vec<NodeId>,
+    },
+    SpecialisationParam {
+        kind: SpecialisationParamKind,
+        name: TokenId,
+        default: Option<NodeId>,
     },
     ProcessorDecl {
         keyword: TokenId,
         name: TokenId,
+        params: Vec<NodeId>,
         attributes: Option<NodeId>,
         items: Vec<NodeId>,
     },
     GraphDecl {
         keyword: TokenId,
         name: TokenId,
+        params: Vec<NodeId>,
         attributes: Option<NodeId>,
         items: Vec<NodeId>,
     },
@@ -250,5 +266,21 @@ impl Ast {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| matches!(node, Node::Error { .. }))
+    }
+
+    pub fn error_tokens(&self) -> Vec<TokenId> {
+        self.nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Error { token } => Some(*token),
+                _ => None,
+            })
+            .collect()
     }
 }

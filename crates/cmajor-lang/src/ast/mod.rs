@@ -4,5 +4,5 @@ mod node;
 
 pub use {
     dump::dump,
-    node::{Ast, Node, NodeId},
+    node::{Ast, Node, NodeId, SpecialisationParamKind},
 };

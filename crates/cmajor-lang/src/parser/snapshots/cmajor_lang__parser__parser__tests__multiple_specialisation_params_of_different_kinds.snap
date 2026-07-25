@@ -1,0 +1,12 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"processor P (using T, int length = 4) { output stream int out; }\",\nParser::parse_statement)"
+---
+ProcessorDecl "P"
+  SpecialisationParam using "T"
+  SpecialisationParam value "length"
+    TypeName "int"
+    4
+  EndpointGroup output stream
+    EndpointDecl "out"
+      TypeName "int"

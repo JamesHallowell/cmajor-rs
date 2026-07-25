@@ -1,6 +1,6 @@
 use {
     crate::{
-        ast::node::{Ast, Node, NodeId},
+        ast::node::{Ast, Node, NodeId, SpecialisationParamKind},
         lexer::{TokenId, TokenStream},
     },
     std::fmt::Write as _,
@@ -163,31 +163,37 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             node("TypeList".to_string(), types.iter().map(child).collect())
         }
         Node::NamespaceDecl {
-            segments, items, ..
+            segments,
+            params,
+            items,
+            ..
         } => {
             let path = segments.iter().map(text).collect::<Vec<_>>().join("::");
-            node(
-                format!("NamespaceDecl {path:?}"),
-                items.iter().map(child).collect(),
-            )
+            let mut children: Vec<_> = params.iter().map(child).collect();
+            children.extend(items.iter().map(child));
+            node(format!("NamespaceDecl {path:?}"), children)
         }
         Node::ProcessorDecl {
             name,
+            params,
             attributes,
             items,
             ..
         } => {
-            let mut children: Vec<_> = attributes.iter().map(child).collect();
+            let mut children: Vec<_> = params.iter().map(child).collect();
+            children.extend(attributes.iter().map(child));
             children.extend(items.iter().map(child));
             node(format!("ProcessorDecl {:?}", text(name)), children)
         }
         Node::GraphDecl {
             name,
+            params,
             attributes,
             items,
             ..
         } => {
-            let mut children: Vec<_> = attributes.iter().map(child).collect();
+            let mut children: Vec<_> = params.iter().map(child).collect();
+            children.extend(attributes.iter().map(child));
             children.extend(items.iter().map(child));
             node(format!("GraphDecl {:?}", text(name)), children)
         }
@@ -201,6 +207,30 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             children.extend(items.iter().map(child));
             node(format!("StructDecl {:?}", text(name)), children)
         }
+        Node::SpecialisationParam {
+            kind,
+            name,
+            default,
+        } => match kind {
+            SpecialisationParamKind::Value { ty } => node(
+                format!("SpecialisationParam value {:?}", text(name)),
+                [ty].into_iter().chain(default.iter()).map(child).collect(),
+            ),
+            SpecialisationParamKind::Using
+            | SpecialisationParamKind::Processor
+            | SpecialisationParamKind::Namespace => {
+                let kind_label = match kind {
+                    SpecialisationParamKind::Using => "using",
+                    SpecialisationParamKind::Processor => "processor",
+                    SpecialisationParamKind::Namespace => "namespace",
+                    SpecialisationParamKind::Value { .. } => unreachable!(),
+                };
+                node(
+                    format!("SpecialisationParam {kind_label} {:?}", text(name)),
+                    default.iter().map(child).collect(),
+                )
+            }
+        },
         Node::EndpointGroup {
             direction,
             kind,

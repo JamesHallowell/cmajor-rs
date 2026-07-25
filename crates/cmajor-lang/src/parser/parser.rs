@@ -1,6 +1,6 @@
 use {
     crate::{
-        ast::{Ast, Node, NodeId},
+        ast::{Ast, Node, NodeId, SpecialisationParamKind},
         lexer::{
             Keyword, Literal, Token, TokenId,
             TokenKind::{self},
@@ -283,6 +283,10 @@ impl Parser {
         self.peek().map(|token| token.kind)
     }
 
+    fn peek_kind_at(&self, offset: u32) -> Option<TokenKind> {
+        self.tokens.token(TokenId(self.pos + offset)).map(|token| token.kind)
+    }
+
     fn bump(&mut self) -> TokenId {
         let id = TokenId(self.pos);
         if (self.pos as usize) < self.tokens.len() {
@@ -518,6 +522,11 @@ impl Parser {
                 self.ast.push(Node::ContinueStmt { keyword })
             }
             Some(TokenKind::Keyword(Keyword::Namespace)) => self.parse_namespace(),
+            Some(TokenKind::Keyword(Keyword::Processor))
+                if self.peek_kind_at(1) == Some(TokenKind::Dot) =>
+            {
+                self.parse_expr_stmt()
+            }
             Some(TokenKind::Keyword(Keyword::Processor | Keyword::Graph | Keyword::Struct)) => {
                 self.parse_container()
             }
@@ -652,6 +661,7 @@ impl Parser {
             self.bump();
             segments.push(self.expect(TokenKind::Identifier));
         }
+        let params = self.parse_optional_specialisation_params();
         self.expect(TokenKind::BraceLeft);
         let mut items = Vec::new();
         while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
@@ -661,7 +671,64 @@ impl Parser {
         self.ast.push(Node::NamespaceDecl {
             keyword,
             segments,
+            params,
             items,
+        })
+    }
+
+    fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
+        if self.peek_kind() != Some(TokenKind::ParenthesisLeft) {
+            return Vec::new();
+        }
+        self.bump();
+        let mut params = Vec::new();
+        if self.peek_kind() != Some(TokenKind::ParenthesisRight) {
+            loop {
+                params.push(self.parse_specialisation_param());
+                if self.peek_kind() == Some(TokenKind::Comma) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::ParenthesisRight);
+        params
+    }
+
+    fn parse_specialisation_param(&mut self) -> NodeId {
+        let kind = match self.peek_kind() {
+            Some(TokenKind::Keyword(Keyword::Using)) => {
+                self.bump();
+                SpecialisationParamKind::Using
+            }
+            Some(TokenKind::Keyword(Keyword::Processor)) => {
+                self.bump();
+                SpecialisationParamKind::Processor
+            }
+            Some(TokenKind::Keyword(Keyword::Namespace)) => {
+                self.bump();
+                SpecialisationParamKind::Namespace
+            }
+            _ => {
+                let ty = self.parse_type();
+                SpecialisationParamKind::Value { ty }
+            }
+        };
+        let name = self.expect(TokenKind::Identifier);
+        let default = if self.peek_kind() == Some(TokenKind::Equal) {
+            self.bump();
+            Some(match kind {
+                SpecialisationParamKind::Value { .. } => self.parse_expr(),
+                _ => self.parse_type(),
+            })
+        } else {
+            None
+        };
+        self.ast.push(Node::SpecialisationParam {
+            kind,
+            name,
+            default,
         })
     }
 
@@ -669,6 +736,7 @@ impl Parser {
         let keyword_kind = self.peek_kind();
         let keyword = self.bump();
         let name = self.expect(TokenKind::Identifier);
+        let params = self.parse_optional_specialisation_params();
         let attributes = if self.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
             Some(self.parse_attribute_list())
         } else {
@@ -684,6 +752,7 @@ impl Parser {
             Some(TokenKind::Keyword(Keyword::Graph)) => self.ast.push(Node::GraphDecl {
                 keyword,
                 name,
+                params,
                 attributes,
                 items,
             }),
@@ -696,6 +765,7 @@ impl Parser {
             _ => self.ast.push(Node::ProcessorDecl {
                 keyword,
                 name,
+                params,
                 attributes,
                 items,
             }),
@@ -1050,7 +1120,7 @@ impl Parser {
         } else {
             None
         };
-        let body = self.parse_block();
+        let body = self.parse_statement();
         self.ast.push(Node::LoopStmt {
             keyword,
             count,
@@ -1309,6 +1379,78 @@ mod tests {
     fn function() {
         insta::assert_snapshot!(dump(
             "int add(int a, int b) { return a + b; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn loop_with_unbraced_body() {
+        insta::assert_snapshot!(dump(
+            "void main() { loop advance(); }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn processor_with_typed_specialisation_param() {
+        insta::assert_snapshot!(dump(
+            "processor SquareWave (int length) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn processor_with_typed_specialisation_param_default_value() {
+        insta::assert_snapshot!(dump(
+            "processor Gain (int channelCount = 2) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn processor_with_using_specialisation_param() {
+        insta::assert_snapshot!(dump(
+            "processor Source (using DataType) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn processor_with_using_specialisation_param_default_type() {
+        insta::assert_snapshot!(dump(
+            "processor P (using T = float32) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn graph_with_processor_specialisation_param() {
+        insta::assert_snapshot!(dump(
+            "graph Wrapper (processor Parameterised, int x) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn namespace_with_specialisation_params() {
+        insta::assert_snapshot!(dump(
+            "namespace n (processor p, namespace ns) {}",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn multiple_specialisation_params_of_different_kinds() {
+        insta::assert_snapshot!(dump(
+            "processor P (using T, int length = 4) { output stream int out; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn processor_latency_assignment_is_not_a_container_decl() {
+        insta::assert_snapshot!(dump(
+            "processor.latency = length;",
             Parser::parse_statement
         ));
     }

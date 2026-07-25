@@ -1,0 +1,11 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"void main() { loop advance(); }\", Parser::parse_statement)"
+---
+FunctionDecl "main"
+  TypeName "void"
+  Block
+    LoopStmt
+      ExprStmt
+        Call
+          advance

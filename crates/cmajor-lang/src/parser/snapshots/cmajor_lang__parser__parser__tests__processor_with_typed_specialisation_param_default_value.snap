@@ -1,0 +1,11 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"processor Gain (int channelCount = 2) { output stream int out; }\",\nParser::parse_statement)"
+---
+ProcessorDecl "Gain"
+  SpecialisationParam value "channelCount"
+    TypeName "int"
+    2
+  EndpointGroup output stream
+    EndpointDecl "out"
+      TypeName "int"
