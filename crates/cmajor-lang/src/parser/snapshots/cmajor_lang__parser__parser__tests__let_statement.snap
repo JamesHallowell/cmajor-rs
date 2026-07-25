@@ -1,0 +1,6 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"let x = 1;\", Parser::parse_statement)"
+---
+LetStmt "x"
+  1

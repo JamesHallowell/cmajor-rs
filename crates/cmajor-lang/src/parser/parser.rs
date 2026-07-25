@@ -35,17 +35,6 @@ pub fn parse(source: &str) -> Parse {
     }
 }
 
-pub fn parse_type(source: &str) -> Parse {
-    let mut parser = Parser::new(TokenStream::tokenize(source));
-    let root = parser.parse_type();
-
-    Parse {
-        ast: parser.ast,
-        root,
-        tokens: parser.tokens,
-    }
-}
-
 fn is_type_name_start(kind: TokenKind) -> bool {
     kind == TokenKind::Identifier || kind.is_type()
 }
@@ -323,7 +312,11 @@ impl Parser {
         self.peek_kind() == Some(TokenKind::Keyword(keyword))
     }
 
-    fn parse_expr(&mut self, min_binding_power: BindingPower) -> NodeId {
+    fn parse_expr(&mut self) -> NodeId {
+        self.parse_expr_with_min_binding_power(PrecedenceLevel::lowest())
+    }
+
+    fn parse_expr_with_min_binding_power(&mut self, min_binding_power: BindingPower) -> NodeId {
         let mut lhs = self.parse_prefix();
 
         while let Some(token) = self.peek() {
@@ -338,9 +331,10 @@ impl Parser {
             lhs = match infix {
                 Infix::Ternary => {
                     let question = self.bump();
-                    let then_branch = self.parse_expr(PrecedenceLevel::lowest());
+                    let then_branch = self.parse_expr();
                     self.expect(TokenKind::Colon);
-                    let else_branch = self.parse_expr(binding_power.min_for_rhs);
+                    let else_branch =
+                        self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
                     self.ast.push(Node::Ternary {
                         question,
                         cond: lhs,
@@ -350,7 +344,7 @@ impl Parser {
                 }
                 Infix::Binary(bin_op) => {
                     let op = self.bump();
-                    let rhs = self.parse_expr(binding_power.min_for_rhs);
+                    let rhs = self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
                     self.ast.push(if bin_op.is_assignment() {
                         Node::Assign {
                             op,
@@ -370,7 +364,7 @@ impl Parser {
     fn parse_prefix(&mut self) -> NodeId {
         if self.peek_kind().is_some_and(is_prefix_op) {
             let op = self.bump();
-            let operand = self.parse_expr(PrecedenceLevel::Unary.base());
+            let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
             self.ast.push(Node::Unary { op, operand })
         } else {
             self.parse_postfix()
@@ -416,7 +410,7 @@ impl Parser {
         let mut args = Vec::new();
         if self.peek_kind() != Some(TokenKind::ParenthesisRight) {
             loop {
-                args.push(self.parse_expr(PrecedenceLevel::lowest()));
+                args.push(self.parse_expr());
                 if self.peek_kind() == Some(TokenKind::Comma) {
                     self.bump();
                 } else {
@@ -434,7 +428,7 @@ impl Parser {
 
     fn parse_index(&mut self, base: NodeId) -> NodeId {
         let bracket = self.bump();
-        let index = self.parse_expr(PrecedenceLevel::lowest());
+        let index = self.parse_expr();
         self.expect(TokenKind::BracketRight);
         self.ast.push(Node::Index {
             bracket,
@@ -487,7 +481,7 @@ impl Parser {
             }
             Some(TokenKind::ParenthesisLeft) => {
                 let paren = self.bump();
-                let inner = self.parse_expr(PrecedenceLevel::lowest());
+                let inner = self.parse_expr();
                 self.expect(TokenKind::ParenthesisRight);
                 self.ast.push(Node::Paren { paren, inner })
             }
@@ -577,7 +571,7 @@ impl Parser {
     fn parse_declarator(&mut self, name: TokenId) -> (TokenId, Option<NodeId>) {
         let init = if self.peek_kind() == Some(TokenKind::Equal) {
             self.bump();
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         } else {
             None
         };
@@ -709,7 +703,7 @@ impl Parser {
         let keyword = self.bump();
         let name = self.expect(TokenKind::Identifier);
         self.expect(TokenKind::Equal);
-        let value = self.parse_expr(PrecedenceLevel::lowest());
+        let value = self.parse_expr();
         self.expect(TokenKind::Semicolon);
         self.ast.push(Node::NodeDecl {
             keyword,
@@ -722,10 +716,10 @@ impl Parser {
         let keyword = self.bump();
         let mut links = Vec::new();
         loop {
-            let mut chain = vec![self.parse_expr(PrecedenceLevel::lowest())];
+            let mut chain = vec![self.parse_expr()];
             while self.peek_kind() == Some(TokenKind::ArrowRight) {
                 self.bump();
-                chain.push(self.parse_expr(PrecedenceLevel::lowest()));
+                chain.push(self.parse_expr());
             }
             links.push(chain);
             if self.peek_kind() == Some(TokenKind::Comma) {
@@ -764,13 +758,13 @@ impl Parser {
         let cond = if self.peek_kind() == Some(TokenKind::Semicolon) {
             None
         } else {
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         };
         self.expect(TokenKind::Semicolon);
         let update = if self.peek_kind() == Some(TokenKind::ParenthesisRight) {
             None
         } else {
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         };
         self.expect(TokenKind::ParenthesisRight);
         let body = self.parse_statement();
@@ -798,7 +792,7 @@ impl Parser {
                 self.parse_typed_decl_inner(false, false)
             }
             _ => {
-                let expr = self.parse_expr(PrecedenceLevel::lowest());
+                let expr = self.parse_expr();
                 self.ast.push(Node::ExprStmt { expr })
             }
         }
@@ -893,7 +887,7 @@ impl Parser {
                 let key = self.expect(TokenKind::Identifier);
                 let value = if self.peek_kind() == Some(TokenKind::Colon) {
                     self.bump();
-                    Some(self.parse_expr(PrecedenceLevel::lowest()))
+                    Some(self.parse_expr())
                 } else {
                     None
                 };
@@ -993,7 +987,7 @@ impl Parser {
     fn parse_let_declarator(&mut self) -> (TokenId, NodeId) {
         let name = self.expect(TokenKind::Identifier);
         self.expect(TokenKind::Equal);
-        let init = self.parse_expr(PrecedenceLevel::lowest());
+        let init = self.parse_expr();
         (name, init)
     }
 
@@ -1002,7 +996,7 @@ impl Parser {
         let name = self.expect(TokenKind::Identifier);
         let init = if self.peek_kind() == Some(TokenKind::Equal) {
             self.bump();
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         } else {
             None
         };
@@ -1013,7 +1007,7 @@ impl Parser {
     fn parse_if(&mut self) -> NodeId {
         let keyword = self.bump();
         self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr(PrecedenceLevel::lowest());
+        let cond = self.parse_expr();
         self.expect(TokenKind::ParenthesisRight);
         let then_branch = self.parse_statement();
         let else_branch = if self.at_keyword(Keyword::Else) {
@@ -1033,7 +1027,7 @@ impl Parser {
     fn parse_while(&mut self) -> NodeId {
         let keyword = self.bump();
         self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr(PrecedenceLevel::lowest());
+        let cond = self.parse_expr();
         self.expect(TokenKind::ParenthesisRight);
         let body = self.parse_statement();
         self.ast.push(Node::WhileStmt {
@@ -1047,7 +1041,7 @@ impl Parser {
         let keyword = self.bump();
         let count = if self.peek_kind() == Some(TokenKind::ParenthesisLeft) {
             self.bump();
-            let count = self.parse_expr(PrecedenceLevel::lowest());
+            let count = self.parse_expr();
             self.expect(TokenKind::ParenthesisRight);
             Some(count)
         } else {
@@ -1066,14 +1060,14 @@ impl Parser {
         let value = if self.peek_kind() == Some(TokenKind::Semicolon) {
             None
         } else {
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         };
         self.expect(TokenKind::Semicolon);
         self.ast.push(Node::ReturnStmt { keyword, value })
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
-        let expr = self.parse_expr(PrecedenceLevel::lowest());
+        let expr = self.parse_expr();
         self.expect(TokenKind::Semicolon);
         self.ast.push(Node::ExprStmt { expr })
     }
@@ -1112,7 +1106,7 @@ impl Parser {
         let size = if self.peek_kind() == Some(TokenKind::BracketRight) {
             None
         } else {
-            Some(self.parse_expr(PrecedenceLevel::lowest()))
+            Some(self.parse_expr())
         };
         self.expect(TokenKind::BracketRight);
         self.ast.push(Node::Array {
@@ -1124,7 +1118,7 @@ impl Parser {
 
     fn parse_chevroned_suffix(&mut self, element: NodeId) -> NodeId {
         let angle = self.bump();
-        let term = self.parse_expr(PrecedenceLevel::Shift.base());
+        let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
         self.expect(TokenKind::GreaterThan);
         self.ast.push(Node::ChevronSuffix {
             angle,
@@ -1192,69 +1186,74 @@ mod tests {
 
     #[test]
     fn precedence_of_arithmetic() {
-        insta::assert_snapshot!(dump("1 + 2 * 3;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("1 + 2 * 3", Parser::parse_expr));
     }
 
     #[test]
     fn power_is_right_associative() {
-        insta::assert_snapshot!(dump("2 ** 3 ** 4;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("2 ** 3 ** 4", Parser::parse_expr));
     }
 
     #[test]
     fn subtraction_is_left_associative() {
-        insta::assert_snapshot!(dump("1 - 2 - 3;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("1 - 2 - 3", Parser::parse_expr));
     }
 
     #[test]
     fn assignment_is_right_associative() {
-        insta::assert_snapshot!(dump("a = b = c;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("a = b = c", Parser::parse_expr));
     }
 
     #[test]
     fn output_write_operator() {
-        insta::assert_snapshot!(dump("out <- in * gain;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("out <- in * gain", Parser::parse_expr));
     }
 
     #[test]
     fn ternary_nests_to_the_right() {
-        insta::assert_snapshot!(dump("a ? b : c ? d : e;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("a ? b : c ? d : e", Parser::parse_expr));
     }
 
     #[test]
     fn ternary_binds_looser_than_logical_or() {
-        insta::assert_snapshot!(dump("a || b ? c : d;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("a || b ? c : d", Parser::parse_expr));
     }
 
     #[test]
     fn unary_and_parens() {
-        insta::assert_snapshot!(dump("-(1 + 2);", Parser::parse_statement));
+        insta::assert_snapshot!(dump("-(1 + 2)", Parser::parse_expr));
     }
 
     #[test]
     fn prefix_and_postfix_increment() {
-        insta::assert_snapshot!(dump("++x;", Parser::parse_statement));
-        insta::assert_snapshot!(dump("x++;", Parser::parse_statement));
-        insta::assert_snapshot!(dump("x--;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("++x", Parser::parse_expr));
+        insta::assert_snapshot!(dump("x++", Parser::parse_expr));
+        insta::assert_snapshot!(dump("x--", Parser::parse_expr));
     }
 
     #[test]
     fn call_with_args() {
-        insta::assert_snapshot!(dump("foo(1, 2 + 3);", Parser::parse_statement));
+        insta::assert_snapshot!(dump("foo(1, 2 + 3)", Parser::parse_expr));
     }
 
     #[test]
     fn call_with_no_args() {
-        insta::assert_snapshot!(dump("advance();", Parser::parse_statement));
+        insta::assert_snapshot!(dump("advance()", Parser::parse_expr));
     }
 
     #[test]
     fn index_and_field_postfix() {
-        insta::assert_snapshot!(dump("x.left[3];", Parser::parse_statement));
+        insta::assert_snapshot!(dump("x.left[3]", Parser::parse_expr));
     }
 
     #[test]
-    fn let_and_var_statements() {
-        insta::assert_snapshot!(dump("let x = 1; var y;", Parser::parse_statement));
+    fn let_statement() {
+        insta::assert_snapshot!(dump("let x = 1;", Parser::parse_statement));
+    }
+
+    #[test]
+    fn var_statement() {
+        insta::assert_snapshot!(dump("var y; var z = 2;", Parser::parse_statement));
     }
 
     #[test]

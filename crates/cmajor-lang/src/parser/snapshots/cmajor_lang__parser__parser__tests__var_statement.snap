@@ -1,0 +1,5 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"var y;\", Parser::parse_statement)"
+---
+VarStmt "y"

@@ -103,7 +103,11 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut children = vec![child(ty)];
-            children.extend(declarators.iter().filter_map(|(_, init)| init.as_ref().map(child)));
+            children.extend(
+                declarators
+                    .iter()
+                    .filter_map(|(_, init)| init.as_ref().map(child)),
+            );
             node(format!("VarDeclStmt {const_prefix}{names:?}"), children)
         }
         Node::ForStmt {
@@ -155,7 +159,9 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             "ChevronSuffix".to_string(),
             vec![child(element), child(term)],
         ),
-        Node::TypeList { types, .. } => node("TypeList".to_string(), types.iter().map(child).collect()),
+        Node::TypeList { types, .. } => {
+            node("TypeList".to_string(), types.iter().map(child).collect())
+        }
         Node::NamespaceDecl {
             segments, items, ..
         } => {
@@ -203,9 +209,11 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             format!("EndpointGroup {} {}", text(direction), text(kind)),
             endpoints.iter().map(child).collect(),
         ),
-        Node::EndpointWildcard { direction, name } => {
-            leaf(format!("EndpointWildcard {} {}.*", text(direction), text(name)))
-        }
+        Node::EndpointWildcard { direction, name } => leaf(format!(
+            "EndpointWildcard {} {}.*",
+            text(direction),
+            text(name)
+        )),
         Node::NodeDecl { name, value, .. } => {
             node(format!("NodeDecl {:?}", text(name)), vec![child(value)])
         }
@@ -247,7 +255,10 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             let generics_suffix = if generics.is_empty() {
                 String::new()
             } else {
-                format!("<{}>", generics.iter().map(text).collect::<Vec<_>>().join(", "))
+                format!(
+                    "<{}>",
+                    generics.iter().map(text).collect::<Vec<_>>().join(", ")
+                )
             };
             let mut children = vec![child(ty)];
             children.extend(params.iter().map(child));
@@ -259,7 +270,10 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         }
         Node::Param { ty, name, by_ref } => {
             let ref_prefix = if *by_ref { "&" } else { "" };
-            node(format!("Param {ref_prefix}{:?}", text(name)), vec![child(ty)])
+            node(
+                format!("Param {ref_prefix}{:?}", text(name)),
+                vec![child(ty)],
+            )
         }
         Node::EventHandlerDecl {
             name, params, body, ..

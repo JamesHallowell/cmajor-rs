@@ -1,12 +1,11 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"a ? b : c ? d : e;\", Parser::parse_statement)"
+expression: "dump(\"a ? b : c ? d : e\", Parser::parse_expr)"
 ---
-ExprStmt
+Ternary
+  a
+  b
   Ternary
-    a
-    b
-    Ternary
-      c
-      d
-      e
+    c
+    d
+    e

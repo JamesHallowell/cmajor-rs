@@ -1,7 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"++x;\", Parser::parse_statement)"
+expression: "dump(\"++x\", Parser::parse_expr)"
 ---
-ExprStmt
-  Unary "++"
-    x
+Unary "++"
+  x

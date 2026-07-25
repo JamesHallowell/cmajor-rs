@@ -1,10 +1,9 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"a = b = c;\", Parser::parse_statement)"
+expression: "dump(\"a = b = c\", Parser::parse_expr)"
 ---
-ExprStmt
+Assign "="
+  a
   Assign "="
-    a
-    Assign "="
-      b
-      c
+    b
+    c
