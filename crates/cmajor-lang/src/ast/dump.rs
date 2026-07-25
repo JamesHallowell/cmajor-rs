@@ -142,12 +142,16 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
                 items.iter().map(child).collect(),
             )
         }
-        Node::ContainerDecl {
-            keyword,
-            name,
-            items,
-        } => node(
-            format!("ContainerDecl {:?} ({})", text(name), text(keyword)),
+        Node::ProcessorDecl { name, items, .. } => node(
+            format!("ProcessorDecl {:?}", text(name)),
+            items.iter().map(child).collect(),
+        ),
+        Node::GraphDecl { name, items, .. } => node(
+            format!("GraphDecl {:?}", text(name)),
+            items.iter().map(child).collect(),
+        ),
+        Node::StructDecl { name, items, .. } => node(
+            format!("StructDecl {:?}", text(name)),
             items.iter().map(child).collect(),
         ),
         Node::EndpointGroup {

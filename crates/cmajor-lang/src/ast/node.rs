@@ -147,7 +147,17 @@ pub enum Node {
         segments: Vec<TokenId>,
         items: Vec<NodeId>,
     },
-    ContainerDecl {
+    ProcessorDecl {
+        keyword: TokenId,
+        name: TokenId,
+        items: Vec<NodeId>,
+    },
+    GraphDecl {
+        keyword: TokenId,
+        name: TokenId,
+        items: Vec<NodeId>,
+    },
+    StructDecl {
         keyword: TokenId,
         name: TokenId,
         items: Vec<NodeId>,

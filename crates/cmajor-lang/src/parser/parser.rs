@@ -621,6 +621,7 @@ impl Parser<'_> {
     }
 
     fn parse_container(&mut self) -> NodeId {
+        let keyword_kind = self.peek_kind();
         let keyword = self.bump();
         let name = self.expect(TokenKind::Identifier);
         self.expect(TokenKind::BraceLeft);
@@ -629,11 +630,23 @@ impl Parser<'_> {
             items.push(self.parse_statement());
         }
         self.expect(TokenKind::BraceRight);
-        self.ast.push(Node::ContainerDecl {
-            keyword,
-            name,
-            items,
-        })
+        match keyword_kind {
+            Some(TokenKind::Keyword(Keyword::Graph)) => self.ast.push(Node::GraphDecl {
+                keyword,
+                name,
+                items,
+            }),
+            Some(TokenKind::Keyword(Keyword::Struct)) => self.ast.push(Node::StructDecl {
+                keyword,
+                name,
+                items,
+            }),
+            _ => self.ast.push(Node::ProcessorDecl {
+                keyword,
+                name,
+                items,
+            }),
+        }
     }
 
     fn at(&self, offset: u32, kind: TokenKind) -> bool {
@@ -946,7 +959,6 @@ mod tests {
         Call,
         ChevronSuffix,
         ComplexLiteral,
-        ContainerDecl,
         ContinueStmt,
         EndpointDecl,
         EndpointGroup,
@@ -956,6 +968,7 @@ mod tests {
         Field,
         FloatLiteral,
         FunctionDecl,
+        GraphDecl,
         Ident,
         IfStmt,
         Index,
@@ -966,9 +979,11 @@ mod tests {
         Param,
         Paren,
         PostfixUnary,
+        ProcessorDecl,
         ReturnStmt,
         ScopeAccess,
         StringLiteral,
+        StructDecl,
         Ternary,
         TypeArray,
         TypeName,
@@ -1137,12 +1152,30 @@ mod tests {
                     items.iter().map(child).collect(),
                 )
             }
-            Node::ContainerDecl {
+            Node::ProcessorDecl {
                 keyword,
                 name,
                 items,
             } => node(
-                Tag::ContainerDecl,
+                Tag::ProcessorDecl,
+                &format!("{} {}", text_of(keyword), text_of(name)),
+                items.iter().map(child).collect(),
+            ),
+            Node::GraphDecl {
+                keyword,
+                name,
+                items,
+            } => node(
+                Tag::GraphDecl,
+                &format!("{} {}", text_of(keyword), text_of(name)),
+                items.iter().map(child).collect(),
+            ),
+            Node::StructDecl {
+                keyword,
+                name,
+                items,
+            } => node(
+                Tag::StructDecl,
                 &format!("{} {}", text_of(keyword), text_of(name)),
                 items.iter().map(child).collect(),
             ),
