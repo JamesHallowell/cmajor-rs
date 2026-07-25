@@ -1,0 +1,5 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"std::complex64\", parse_type)"
+---
+TypeName "std::complex64"

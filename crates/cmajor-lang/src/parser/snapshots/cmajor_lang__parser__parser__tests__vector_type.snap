@@ -1,0 +1,7 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"int<4>\", parse_type)"
+---
+ChevronSuffix
+  TypeName "int"
+  4

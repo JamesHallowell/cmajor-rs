@@ -1,0 +1,9 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"wrap<1 + 2>\", parse_type)"
+---
+ChevronSuffix
+  TypeName "wrap"
+  Binary "+"
+    1
+    2

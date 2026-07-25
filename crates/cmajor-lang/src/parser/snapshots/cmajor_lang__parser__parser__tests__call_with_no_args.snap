@@ -1,0 +1,7 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"advance();\", Parser::parse_statement)"
+---
+ExprStmt
+  Call
+    advance

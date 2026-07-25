@@ -1,0 +1,5 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"float\", parse_type)"
+---
+TypeName "float"

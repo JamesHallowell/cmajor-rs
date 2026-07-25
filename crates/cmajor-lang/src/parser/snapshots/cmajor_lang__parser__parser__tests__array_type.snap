@@ -1,0 +1,7 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"int[3]\", parse_type)"
+---
+Array
+  TypeName "int"
+  3

@@ -1,0 +1,10 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"2 ** 3 ** 4;\", Parser::parse_statement)"
+---
+ExprStmt
+  Binary "**"
+    2
+    Binary "**"
+      3
+      4

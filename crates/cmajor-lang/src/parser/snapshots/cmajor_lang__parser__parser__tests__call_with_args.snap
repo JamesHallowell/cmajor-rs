@@ -1,0 +1,11 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"foo(1, 2 + 3);\", Parser::parse_statement)"
+---
+ExprStmt
+  Call
+    foo
+    1
+    Binary "+"
+      2
+      3

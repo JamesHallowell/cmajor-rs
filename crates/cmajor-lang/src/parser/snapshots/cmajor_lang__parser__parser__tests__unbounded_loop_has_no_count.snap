@@ -1,0 +1,9 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"loop { advance(); }\", Parser::parse_statement)"
+---
+LoopStmt
+  Block
+    ExprStmt
+      Call
+        advance

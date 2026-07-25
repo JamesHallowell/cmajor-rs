@@ -1,0 +1,12 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"if (a) { b; } else { c; }\", Parser::parse_statement)"
+---
+IfStmt
+  a
+  Block
+    ExprStmt
+      b
+  Block
+    ExprStmt
+      c

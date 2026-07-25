@@ -1,0 +1,5 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"return; return x + 1;\", Parser::parse_statement)"
+---
+ReturnStmt

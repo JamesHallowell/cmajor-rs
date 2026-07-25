@@ -1,0 +1,10 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"-(1 + 2);\", Parser::parse_statement)"
+---
+ExprStmt
+  Unary "-"
+    Paren
+      Binary "+"
+        1
+        2

@@ -1,0 +1,11 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"a || b ? c : d;\", Parser::parse_statement)"
+---
+ExprStmt
+  Ternary
+    Binary "||"
+      a
+      b
+    c
+    d

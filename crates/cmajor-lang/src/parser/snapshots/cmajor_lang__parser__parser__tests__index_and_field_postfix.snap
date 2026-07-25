@@ -1,0 +1,9 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"x.left[3];\", Parser::parse_statement)"
+---
+ExprStmt
+  Index
+    Field "left"
+      x
+    3
