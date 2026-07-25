@@ -87,8 +87,7 @@ pub enum Node {
         expr: NodeId,
     },
     LetStmt {
-        name: TokenId,
-        init: NodeId,
+        declarators: Vec<(TokenId, NodeId)>,
     },
     VarStmt {
         name: TokenId,
@@ -96,9 +95,15 @@ pub enum Node {
     },
     VarDeclStmt {
         ty: NodeId,
-        name: TokenId,
-        init: Option<NodeId>,
+        declarators: Vec<(TokenId, Option<NodeId>)>,
         is_const: bool,
+    },
+    ForStmt {
+        keyword: TokenId,
+        init: Option<NodeId>,
+        cond: Option<NodeId>,
+        update: Option<NodeId>,
+        body: NodeId,
     },
     IfStmt {
         keyword: TokenId,
@@ -139,6 +144,10 @@ pub enum Node {
         element: NodeId,
         term: NodeId,
     },
+    TypeList {
+        paren: TokenId,
+        types: Vec<NodeId>,
+    },
     Error {
         token: TokenId,
     },
@@ -150,16 +159,19 @@ pub enum Node {
     ProcessorDecl {
         keyword: TokenId,
         name: TokenId,
+        attributes: Option<NodeId>,
         items: Vec<NodeId>,
     },
     GraphDecl {
         keyword: TokenId,
         name: TokenId,
+        attributes: Option<NodeId>,
         items: Vec<NodeId>,
     },
     StructDecl {
         keyword: TokenId,
         name: TokenId,
+        attributes: Option<NodeId>,
         items: Vec<NodeId>,
     },
     EndpointGroup {
@@ -167,23 +179,38 @@ pub enum Node {
         kind: TokenId,
         endpoints: Vec<NodeId>,
     },
+    EndpointWildcard {
+        direction: TokenId,
+        name: TokenId,
+    },
+    NodeDecl {
+        keyword: TokenId,
+        name: TokenId,
+        value: NodeId,
+    },
+    ConnectionDecl {
+        keyword: TokenId,
+        links: Vec<Vec<NodeId>>,
+    },
     EndpointDecl {
         ty: NodeId,
         name: TokenId,
         attributes: Option<NodeId>,
     },
     AttributeList {
-        attrs: Vec<(TokenId, NodeId)>,
+        attrs: Vec<(TokenId, Option<NodeId>)>,
     },
     FunctionDecl {
         ty: NodeId,
         name: TokenId,
+        generics: Vec<TokenId>,
         params: Vec<NodeId>,
         body: NodeId,
     },
     Param {
         ty: NodeId,
         name: TokenId,
+        by_ref: bool,
     },
     EventHandlerDecl {
         keyword: TokenId,

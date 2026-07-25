@@ -42,6 +42,7 @@ impl<'a> Lexer<'a> {
             '/' if self.cursor.peek() == Some('*') => self.block_comment(),
             c if is_ident_start(c) => self.ident(),
             c if c.is_ascii_digit() => self.number(),
+            '.' if self.cursor.peek().is_some_and(|c| c.is_ascii_digit()) => self.number_from_dot(),
             '"' => self.string(),
             '+' => match self.cursor.peek() {
                 Some('+') => {
@@ -249,9 +250,17 @@ impl<'a> Lexer<'a> {
             _ => {
                 self.cursor.take_while(|c| c.is_ascii_digit());
 
-                if self.cursor.peek() == Some('.') {
+                let mut is_float = self.cursor.peek() == Some('.');
+                if is_float {
                     self.cursor.take();
                     self.cursor.take_while(|c| c.is_ascii_digit());
+                }
+
+                if self.take_exponent() {
+                    is_float = true;
+                }
+
+                if is_float {
                     Literal::Float64
                 } else {
                     Literal::Int32
@@ -259,6 +268,39 @@ impl<'a> Lexer<'a> {
             }
         };
 
+        self.finish_number(kind)
+    }
+
+    fn number_from_dot(&mut self) -> TokenKind {
+        self.cursor.take_while(|c| c.is_ascii_digit());
+        self.take_exponent();
+        self.finish_number(Literal::Float64)
+    }
+
+    fn take_exponent(&mut self) -> bool {
+        let (e, after_e) = self.cursor.peek_two();
+        if !matches!(e, Some('e' | 'E')) {
+            return false;
+        }
+
+        let has_exponent_digits = match after_e {
+            Some(c) if c.is_ascii_digit() => true,
+            Some('+' | '-') => self.cursor.peek_at(2).is_some_and(|c| c.is_ascii_digit()),
+            _ => false,
+        };
+        if !has_exponent_digits {
+            return false;
+        }
+
+        self.cursor.take();
+        if matches!(self.cursor.peek(), Some('+' | '-')) {
+            self.cursor.take();
+        }
+        self.cursor.take_while(|c| c.is_ascii_digit());
+        true
+    }
+
+    fn finish_number(&mut self, kind: Literal) -> TokenKind {
         if let Some('_') = self.cursor.peek() {
             self.cursor.take();
         }
@@ -434,7 +476,49 @@ mod tests {
         assert_eq!(
             lex("1234.0_f32"),
             vec![(TokenKind::Literal(Literal::Float32), "1234.0_f32")]
-        )
+        );
+        assert_eq!(
+            lex(".8f"),
+            vec![(TokenKind::Literal(Literal::Float32), ".8f")]
+        );
+        assert_eq!(
+            lex(".5"),
+            vec![(TokenKind::Literal(Literal::Float64), ".5")]
+        );
+        assert_eq!(
+            lex("x.5"),
+            vec![
+                (TokenKind::Identifier, "x"),
+                (TokenKind::Literal(Literal::Float64), ".5"),
+            ]
+        );
+    }
+
+    #[test]
+    fn exponent_float_literals() {
+        assert_eq!(
+            lex("4.6566129e-10"),
+            vec![(TokenKind::Literal(Literal::Float64), "4.6566129e-10")]
+        );
+        assert_eq!(
+            lex("3.0518e-5f"),
+            vec![(TokenKind::Literal(Literal::Float32), "3.0518e-5f")]
+        );
+        assert_eq!(
+            lex("1e10"),
+            vec![(TokenKind::Literal(Literal::Float64), "1e10")]
+        );
+        assert_eq!(
+            lex("2E+3"),
+            vec![(TokenKind::Literal(Literal::Float64), "2E+3")]
+        );
+        assert_eq!(
+            lex("1e"),
+            vec![
+                (TokenKind::Literal(Literal::Int32), "1"),
+                (TokenKind::Identifier, "e"),
+            ]
+        );
     }
 
     #[test]

@@ -76,8 +76,16 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         Node::Field { name, base } => node(format!("Field {:?}", text(name)), vec![child(base)]),
         Node::Block { stmts, .. } => node("Block".to_string(), stmts.iter().map(child).collect()),
         Node::ExprStmt { expr } => node("ExprStmt".to_string(), vec![child(expr)]),
-        Node::LetStmt { name, init } => {
-            node(format!("LetStmt {:?}", text(name)), vec![child(init)])
+        Node::LetStmt { declarators } => {
+            let names = declarators
+                .iter()
+                .map(|(name, _)| text(name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            node(
+                format!("LetStmt {names:?}"),
+                declarators.iter().map(|(_, init)| child(init)).collect(),
+            )
         }
         Node::VarStmt { name, init } => {
             let children = init.iter().map(child).collect();
@@ -85,17 +93,31 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         }
         Node::VarDeclStmt {
             ty,
-            name,
-            init,
+            declarators,
             is_const,
         } => {
             let const_prefix = if *is_const { "const " } else { "" };
+            let names = declarators
+                .iter()
+                .map(|(name, _)| text(name))
+                .collect::<Vec<_>>()
+                .join(", ");
             let mut children = vec![child(ty)];
-            children.extend(init.iter().map(child));
-            node(
-                format!("VarDeclStmt {const_prefix}{:?}", text(name)),
-                children,
-            )
+            children.extend(declarators.iter().filter_map(|(_, init)| init.as_ref().map(child)));
+            node(format!("VarDeclStmt {const_prefix}{names:?}"), children)
+        }
+        Node::ForStmt {
+            init,
+            cond,
+            update,
+            body,
+            ..
+        } => {
+            let mut children: Vec<_> = init.iter().map(child).collect();
+            children.extend(cond.iter().map(child));
+            children.extend(update.iter().map(child));
+            children.push(child(body));
+            node("ForStmt".to_string(), children)
         }
         Node::IfStmt {
             cond,
@@ -133,6 +155,7 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             "ChevronSuffix".to_string(),
             vec![child(element), child(term)],
         ),
+        Node::TypeList { types, .. } => node("TypeList".to_string(), types.iter().map(child).collect()),
         Node::NamespaceDecl {
             segments, items, ..
         } => {
@@ -142,18 +165,36 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
                 items.iter().map(child).collect(),
             )
         }
-        Node::ProcessorDecl { name, items, .. } => node(
-            format!("ProcessorDecl {:?}", text(name)),
-            items.iter().map(child).collect(),
-        ),
-        Node::GraphDecl { name, items, .. } => node(
-            format!("GraphDecl {:?}", text(name)),
-            items.iter().map(child).collect(),
-        ),
-        Node::StructDecl { name, items, .. } => node(
-            format!("StructDecl {:?}", text(name)),
-            items.iter().map(child).collect(),
-        ),
+        Node::ProcessorDecl {
+            name,
+            attributes,
+            items,
+            ..
+        } => {
+            let mut children: Vec<_> = attributes.iter().map(child).collect();
+            children.extend(items.iter().map(child));
+            node(format!("ProcessorDecl {:?}", text(name)), children)
+        }
+        Node::GraphDecl {
+            name,
+            attributes,
+            items,
+            ..
+        } => {
+            let mut children: Vec<_> = attributes.iter().map(child).collect();
+            children.extend(items.iter().map(child));
+            node(format!("GraphDecl {:?}", text(name)), children)
+        }
+        Node::StructDecl {
+            name,
+            attributes,
+            items,
+            ..
+        } => {
+            let mut children: Vec<_> = attributes.iter().map(child).collect();
+            children.extend(items.iter().map(child));
+            node(format!("StructDecl {:?}", text(name)), children)
+        }
         Node::EndpointGroup {
             direction,
             kind,
@@ -161,6 +202,19 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         } => node(
             format!("EndpointGroup {} {}", text(direction), text(kind)),
             endpoints.iter().map(child).collect(),
+        ),
+        Node::EndpointWildcard { direction, name } => {
+            leaf(format!("EndpointWildcard {} {}.*", text(direction), text(name)))
+        }
+        Node::NodeDecl { name, value, .. } => {
+            node(format!("NodeDecl {:?}", text(name)), vec![child(value)])
+        }
+        Node::ConnectionDecl { links, .. } => node(
+            "ConnectionDecl".to_string(),
+            links
+                .iter()
+                .map(|chain| node("Link".to_string(), chain.iter().map(child).collect()))
+                .collect(),
         ),
         Node::EndpointDecl {
             ty,
@@ -174,22 +228,39 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         Node::AttributeList { attrs } => {
             let children = attrs
                 .iter()
-                .map(|(key, value)| node(format!("{:?}", text(key)), vec![child(value)]))
+                .map(|(key, value)| {
+                    node(
+                        format!("{:?}", text(key)),
+                        value.iter().map(child).collect(),
+                    )
+                })
                 .collect();
             node("AttributeList".to_string(), children)
         }
         Node::FunctionDecl {
             ty,
             name,
+            generics,
             params,
             body,
         } => {
+            let generics_suffix = if generics.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", generics.iter().map(text).collect::<Vec<_>>().join(", "))
+            };
             let mut children = vec![child(ty)];
             children.extend(params.iter().map(child));
             children.push(child(body));
-            node(format!("FunctionDecl {:?}", text(name)), children)
+            node(
+                format!("FunctionDecl {:?}{generics_suffix}", text(name)),
+                children,
+            )
         }
-        Node::Param { ty, name } => node(format!("Param {:?}", text(name)), vec![child(ty)]),
+        Node::Param { ty, name, by_ref } => {
+            let ref_prefix = if *by_ref { "&" } else { "" };
+            node(format!("Param {ref_prefix}{:?}", text(name)), vec![child(ty)])
+        }
         Node::EventHandlerDecl {
             name, params, body, ..
         } => {

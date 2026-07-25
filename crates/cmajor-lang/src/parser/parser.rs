@@ -388,6 +388,9 @@ impl Parser<'_> {
                 Some(TokenKind::BracketLeft) => self.parse_index(expr),
                 Some(TokenKind::Dot) => self.parse_field(expr),
                 Some(TokenKind::ColonColon) => self.parse_scope_access(expr),
+                Some(TokenKind::LessThan) if self.at_vector_construct_chevron() => {
+                    self.parse_chevroned_suffix(expr)
+                }
                 Some(TokenKind::PlusPlus | TokenKind::MinusMinus) => {
                     let op = self.bump();
                     self.ast.push(Node::PostfixUnary { op, operand: expr })
@@ -397,6 +400,11 @@ impl Parser<'_> {
         }
 
         expr
+    }
+    
+    fn at_vector_construct_chevron(&self) -> bool {
+        self.skip_to_matching_angle_bracket(0)
+            .is_some_and(|after| self.at(after, TokenKind::ParenthesisLeft))
     }
 
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
@@ -500,6 +508,9 @@ impl Parser<'_> {
             Some(TokenKind::Keyword(Keyword::If)) => self.parse_if(),
             Some(TokenKind::Keyword(Keyword::While)) => self.parse_while(),
             Some(TokenKind::Keyword(Keyword::Loop)) => self.parse_loop(),
+            Some(TokenKind::Keyword(Keyword::For)) => self.parse_for(),
+            Some(TokenKind::Keyword(Keyword::Node)) => self.parse_node_decl(),
+            Some(TokenKind::Keyword(Keyword::Connection)) => self.parse_connection_decl(),
             Some(TokenKind::Keyword(Keyword::Return)) => self.parse_return(),
             Some(TokenKind::Keyword(Keyword::Break)) => {
                 let keyword = self.bump();
@@ -536,25 +547,56 @@ impl Parser<'_> {
     }
 
     fn parse_typed_decl(&mut self, is_const: bool) -> NodeId {
+        self.parse_typed_decl_inner(is_const, true)
+    }
+
+    fn parse_typed_decl_inner(&mut self, is_const: bool, consume_semicolon: bool) -> NodeId {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Identifier);
-        if self.peek_kind() == Some(TokenKind::ParenthesisLeft) {
-            self.parse_function_decl(ty, name)
+        if self.peek_kind() == Some(TokenKind::LessThan) || self.peek_kind() == Some(TokenKind::ParenthesisLeft)
+        {
+            let generics = self.parse_optional_generics();
+            self.parse_function_decl(ty, name, generics)
         } else {
-            let init = if self.peek_kind() == Some(TokenKind::Equal) {
+            let mut declarators = vec![self.parse_declarator(name)];
+            while self.peek_kind() == Some(TokenKind::Comma) {
                 self.bump();
-                Some(self.parse_expr(PrecedenceLevel::lowest()))
-            } else {
-                None
-            };
-            self.expect(TokenKind::Semicolon);
+                let name = self.expect(TokenKind::Identifier);
+                declarators.push(self.parse_declarator(name));
+            }
+            if consume_semicolon {
+                self.expect(TokenKind::Semicolon);
+            }
             self.ast.push(Node::VarDeclStmt {
                 ty,
-                name,
-                init,
+                declarators,
                 is_const,
             })
         }
+    }
+
+    fn parse_declarator(&mut self, name: TokenId) -> (TokenId, Option<NodeId>) {
+        let init = if self.peek_kind() == Some(TokenKind::Equal) {
+            self.bump();
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
+        } else {
+            None
+        };
+        (name, init)
+    }
+
+    fn parse_optional_generics(&mut self) -> Vec<TokenId> {
+        if self.peek_kind() != Some(TokenKind::LessThan) {
+            return Vec::new();
+        }
+        self.bump();
+        let mut generics = vec![self.expect(TokenKind::Identifier)];
+        while self.peek_kind() == Some(TokenKind::Comma) {
+            self.bump();
+            generics.push(self.expect(TokenKind::Identifier));
+        }
+        self.expect(TokenKind::GreaterThan);
+        generics
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
@@ -563,8 +605,14 @@ impl Parser<'_> {
         if self.peek_kind() != Some(TokenKind::ParenthesisRight) {
             loop {
                 let ty = self.parse_type();
+                let by_ref = if self.peek_kind() == Some(TokenKind::Ampersand) {
+                    self.bump();
+                    true
+                } else {
+                    false
+                };
                 let name = self.expect(TokenKind::Identifier);
-                params.push(self.ast.push(Node::Param { ty, name }));
+                params.push(self.ast.push(Node::Param { ty, name, by_ref }));
                 if self.peek_kind() == Some(TokenKind::Comma) {
                     self.bump();
                 } else {
@@ -576,12 +624,13 @@ impl Parser<'_> {
         params
     }
 
-    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId) -> NodeId {
+    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
         let params = self.parse_params();
         let body = self.parse_block();
         self.ast.push(Node::FunctionDecl {
             ty,
             name,
+            generics,
             params,
             body,
         })
@@ -624,6 +673,11 @@ impl Parser<'_> {
         let keyword_kind = self.peek_kind();
         let keyword = self.bump();
         let name = self.expect(TokenKind::Identifier);
+        let attributes = if self.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
+            Some(self.parse_attribute_list())
+        } else {
+            None
+        };
         self.expect(TokenKind::BraceLeft);
         let mut items = Vec::new();
         while !matches!(self.peek_kind(), Some(TokenKind::BraceRight) | None) {
@@ -634,18 +688,120 @@ impl Parser<'_> {
             Some(TokenKind::Keyword(Keyword::Graph)) => self.ast.push(Node::GraphDecl {
                 keyword,
                 name,
+                attributes,
                 items,
             }),
             Some(TokenKind::Keyword(Keyword::Struct)) => self.ast.push(Node::StructDecl {
                 keyword,
                 name,
+                attributes,
                 items,
             }),
             _ => self.ast.push(Node::ProcessorDecl {
                 keyword,
                 name,
+                attributes,
                 items,
             }),
+        }
+    }
+
+    fn parse_node_decl(&mut self) -> NodeId {
+        let keyword = self.bump();
+        let name = self.expect(TokenKind::Identifier);
+        self.expect(TokenKind::Equal);
+        let value = self.parse_expr(PrecedenceLevel::lowest());
+        self.expect(TokenKind::Semicolon);
+        self.ast.push(Node::NodeDecl {
+            keyword,
+            name,
+            value,
+        })
+    }
+
+    fn parse_connection_decl(&mut self) -> NodeId {
+        let keyword = self.bump();
+        let mut links = Vec::new();
+        loop {
+            let mut chain = vec![self.parse_expr(PrecedenceLevel::lowest())];
+            while self.peek_kind() == Some(TokenKind::ArrowRight) {
+                self.bump();
+                chain.push(self.parse_expr(PrecedenceLevel::lowest()));
+            }
+            links.push(chain);
+            if self.peek_kind() == Some(TokenKind::Comma) {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        self.expect(TokenKind::Semicolon);
+        self.ast.push(Node::ConnectionDecl { keyword, links })
+    }
+
+    fn parse_for(&mut self) -> NodeId {
+        let keyword = self.bump();
+        self.expect(TokenKind::ParenthesisLeft);
+
+        let init = if self.peek_kind() == Some(TokenKind::Semicolon) {
+            None
+        } else {
+            Some(self.parse_for_init())
+        };
+
+        if self.peek_kind() == Some(TokenKind::ParenthesisRight) {
+            self.bump();
+            let body = self.parse_statement();
+            return self.ast.push(Node::ForStmt {
+                keyword,
+                init,
+                cond: None,
+                update: None,
+                body,
+            });
+        }
+
+        self.expect(TokenKind::Semicolon);
+        let cond = if self.peek_kind() == Some(TokenKind::Semicolon) {
+            None
+        } else {
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
+        };
+        self.expect(TokenKind::Semicolon);
+        let update = if self.peek_kind() == Some(TokenKind::ParenthesisRight) {
+            None
+        } else {
+            Some(self.parse_expr(PrecedenceLevel::lowest()))
+        };
+        self.expect(TokenKind::ParenthesisRight);
+        let body = self.parse_statement();
+        self.ast.push(Node::ForStmt {
+            keyword,
+            init,
+            cond,
+            update,
+            body,
+        })
+    }
+
+    fn parse_for_init(&mut self) -> NodeId {
+        match self.peek_kind() {
+            Some(TokenKind::Keyword(Keyword::Const)) => {
+                self.bump();
+                self.parse_typed_decl_inner(true, false)
+            }
+            Some(TokenKind::Keyword(keyword))
+                if is_type_name_start(TokenKind::Keyword(keyword)) =>
+            {
+                self.parse_typed_decl_inner(false, false)
+            }
+            Some(TokenKind::Identifier) if self.looks_like_typed_decl() => {
+                self.parse_typed_decl_inner(false, false)
+            }
+            _ => {
+                let expr = self.parse_expr(PrecedenceLevel::lowest());
+                self.ast.push(Node::ExprStmt { expr })
+            }
         }
     }
 
@@ -736,8 +892,12 @@ impl Parser<'_> {
         if self.peek_kind() != Some(TokenKind::DoubleBracketRight) {
             loop {
                 let key = self.expect(TokenKind::Identifier);
-                self.expect(TokenKind::Colon);
-                let value = self.parse_expr(PrecedenceLevel::lowest());
+                let value = if self.peek_kind() == Some(TokenKind::Colon) {
+                    self.bump();
+                    Some(self.parse_expr(PrecedenceLevel::lowest()))
+                } else {
+                    None
+                };
                 attrs.push((key, value));
                 if self.peek_kind() == Some(TokenKind::Comma) {
                     self.bump();
@@ -750,8 +910,23 @@ impl Parser<'_> {
         self.ast.push(Node::AttributeList { attrs })
     }
 
+    fn parse_type_list(&mut self) -> NodeId {
+        let paren = self.bump();
+        let mut types = vec![self.parse_type()];
+        while self.peek_kind() == Some(TokenKind::Comma) {
+            self.bump();
+            types.push(self.parse_type());
+        }
+        self.expect(TokenKind::ParenthesisRight);
+        self.ast.push(Node::TypeList { paren, types })
+    }
+
     fn parse_endpoint_member(&mut self) -> NodeId {
-        let ty = self.parse_type();
+        let ty = if self.peek_kind() == Some(TokenKind::ParenthesisLeft) {
+            self.parse_type_list()
+        } else {
+            self.parse_type()
+        };
         let name = self.expect(TokenKind::Identifier);
         let attributes = if self.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
             Some(self.parse_attribute_list())
@@ -768,6 +943,13 @@ impl Parser<'_> {
 
     fn parse_endpoint_group(&mut self) -> NodeId {
         let direction = self.bump();
+        if self.peek_kind() == Some(TokenKind::Identifier) && self.at(1, TokenKind::Dot) {
+            let name = self.bump();
+            self.bump();
+            self.expect(TokenKind::Star);
+            self.expect(TokenKind::Semicolon);
+            return self.ast.push(Node::EndpointWildcard { direction, name });
+        }
         let kind = self.bump();
         let endpoints = if self.peek_kind() == Some(TokenKind::BraceLeft) {
             self.bump();
@@ -800,11 +982,20 @@ impl Parser<'_> {
 
     fn parse_let(&mut self) -> NodeId {
         self.bump();
+        let mut declarators = vec![self.parse_let_declarator()];
+        while self.peek_kind() == Some(TokenKind::Comma) {
+            self.bump();
+            declarators.push(self.parse_let_declarator());
+        }
+        self.expect(TokenKind::Semicolon);
+        self.ast.push(Node::LetStmt { declarators })
+    }
+
+    fn parse_let_declarator(&mut self) -> (TokenId, NodeId) {
         let name = self.expect(TokenKind::Identifier);
         self.expect(TokenKind::Equal);
         let init = self.parse_expr(PrecedenceLevel::lowest());
-        self.expect(TokenKind::Semicolon);
-        self.ast.push(Node::LetStmt { name, init })
+        (name, init)
     }
 
     fn parse_var(&mut self) -> NodeId {
@@ -1070,16 +1261,38 @@ mod tests {
                 stmts.iter().map(child).collect(),
             ),
             Node::ExprStmt { expr } => node(Tag::ExprStmt, "", vec![child(expr)]),
-            Node::LetStmt { name, init } => node(Tag::LetStmt, text_of(name), vec![child(init)]),
+            Node::LetStmt { declarators } => {
+                let names = declarators
+                    .iter()
+                    .map(|(name, _)| text_of(name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                node(
+                    Tag::LetStmt,
+                    &names,
+                    declarators.iter().map(|(_, init)| child(init)).collect(),
+                )
+            }
             Node::VarStmt { name, init } => node(
                 Tag::VarStmt,
                 text_of(name),
                 init.iter().map(child).collect(),
             ),
-            Node::VarDeclStmt { ty, name, init, .. } => {
+            Node::VarDeclStmt {
+                ty, declarators, ..
+            } => {
+                let names = declarators
+                    .iter()
+                    .map(|(name, _)| text_of(name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let mut children = vec![child(ty)];
-                children.extend(init.iter().map(child));
-                node(Tag::VarDeclStmt, text_of(name), children)
+                children.extend(
+                    declarators
+                        .iter()
+                        .filter_map(|(_, init)| init.as_ref().map(child)),
+                );
+                node(Tag::VarDeclStmt, &names, children)
             }
             Node::IfStmt {
                 keyword,
@@ -1156,6 +1369,7 @@ mod tests {
                 keyword,
                 name,
                 items,
+                ..
             } => node(
                 Tag::ProcessorDecl,
                 &format!("{} {}", text_of(keyword), text_of(name)),
@@ -1165,6 +1379,7 @@ mod tests {
                 keyword,
                 name,
                 items,
+                ..
             } => node(
                 Tag::GraphDecl,
                 &format!("{} {}", text_of(keyword), text_of(name)),
@@ -1174,6 +1389,7 @@ mod tests {
                 keyword,
                 name,
                 items,
+                ..
             } => node(
                 Tag::StructDecl,
                 &format!("{} {}", text_of(keyword), text_of(name)),
@@ -1202,7 +1418,13 @@ mod tests {
                 "",
                 attrs
                     .iter()
-                    .map(|(key, value)| node(Tag::Param, text_of(key), vec![child(value)]))
+                    .map(|(key, value)| {
+                        node(
+                            Tag::Param,
+                            text_of(key),
+                            value.iter().map(child).collect(),
+                        )
+                    })
                     .collect(),
             ),
             Node::FunctionDecl {
@@ -1210,13 +1432,14 @@ mod tests {
                 name,
                 params,
                 body,
+                ..
             } => {
                 let mut children = vec![child(ty)];
                 children.extend(params.iter().map(child));
                 children.push(child(body));
                 node(Tag::FunctionDecl, text_of(name), children)
             }
-            Node::Param { ty, name } => node(Tag::Param, text_of(name), vec![child(ty)]),
+            Node::Param { ty, name, .. } => node(Tag::Param, text_of(name), vec![child(ty)]),
             Node::EventHandlerDecl {
                 keyword,
                 name,
@@ -1234,6 +1457,11 @@ mod tests {
             Node::ScopeAccess { name, base } => {
                 node(Tag::ScopeAccess, text_of(name), vec![child(base)])
             }
+            Node::ForStmt { .. }
+            | Node::EndpointWildcard { .. }
+            | Node::NodeDecl { .. }
+            | Node::ConnectionDecl { .. }
+            | Node::TypeList { .. } => unimplemented!("not exercised by these tests"),
         }
     }
 
