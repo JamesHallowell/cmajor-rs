@@ -18,16 +18,7 @@ pub struct Parse {
 
 pub fn parse(source: &str) -> Parse {
     let mut parser = Parser::new(TokenStream::tokenize(source));
-
-    let mut stmts = Vec::new();
-    while parser.peek().is_some() {
-        stmts.push(parser.parse_statement());
-    }
-    let root = parser.ast.push(Node::Block {
-        brace: TokenId(0),
-        stmts,
-    });
-
+    let root = parser.parse();
     Parse {
         ast: parser.ast,
         root,
@@ -310,6 +301,18 @@ impl Parser {
 
     fn at_keyword(&self, keyword: Keyword) -> bool {
         self.peek_kind() == Some(TokenKind::Keyword(keyword))
+    }
+
+    pub fn parse(&mut self) -> NodeId {
+        let mut stmts = Vec::new();
+        while self.peek().is_some() {
+            stmts.push(self.parse_statement());
+        }
+        let root = self.ast.push(Node::Block {
+            brace: TokenId(0),
+            stmts,
+        });
+        root
     }
 
     fn parse_expr(&mut self) -> NodeId {
@@ -1253,7 +1256,12 @@ mod tests {
 
     #[test]
     fn var_statement() {
-        insta::assert_snapshot!(dump("var y; var z = 2;", Parser::parse_statement));
+        insta::assert_snapshot!(dump("var y;", Parser::parse_statement));
+    }
+
+    #[test]
+    fn var_with_init_statement() {
+        insta::assert_snapshot!(dump("var y = 3;", Parser::parse_statement));
     }
 
     #[test]
@@ -1295,5 +1303,13 @@ mod tests {
     #[test]
     fn break_and_continue() {
         insta::assert_snapshot!(dump("loop { break; continue; }", Parser::parse_statement));
+    }
+
+    #[test]
+    fn function() {
+        insta::assert_snapshot!(dump(
+            "int add(int a, int b) { return a + b; }",
+            Parser::parse_statement
+        ));
     }
 }

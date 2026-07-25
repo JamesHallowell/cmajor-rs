@@ -5,7 +5,7 @@ default:
 coverage *ARGS:
     cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov
     rustup component add llvm-tools-preview
-    cargo llvm-cov --html --open --all-features {{ ARGS }}
+    cargo llvm-cov --html --open {{ ARGS }}
 
 format:
     cargo +nightly fmt

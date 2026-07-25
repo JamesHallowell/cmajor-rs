@@ -1,0 +1,15 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"int add(int a, int b) { return a + b; }\", Parser::parse_statement)"
+---
+FunctionDecl "add"
+  TypeName "int"
+  Param "a"
+    TypeName "int"
+  Param "b"
+    TypeName "int"
+  Block
+    ReturnStmt
+      Binary "+"
+        a
+        b
