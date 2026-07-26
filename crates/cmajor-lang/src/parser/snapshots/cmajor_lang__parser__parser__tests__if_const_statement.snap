@@ -1,0 +1,9 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"if const (a) { b; }\", Parser::parse_statement)"
+---
+IfStmt const
+  a
+  Block
+    ExprStmt
+      b

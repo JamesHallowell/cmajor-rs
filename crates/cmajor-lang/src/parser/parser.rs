@@ -534,27 +534,22 @@ impl Parser {
                 self.parse_endpoint_group()
             }
             Some(TokenKind::Keyword(Keyword::Event)) => self.parse_event_handler(),
-            Some(TokenKind::Keyword(Keyword::Const)) => {
-                self.bump();
-                self.parse_typed_decl(true)
-            }
+            Some(TokenKind::Keyword(Keyword::Const)) => self.parse_typed_decl(),
             Some(TokenKind::Keyword(keyword))
                 if is_type_name_start(TokenKind::Keyword(keyword)) =>
             {
-                self.parse_typed_decl(false)
+                self.parse_typed_decl()
             }
-            Some(TokenKind::Identifier) if self.looks_like_typed_decl() => {
-                self.parse_typed_decl(false)
-            }
+            Some(TokenKind::Identifier) if self.looks_like_typed_decl() => self.parse_typed_decl(),
             _ => self.parse_expr_stmt(),
         }
     }
 
-    fn parse_typed_decl(&mut self, is_const: bool) -> NodeId {
-        self.parse_typed_decl_inner(is_const, true)
+    fn parse_typed_decl(&mut self) -> NodeId {
+        self.parse_typed_decl_inner(true)
     }
 
-    fn parse_typed_decl_inner(&mut self, is_const: bool, consume_semicolon: bool) -> NodeId {
+    fn parse_typed_decl_inner(&mut self, consume_semicolon: bool) -> NodeId {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Identifier);
         if self.peek_kind() == Some(TokenKind::LessThan)
@@ -572,11 +567,7 @@ impl Parser {
             if consume_semicolon {
                 self.expect(TokenKind::Semicolon);
             }
-            self.ast.push(Node::VarDeclStmt {
-                ty,
-                declarators,
-                is_const,
-            })
+            self.ast.push(Node::VarDeclStmt { ty, declarators })
         }
     }
 
@@ -852,17 +843,14 @@ impl Parser {
 
     fn parse_for_init(&mut self) -> NodeId {
         match self.peek_kind() {
-            Some(TokenKind::Keyword(Keyword::Const)) => {
-                self.bump();
-                self.parse_typed_decl_inner(true, false)
-            }
+            Some(TokenKind::Keyword(Keyword::Const)) => self.parse_typed_decl_inner(false),
             Some(TokenKind::Keyword(keyword))
                 if is_type_name_start(TokenKind::Keyword(keyword)) =>
             {
-                self.parse_typed_decl_inner(false, false)
+                self.parse_typed_decl_inner(false)
             }
             Some(TokenKind::Identifier) if self.looks_like_typed_decl() => {
-                self.parse_typed_decl_inner(false, false)
+                self.parse_typed_decl_inner(false)
             }
             _ => {
                 let expr = self.parse_expr();
@@ -1079,6 +1067,12 @@ impl Parser {
 
     fn parse_if(&mut self) -> NodeId {
         let keyword = self.bump();
+        let is_const = if self.peek_kind() == Some(TokenKind::Keyword(Keyword::Const)) {
+            self.bump();
+            true
+        } else {
+            false
+        };
         self.expect(TokenKind::ParenthesisLeft);
         let cond = self.parse_expr();
         self.expect(TokenKind::ParenthesisRight);
@@ -1091,6 +1085,7 @@ impl Parser {
         };
         self.ast.push(Node::IfStmt {
             keyword,
+            is_const,
             cond,
             then_branch,
             else_branch,
@@ -1146,6 +1141,12 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> NodeId {
+        if self.peek_kind() == Some(TokenKind::Keyword(Keyword::Const)) {
+            let keyword = self.bump();
+            let inner = self.parse_type();
+            return self.ast.push(Node::ConstType { keyword, inner });
+        }
+
         let mut ty = match self.peek_kind() {
             Some(kind) if is_type_name_start(kind) => self.parse_type_name(),
             _ => {
@@ -1258,6 +1259,16 @@ mod tests {
     }
 
     #[test]
+    fn const_type() {
+        insta::assert_snapshot!(dump("const int", Parser::parse_type));
+    }
+
+    #[test]
+    fn const_array_type() {
+        insta::assert_snapshot!(dump("const int[]", Parser::parse_type));
+    }
+
+    #[test]
     fn precedence_of_arithmetic() {
         insta::assert_snapshot!(dump("1 + 2 * 3", Parser::parse_expr));
     }
@@ -1343,6 +1354,11 @@ mod tests {
     }
 
     #[test]
+    fn const_var_decl_statement() {
+        insta::assert_snapshot!(dump("const int x = 1;", Parser::parse_statement));
+    }
+
+    #[test]
     fn if_else_statement() {
         insta::assert_snapshot!(dump("if (a) { b; } else { c; }", Parser::parse_statement));
     }
@@ -1350,6 +1366,11 @@ mod tests {
     #[test]
     fn if_without_else() {
         insta::assert_snapshot!(dump("if (a) { b; }", Parser::parse_statement));
+    }
+
+    #[test]
+    fn if_const_statement() {
+        insta::assert_snapshot!(dump("if const (a) { b; }", Parser::parse_statement));
     }
 
     #[test]
@@ -1379,6 +1400,14 @@ mod tests {
     fn function() {
         insta::assert_snapshot!(dump(
             "int add(int a, int b) { return a + b; }",
+            Parser::parse_statement
+        ));
+    }
+
+    #[test]
+    fn function_with_const_params() {
+        insta::assert_snapshot!(dump(
+            "void f(const int& a, const float32[10]& b) { }",
             Parser::parse_statement
         ));
     }

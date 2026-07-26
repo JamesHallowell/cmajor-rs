@@ -104,7 +104,6 @@ pub enum Node {
     VarDeclStmt {
         ty: NodeId,
         declarators: Vec<(TokenId, Option<NodeId>)>,
-        is_const: bool,
     },
     ForStmt {
         keyword: TokenId,
@@ -115,6 +114,7 @@ pub enum Node {
     },
     IfStmt {
         keyword: TokenId,
+        is_const: bool,
         cond: NodeId,
         then_branch: NodeId,
         else_branch: Option<NodeId>,
@@ -141,6 +141,10 @@ pub enum Node {
     },
     TypeName {
         segments: Vec<TokenId>,
+    },
+    ConstType {
+        keyword: TokenId,
+        inner: NodeId,
     },
     Array {
         bracket: TokenId,

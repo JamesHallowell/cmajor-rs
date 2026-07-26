@@ -1,0 +1,8 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"const int x = 1;\", Parser::parse_statement)"
+---
+VarDeclStmt "x"
+  ConstType
+    TypeName "int"
+  1

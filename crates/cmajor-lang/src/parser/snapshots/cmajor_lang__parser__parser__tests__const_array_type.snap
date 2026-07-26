@@ -1,0 +1,7 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"const int[]\", Parser::parse_type)"
+---
+ConstType
+  Array
+    TypeName "int"

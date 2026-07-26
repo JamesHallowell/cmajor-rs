@@ -1,0 +1,15 @@
+---
+source: crates/cmajor-lang/src/parser/parser.rs
+expression: "dump(\"void f(const int& a, const float32[10]& b) { }\",\nParser::parse_statement)"
+---
+FunctionDecl "f"
+  TypeName "void"
+  Param &"a"
+    ConstType
+      TypeName "int"
+  Param &"b"
+    ConstType
+      Array
+        TypeName "float32"
+        10
+  Block

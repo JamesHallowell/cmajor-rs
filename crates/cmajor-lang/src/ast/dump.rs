@@ -91,12 +91,7 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             let children = init.iter().map(child).collect();
             node(format!("VarStmt {:?}", text(name)), children)
         }
-        Node::VarDeclStmt {
-            ty,
-            declarators,
-            is_const,
-        } => {
-            let const_prefix = if *is_const { "const " } else { "" };
+        Node::VarDeclStmt { ty, declarators } => {
             let names = declarators
                 .iter()
                 .map(|(name, _)| text(name))
@@ -108,7 +103,7 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
                     .iter()
                     .filter_map(|(_, init)| init.as_ref().map(child)),
             );
-            node(format!("VarDeclStmt {const_prefix}{names:?}"), children)
+            node(format!("VarDeclStmt {names:?}"), children)
         }
         Node::ForStmt {
             init,
@@ -124,14 +119,16 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             node("ForStmt".to_string(), children)
         }
         Node::IfStmt {
+            is_const,
             cond,
             then_branch,
             else_branch,
             ..
         } => {
+            let label = if *is_const { "IfStmt const" } else { "IfStmt" };
             let mut children = vec![child(cond), child(then_branch)];
             children.extend(else_branch.iter().map(child));
-            node("IfStmt".to_string(), children)
+            node(label.to_string(), children)
         }
         Node::WhileStmt { cond, body, .. } => {
             node("WhileStmt".to_string(), vec![child(cond), child(body)])
@@ -150,6 +147,7 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             let path = segments.iter().map(text).collect::<Vec<_>>().join("::");
             leaf(format!("TypeName {path:?}"))
         }
+        Node::ConstType { inner, .. } => node("ConstType".to_string(), vec![child(inner)]),
         Node::Array { element, size, .. } => {
             let mut children = vec![child(element)];
             children.extend(size.iter().map(child));
