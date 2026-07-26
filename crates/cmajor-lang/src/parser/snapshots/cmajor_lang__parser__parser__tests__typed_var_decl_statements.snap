@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"wrap<5> w; clamp<5> c; int n = 1;\", Parser::parse_statement)"
+expression: "parse_stmt(\"wrap<5> w; clamp<5> c; int n = 1;\")"
 ---
 VarDeclStmt "w"
   ChevronSuffix

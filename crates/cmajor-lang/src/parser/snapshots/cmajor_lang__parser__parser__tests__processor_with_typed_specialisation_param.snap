@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"processor SquareWave (int length) { output stream int out; }\",\nParser::parse_statement)"
+expression: "parse_stmt(\"processor SquareWave (int length) { output stream int out; }\")"
 ---
 ProcessorDecl "SquareWave"
   SpecialisationParam value "length"

@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"loop { break; continue; }\", Parser::parse_statement)"
+expression: "parse_stmt(\"loop { break; continue; }\")"
 ---
 LoopStmt
   Block

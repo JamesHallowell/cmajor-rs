@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"processor P (using T, int length = 4) { output stream int out; }\",\nParser::parse_statement)"
+expression: "parse_stmt(\"processor P (using T, int length = 4) { output stream int out; }\")"
 ---
 ProcessorDecl "P"
   SpecialisationParam using "T"

@@ -1,10 +1,9 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_expr(\"a || b ? c : d\")"
+expression: "parse_expr(\"a < b > c\")"
 ---
-Ternary
-  Binary "||"
+Binary ">"
+  Binary "<"
     a
     b
   c
-  d

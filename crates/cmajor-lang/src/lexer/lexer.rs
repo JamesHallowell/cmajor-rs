@@ -131,13 +131,13 @@ impl<'a> Lexer<'a> {
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::LessThanOrEqual
+                    TokenKind::AngleBracketLeftEqual
                 }
                 Some('-') => {
                     self.cursor.take();
                     TokenKind::ArrowLeft
                 }
-                _ => TokenKind::LessThan,
+                _ => TokenKind::AngleBracketLeft,
             },
             '>' if self.cursor.peek_at(0) == Some('>')
                 && self.cursor.peek_at(1) == Some('>')
@@ -165,9 +165,9 @@ impl<'a> Lexer<'a> {
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::GreaterThanOrEqual
+                    TokenKind::AngleBracketRightEqual
                 }
-                _ => TokenKind::GreaterThan,
+                _ => TokenKind::AngleBracketRight,
             },
             ':' => self.one_or_two(':', TokenKind::ColonColon, TokenKind::Colon),
             ',' => TokenKind::Comma,
@@ -409,9 +409,9 @@ mod tests {
             lex("wrap<4>"),
             vec![
                 (TokenKind::Identifier, "wrap"),
-                (TokenKind::LessThan, "<"),
+                (TokenKind::AngleBracketLeft, "<"),
                 (TokenKind::Literal(Literal::Int32), "4"),
-                (TokenKind::GreaterThan, ">"),
+                (TokenKind::AngleBracketRight, ">"),
             ]
         );
     }

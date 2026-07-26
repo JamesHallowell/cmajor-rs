@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"int[]\", parse_type)"
+expression: "parse_type(\"int[]\")"
 ---
 Array
   TypeName "int"

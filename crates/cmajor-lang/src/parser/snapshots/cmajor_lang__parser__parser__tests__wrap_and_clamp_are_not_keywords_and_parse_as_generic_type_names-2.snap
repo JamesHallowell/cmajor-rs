@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"wrap<4>\", parse_type)"
+expression: "parse_type(\"wrap<4>\")"
 ---
 ChevronSuffix
   TypeName "wrap"

@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"graph Wrapper (processor Parameterised, int x) { output stream int out; }\",\nParser::parse_statement)"
+expression: "parse_stmt(\"graph Wrapper (processor Parameterised, int x) { output stream int out; }\")"
 ---
 GraphDecl "Wrapper"
   SpecialisationParam processor "Parameterised"

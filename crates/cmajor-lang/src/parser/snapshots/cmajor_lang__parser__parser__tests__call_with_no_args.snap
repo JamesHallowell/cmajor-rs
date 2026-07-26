@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"advance()\", Parser::parse_expr)"
+expression: "parse_expr(\"advance()\")"
 ---
 Call
   advance

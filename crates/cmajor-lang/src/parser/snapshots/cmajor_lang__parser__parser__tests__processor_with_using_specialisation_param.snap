@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"processor Source (using DataType) { output stream int out; }\",\nParser::parse_statement)"
+expression: "parse_stmt(\"processor Source (using DataType) { output stream int out; }\")"
 ---
 ProcessorDecl "Source"
   SpecialisationParam using "DataType"

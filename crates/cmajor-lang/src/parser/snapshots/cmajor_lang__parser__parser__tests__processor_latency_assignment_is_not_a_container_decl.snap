@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"processor.latency = length;\", Parser::parse_statement)"
+expression: "parse_stmt(\"processor.latency = length;\")"
 ---
 ExprStmt
   Assign "="

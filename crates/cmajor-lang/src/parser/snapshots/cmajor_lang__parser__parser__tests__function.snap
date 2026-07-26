@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"int add(int a, int b) { return a + b; }\", Parser::parse_statement)"
+expression: "parse_stmt(\"int add(int a, int b) { return a + b; }\")"
 ---
 FunctionDecl "add"
   TypeName "int"

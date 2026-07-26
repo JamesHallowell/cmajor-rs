@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"while (n > 0) { n = n - 1; } loop (4) { advance(); }\",\nParser::parse_statement)"
+expression: "parse_stmt(\"while (n > 0) { n = n - 1; } loop (4) { advance(); }\")"
 ---
 WhileStmt
   Binary ">"

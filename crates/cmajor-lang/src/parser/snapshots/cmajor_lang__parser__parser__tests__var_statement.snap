@@ -1,5 +1,5 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"var y;\", Parser::parse_statement)"
+expression: "parse_stmt(\"var y;\")"
 ---
 VarStmt "y"

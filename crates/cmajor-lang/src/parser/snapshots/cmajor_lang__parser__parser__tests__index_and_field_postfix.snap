@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"x.left[3]\", Parser::parse_expr)"
+expression: "parse_expr(\"x.left[3]\")"
 ---
 Index
   Field "left"

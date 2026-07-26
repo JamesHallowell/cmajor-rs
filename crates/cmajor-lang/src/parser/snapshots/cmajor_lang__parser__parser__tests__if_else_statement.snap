@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"if (a) { b; } else { c; }\", Parser::parse_statement)"
+expression: "parse_stmt(\"if (a) { b; } else { c; }\")"
 ---
 IfStmt
   a

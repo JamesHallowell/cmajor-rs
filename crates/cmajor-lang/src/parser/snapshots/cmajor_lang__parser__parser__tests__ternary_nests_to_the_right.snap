@@ -1,6 +1,6 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"a ? b : c ? d : e\", Parser::parse_expr)"
+expression: "parse_expr(\"a ? b : c ? d : e\")"
 ---
 Ternary
   a

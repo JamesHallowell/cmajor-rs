@@ -1,5 +1,5 @@
 ---
 source: crates/cmajor-lang/src/parser/parser.rs
-expression: "dump(\"float\", parse_type)"
+expression: "parse_type(\"float\")"
 ---
 TypeName "float"
