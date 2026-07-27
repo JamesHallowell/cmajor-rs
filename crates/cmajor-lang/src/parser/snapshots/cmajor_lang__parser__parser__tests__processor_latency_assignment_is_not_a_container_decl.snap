@@ -1,9 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_stmt(\"processor.latency = length;\")"
----
-ExprStmt
-  Assign "="
-    Field "latency"
-      processor
-    length

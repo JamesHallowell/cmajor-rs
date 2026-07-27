@@ -2,21 +2,24 @@ use crate::{
     ast::{Ast, Node, NodeId, SpecialisationParamKind},
     lexer::{Keyword, Literal, TokenId, TokenKind, TokenStream, TokenStreamIterator},
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
+    utils, Diagnostic,
 };
 
 pub struct Parse {
     pub ast: Ast,
     pub root: NodeId,
     pub tokens: TokenStream,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 pub fn parse(source: &str) -> Parse {
     let tokens = TokenStream::tokenize(source);
-    let mut parser = Parser::new(&tokens);
+    let mut parser = Parser::new(&tokens, source);
     let root = parser.parse();
     Parse {
         ast: parser.ast,
         root,
+        diagnostics: parser.diagnostics,
         tokens,
     }
 }
@@ -197,29 +200,63 @@ impl Infix {
 
 struct Parser<'a> {
     tokens: TokenStreamIterator<'a>,
+    source: &'a str,
     ast: Ast,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a TokenStream) -> Parser<'a> {
+    fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
             tokens: tokens.into_iter(),
+            source,
             ast: Ast::new(),
+            diagnostics: Vec::new(),
         }
     }
 
-    pub fn bump(&mut self) -> TokenId {
+    fn bump(&mut self) -> TokenId {
         self.tokens
             .next()
             .map(|(id, _)| id)
-            .unwrap_or_else(|| self.tokens.position())
+            .unwrap_or_else(|| self.tokens.current())
+    }
+
+    fn bump_if(&mut self, kind: impl Into<TokenKind>) -> Option<TokenId> {
+        if let Some(id) = self.tokens.peek_kind() {
+            if id == kind.into() {
+                return Some(self.bump());
+            }
+        }
+        None
+    }
+
+    fn error(&mut self, token: TokenId, message: impl Into<String>) {
+        let offset = self
+            .tokens
+            .span(token)
+            .map(|span| span.start)
+            .unwrap_or(self.source.len() as u32);
+        let (line, column) = utils::line_col(self.source, offset);
+        self.diagnostics.push(Diagnostic {
+            token,
+            line,
+            column,
+            message: message.into(),
+        });
     }
 
     fn expect(&mut self, kind: impl Into<TokenKind>) -> TokenId {
-        if self.tokens.peek_kind() == Some(kind.into()) {
-            self.bump()
+        let kind = kind.into();
+
+        if let Some(token) = self.bump_if(kind) {
+            token
         } else {
-            self.tokens.position()
+            let actual_kind = self.tokens.peek_kind();
+            let pos = self.tokens.current();
+
+            self.error(pos, format!("expected {kind:?}, found {actual_kind:?}"));
+            pos
         }
     }
 
@@ -267,8 +304,10 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::ParenthesisRight);
                 self.ast.push(Node::Paren { paren, inner })
             }
-            _ => {
+            peeked => {
+                let message = format!("expected expression, found {peeked:?}");
                 let token = self.bump();
+                self.error(token, message);
                 self.ast.push(Node::Error { token })
             }
         };
@@ -1030,16 +1069,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> NodeId {
-        if self.tokens.peek_kind() == Some(TokenKind::Keyword(Keyword::Const)) {
-            let keyword = self.bump();
+        if let Some(keyword) = self.bump_if(Keyword::Const) {
             let inner = self.parse_type();
             return self.ast.push(Node::ConstType { keyword, inner });
         }
 
         let mut ty = match self.tokens.peek_kind() {
             Some(kind) if is_type_name_start(kind) => self.parse_type_name(),
-            _ => {
+            peeked => {
+                let message = format!("expected type, found {peeked:?}");
                 let token = self.bump();
+                self.error(token, message);
                 self.ast.push(Node::Error { token })
             }
         };
@@ -1097,8 +1137,10 @@ mod tests {
 
     fn dump(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> String {
         let tokens = TokenStream::tokenize(source);
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(&tokens, source);
         let root = parse_fn(&mut parser);
+        assert_eq!(parser.diagnostics, vec![]);
+
         ast::dump(&parser.ast, &tokens, source, root)
     }
 
@@ -1116,253 +1158,523 @@ mod tests {
 
     #[test]
     fn primitive_type() {
-        insta::assert_snapshot!(parse_type("float"));
+        insta::assert_snapshot!(parse_type("float"), @r#"TypeName "float""#);
     }
 
     #[test]
     fn named_type() {
-        insta::assert_snapshot!(parse_type("MyStruct"));
+        insta::assert_snapshot!(parse_type("MyStruct"), @r#"TypeName "MyStruct""#);
     }
 
     #[test]
     fn qualified_type_name() {
-        insta::assert_snapshot!(parse_type("std::complex64"));
+        insta::assert_snapshot!(parse_type("std::midi::Message"), @r#"TypeName "std::midi::Message""#);
     }
 
     #[test]
     fn array_type() {
-        insta::assert_snapshot!(parse_type("int[3]"));
+        insta::assert_snapshot!(parse_type("int[3]"), @r#"
+        Array
+          TypeName "int"
+          3
+        "#);
     }
 
     #[test]
     fn slice_type_has_no_size() {
-        insta::assert_snapshot!(parse_type("int[]"));
+        insta::assert_snapshot!(parse_type("int[]"), @r#"
+        Array
+          TypeName "int"
+        "#);
     }
 
     #[test]
     fn vector_type() {
-        insta::assert_snapshot!(parse_type("int<4>"));
+        insta::assert_snapshot!(parse_type("int<4>"), @r#"
+        ChevronSuffix
+          TypeName "int"
+          4
+        "#);
     }
 
     #[test]
-    fn wrap_and_clamp_are_not_keywords_and_parse_as_generic_type_names() {
-        insta::assert_snapshot!(parse_type("clamp<10>"));
-        insta::assert_snapshot!(parse_type("wrap<4>"));
+    fn clamp() {
+        insta::assert_snapshot!(parse_type("clamp<10>"), @r#"
+        ChevronSuffix
+          TypeName "clamp"
+          10
+        "#);
+    }
+
+    #[test]
+    fn wrap() {
+        insta::assert_snapshot!(parse_type("wrap<4>"), @r#"
+        ChevronSuffix
+          TypeName "wrap"
+          4
+        "#);
     }
 
     #[test]
     fn angle_bracket_close_is_not_a_comparison() {
-        insta::assert_snapshot!(parse_type("wrap<1 + 2>"));
+        insta::assert_snapshot!(parse_type("wrap<1 + 2>"), @r#"
+        ChevronSuffix
+          TypeName "wrap"
+          Binary "+"
+            1
+            2
+        "#);
     }
 
     #[test]
     fn postfix_type_modifiers_apply_left_to_right() {
-        insta::assert_snapshot!(parse_type("int<4>[2]"));
+        insta::assert_snapshot!(parse_type("int<4>[2]"), @r#"
+        Array
+          ChevronSuffix
+            TypeName "int"
+            4
+          2
+        "#);
     }
 
     #[test]
     fn const_type() {
-        insta::assert_snapshot!(parse_type("const int"));
+        insta::assert_snapshot!(parse_type("const int"), @r#"
+        ConstType
+          TypeName "int"
+        "#);
     }
 
     #[test]
     fn const_array_type() {
-        insta::assert_snapshot!(parse_type("const int[]"));
+        insta::assert_snapshot!(parse_type("const int[]"), @r#"
+        ConstType
+          Array
+            TypeName "int"
+        "#);
     }
 
     #[test]
     fn precedence_of_arithmetic() {
-        insta::assert_snapshot!(parse_expr("1 + 2 * 3"));
+        insta::assert_snapshot!(parse_expr("1 + 2 * 3"), @r#"
+        Binary "+"
+          1
+          Binary "*"
+            2
+            3
+        "#);
     }
 
     #[test]
     fn power_is_right_associative() {
-        insta::assert_snapshot!(parse_expr("2 ** 3 ** 4"));
+        insta::assert_snapshot!(parse_expr("2 ** 3 ** 4"), @r#"
+        Binary "**"
+          2
+          Binary "**"
+            3
+            4
+        "#);
     }
 
     #[test]
     fn subtraction_is_left_associative() {
-        insta::assert_snapshot!(parse_expr("1 - 2 - 3"));
+        insta::assert_snapshot!(parse_expr("1 - 2 - 3"), @r#"
+        Binary "-"
+          Binary "-"
+            1
+            2
+          3
+        "#);
     }
 
     #[test]
     fn assignment_is_right_associative() {
-        insta::assert_snapshot!(parse_expr("a = b = c"));
+        insta::assert_snapshot!(parse_expr("a = b = c"), @r#"
+        Assign "="
+          a
+          Assign "="
+            b
+            c
+        "#);
     }
 
     #[test]
     fn output_write_operator() {
-        insta::assert_snapshot!(parse_expr("out <- in * gain"));
+        insta::assert_snapshot!(parse_expr("out <- in * gain"), @r#"
+        Assign "<-"
+          out
+          Binary "*"
+            in
+            gain
+        "#);
     }
 
     #[test]
     fn ternary_nests_to_the_right() {
-        insta::assert_snapshot!(parse_expr("a ? b : c ? d : e"));
+        insta::assert_snapshot!(parse_expr("a ? b : c ? d : e"), @"
+        Ternary
+          a
+          b
+          Ternary
+            c
+            d
+            e
+        ");
     }
 
     #[test]
     fn ternary_binds_looser_than_logical_or() {
-        insta::assert_snapshot!(parse_expr("a || b ? c : d"));
+        insta::assert_snapshot!(parse_expr("a || b ? c : d"), @r#"
+        Ternary
+          Binary "||"
+            a
+            b
+          c
+          d
+        "#);
     }
 
     #[test]
     fn unary_and_parens() {
-        insta::assert_snapshot!(parse_expr("-(1 + 2)"));
+        insta::assert_snapshot!(parse_expr("-(1 + 2)"), @r#"
+        Unary "-"
+          Paren
+            Binary "+"
+              1
+              2
+        "#);
     }
 
     #[test]
-    fn prefix_and_postfix_increment() {
-        insta::assert_snapshot!(parse_expr("++x"));
-        insta::assert_snapshot!(parse_expr("x++"));
-        insta::assert_snapshot!(parse_expr("x--"));
+    fn prefix_increment() {
+        insta::assert_snapshot!(parse_expr("++x"), @r#"
+        Unary "++"
+          x
+        "#);
+    }
+
+    #[test]
+    fn postfix_increment() {
+        insta::assert_snapshot!(parse_expr("x++"), @r#"
+        PostfixUnary "++"
+          x
+        "#);
     }
 
     #[test]
     fn call_with_args() {
-        insta::assert_snapshot!(parse_expr("foo(1, 2 + 3)"));
+        insta::assert_snapshot!(parse_expr("foo(1, 2 + 3)"), @r#"
+        Call
+          foo
+          1
+          Binary "+"
+            2
+            3
+        "#);
     }
 
     #[test]
     fn call_with_no_args() {
-        insta::assert_snapshot!(parse_expr("advance()"));
+        insta::assert_snapshot!(parse_expr("advance()"), @"
+        Call
+          advance
+        ");
     }
 
     #[test]
     fn index_and_field_postfix() {
-        insta::assert_snapshot!(parse_expr("x.left[3]"));
+        insta::assert_snapshot!(parse_expr("x.left[3]"), @r#"
+        Index
+          Field "left"
+            x
+          3
+        "#);
     }
 
     #[test]
     fn let_statement() {
-        insta::assert_snapshot!(parse_stmt("let x = 1;"));
+        insta::assert_snapshot!(parse_stmt("let x = 1;"), @r#"
+        LetStmt "x"
+          1
+        "#);
     }
 
     #[test]
     fn var_statement() {
-        insta::assert_snapshot!(parse_stmt("var y;"));
+        insta::assert_snapshot!(parse_stmt("var y;"), @r#"VarStmt "y""#);
     }
 
     #[test]
     fn var_with_init_statement() {
-        insta::assert_snapshot!(parse_stmt("var y = 3;"));
+        insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
+        VarStmt "y"
+          3
+        "#);
     }
 
     #[test]
     fn typed_var_decl_statements() {
-        insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"));
+        insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
+        VarDeclStmt "w"
+          ChevronSuffix
+            TypeName "wrap"
+            5
+        "#);
     }
 
     #[test]
     fn const_var_decl_statement() {
-        insta::assert_snapshot!(parse_stmt("const int x = 1;"));
+        insta::assert_snapshot!(parse_stmt("const int x = 1;"), @r#"
+        VarDeclStmt "x"
+          ConstType
+            TypeName "int"
+          1
+        "#);
     }
 
     #[test]
     fn if_else_statement() {
-        insta::assert_snapshot!(parse_stmt("if (a) { b; } else { c; }"));
+        insta::assert_snapshot!(parse_stmt("if (a) { b; } else { c; }"), @"
+        IfStmt
+          a
+          Block
+            ExprStmt
+              b
+          Block
+            ExprStmt
+              c
+        ");
     }
 
     #[test]
     fn if_without_else() {
-        insta::assert_snapshot!(parse_stmt("if (a) { b; }"));
+        insta::assert_snapshot!(parse_stmt("if (a) { b; }"), @"
+        IfStmt
+          a
+          Block
+            ExprStmt
+              b
+        ");
     }
 
     #[test]
     fn if_const_statement() {
-        insta::assert_snapshot!(parse_stmt("if const (a) { b; }"));
+        insta::assert_snapshot!(parse_stmt("if const (a) { b; }"), @"
+        IfStmt const
+          a
+          Block
+            ExprStmt
+              b
+        ");
     }
 
     #[test]
     fn while_and_bounded_loop() {
         insta::assert_snapshot!(parse_stmt(
             "while (n > 0) { n = n - 1; } loop (4) { advance(); }"
-        ));
+        ), @r#"
+        WhileStmt
+          Binary ">"
+            n
+            0
+          Block
+            ExprStmt
+              Assign "="
+                n
+                Binary "-"
+                  n
+                  1
+        "#);
     }
 
     #[test]
     fn unbounded_loop_has_no_count() {
-        insta::assert_snapshot!(parse_stmt("loop { advance(); }"));
+        insta::assert_snapshot!(parse_stmt("loop { advance(); }"), @"
+        LoopStmt
+          Block
+            ExprStmt
+              Call
+                advance
+        ");
     }
 
     #[test]
     fn return_with_and_without_value() {
-        insta::assert_snapshot!(parse_stmt("return; return x + 1;"));
+        insta::assert_snapshot!(parse_stmt("return; return x + 1;"), @"ReturnStmt");
     }
 
     #[test]
     fn break_and_continue() {
-        insta::assert_snapshot!(parse_stmt("loop { break; continue; }"));
+        insta::assert_snapshot!(parse_stmt("loop { break; continue; }"), @"
+        LoopStmt
+          Block
+            BreakStmt
+            ContinueStmt
+        ");
     }
 
     #[test]
     fn function() {
-        insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"));
+        insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"), @r#"
+        FunctionDecl "add"
+          TypeName "int"
+          Param "a"
+            TypeName "int"
+          Param "b"
+            TypeName "int"
+          Block
+            ReturnStmt
+              Binary "+"
+                a
+                b
+        "#);
     }
 
     #[test]
     fn function_with_const_params() {
-        insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"));
+        insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"), @r#"
+        FunctionDecl "f"
+          TypeName "void"
+          Param &"a"
+            ConstType
+              TypeName "int"
+          Param &"b"
+            ConstType
+              Array
+                TypeName "float32"
+                10
+          Block
+        "#);
     }
 
     #[test]
     fn loop_with_unbraced_body() {
-        insta::assert_snapshot!(parse_stmt("void main() { loop advance(); }"));
+        insta::assert_snapshot!(parse_stmt("void main() { loop advance(); }"), @r#"
+        FunctionDecl "main"
+          TypeName "void"
+          Block
+            LoopStmt
+              ExprStmt
+                Call
+                  advance
+        "#);
     }
 
     #[test]
     fn processor_with_typed_specialisation_param() {
         insta::assert_snapshot!(parse_stmt(
             "processor SquareWave (int length) { output stream int out; }"
-        ));
+        ), @r#"
+        ProcessorDecl "SquareWave"
+          SpecialisationParam value "length"
+            TypeName "int"
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn processor_with_typed_specialisation_param_default_value() {
         insta::assert_snapshot!(parse_stmt(
             "processor Gain (int channelCount = 2) { output stream int out; }"
-        ));
+        ), @r#"
+        ProcessorDecl "Gain"
+          SpecialisationParam value "channelCount"
+            TypeName "int"
+            2
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn processor_with_using_specialisation_param() {
         insta::assert_snapshot!(parse_stmt(
             "processor Source (using DataType) { output stream int out; }"
-        ));
+        ), @r#"
+        ProcessorDecl "Source"
+          SpecialisationParam using "DataType"
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn processor_with_using_specialisation_param_default_type() {
         insta::assert_snapshot!(parse_stmt(
             "processor P (using T = float32) { output stream int out; }"
-        ));
+        ), @r#"
+        ProcessorDecl "P"
+          SpecialisationParam using "T"
+            TypeName "float32"
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn graph_with_processor_specialisation_param() {
         insta::assert_snapshot!(parse_stmt(
             "graph Wrapper (processor Parameterised, int x) { output stream int out; }"
-        ));
+        ), @r#"
+        GraphDecl "Wrapper"
+          SpecialisationParam processor "Parameterised"
+          SpecialisationParam value "x"
+            TypeName "int"
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn namespace_with_specialisation_params() {
-        insta::assert_snapshot!(parse_stmt("namespace n (processor p, namespace ns) {}"));
+        insta::assert_snapshot!(parse_stmt("namespace n (processor p, namespace ns) {}"), @r#"
+        NamespaceDecl "n"
+          SpecialisationParam processor "p"
+          SpecialisationParam namespace "ns"
+        "#);
     }
 
     #[test]
     fn multiple_specialisation_params_of_different_kinds() {
         insta::assert_snapshot!(parse_stmt(
             "processor P (using T, int length = 4) { output stream int out; }"
-        ));
+        ), @r#"
+        ProcessorDecl "P"
+          SpecialisationParam using "T"
+          SpecialisationParam value "length"
+            TypeName "int"
+            4
+          EndpointGroup output stream
+            EndpointDecl "out"
+              TypeName "int"
+        "#);
     }
 
     #[test]
     fn processor_latency_assignment_is_not_a_container_decl() {
-        insta::assert_snapshot!(parse_stmt("processor.latency = length;"));
+        insta::assert_snapshot!(parse_stmt("processor.latency = length;"), @r#"
+        ExprStmt
+          Assign "="
+            Field "latency"
+              processor
+            length
+        "#);
     }
 
     #[test]
     fn ambiguous_angle_brackets_expression() {
-        insta::assert_snapshot!(parse_expr("a < b > c"));
+        insta::assert_snapshot!(parse_expr("a < b > c"), @r#"
+        Binary ">"
+          Binary "<"
+            a
+            b
+          c
+        "#);
     }
 }

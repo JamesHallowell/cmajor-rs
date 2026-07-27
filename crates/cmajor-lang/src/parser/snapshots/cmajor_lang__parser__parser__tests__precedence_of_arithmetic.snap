@@ -1,9 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_expr(\"1 + 2 * 3\")"
----
-Binary "+"
-  1
-  Binary "*"
-    2
-    3

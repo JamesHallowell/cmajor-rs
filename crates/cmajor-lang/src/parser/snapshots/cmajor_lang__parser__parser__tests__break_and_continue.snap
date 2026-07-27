@@ -1,8 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_stmt(\"loop { break; continue; }\")"
----
-LoopStmt
-  Block
-    BreakStmt
-    ContinueStmt

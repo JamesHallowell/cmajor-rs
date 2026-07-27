@@ -70,8 +70,12 @@ impl<'a> TokenStreamIterator<'a> {
         self.stream.token(TokenId(self.pos.0 + n as u32))
     }
 
-    pub fn position(&self) -> TokenId {
+    pub fn current(&self) -> TokenId {
         self.pos
+    }
+
+    pub fn span(&self, id: TokenId) -> Option<Range<u32>> {
+        self.stream.span(id)
     }
 }
 

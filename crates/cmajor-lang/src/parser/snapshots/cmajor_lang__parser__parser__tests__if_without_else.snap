@@ -1,9 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_stmt(\"if (a) { b; }\")"
----
-IfStmt
-  a
-  Block
-    ExprStmt
-      b

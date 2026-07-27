@@ -1,7 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_type(\"clamp<10>\")"
----
-ChevronSuffix
-  TypeName "clamp"
-  10

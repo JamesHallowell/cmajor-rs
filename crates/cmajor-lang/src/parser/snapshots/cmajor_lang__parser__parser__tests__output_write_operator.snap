@@ -1,9 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_expr(\"out <- in * gain\")"
----
-Assign "<-"
-  out
-  Binary "*"
-    in
-    gain

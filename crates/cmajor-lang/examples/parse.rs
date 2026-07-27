@@ -7,8 +7,17 @@ fn main() {
         std::process::exit(1);
     });
 
-    let parser::Parse { ast, root, tokens } = parser::parse(&source);
+    let parser::Parse {
+        ast,
+        root,
+        tokens,
+        diagnostics,
+    } = parser::parse(&source);
 
     println!("{} tokens, {} AST nodes\n", tokens.len(), ast.len());
     print!("{}", ast::dump(&ast, &tokens, &source, root));
+
+    for diagnostic in &diagnostics {
+        println!("error: {diagnostic}");
+    }
 }

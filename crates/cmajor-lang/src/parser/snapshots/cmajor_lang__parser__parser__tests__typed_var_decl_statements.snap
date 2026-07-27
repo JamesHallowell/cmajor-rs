@@ -1,8 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_stmt(\"wrap<5> w; clamp<5> c; int n = 1;\")"
----
-VarDeclStmt "w"
-  ChevronSuffix
-    TypeName "wrap"
-    5

@@ -1,7 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_type(\"wrap<4>\")"
----
-ChevronSuffix
-  TypeName "wrap"
-  4

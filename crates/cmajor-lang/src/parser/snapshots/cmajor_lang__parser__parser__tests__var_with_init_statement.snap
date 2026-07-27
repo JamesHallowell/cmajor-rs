@@ -1,6 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_stmt(\"var y = 3;\")"
----
-VarStmt "y"
-  3

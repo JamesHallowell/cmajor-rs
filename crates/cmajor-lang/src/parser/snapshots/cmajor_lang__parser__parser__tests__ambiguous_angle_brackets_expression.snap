@@ -1,9 +1,0 @@
----
-source: crates/cmajor-lang/src/parser/parser.rs
-expression: "parse_expr(\"a < b > c\")"
----
-Binary ">"
-  Binary "<"
-    a
-    b
-  c
