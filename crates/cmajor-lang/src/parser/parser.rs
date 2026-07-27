@@ -207,6 +207,55 @@ struct Parser<'a> {
     diagnostics: Vec<Diagnostic>,
 }
 
+macro_rules! expect_matches {
+    ($parser:expr, $expected:pat) => {
+        if matches!($parser.tokens.peek_kind(), Some($expected)) {
+            $parser.bump()
+        } else {
+            let actual_kind = $parser.tokens.peek_kind();
+            let pos = $parser.tokens.current();
+            $parser.error(
+                pos,
+                format!("expected {}, found {actual_kind:?}", stringify!($expected)),
+            );
+            pos
+        }
+    };
+}
+
+macro_rules! expect_identifier {
+    ($parser:expr, $expected:pat) => {
+        match $parser.tokens.peek_kind() {
+            Some(TokenKind::Identifier) => {
+                let text = $parser
+                    .tokens
+                    .peek_id()
+                    .and_then(|id| $parser.tokens.stream().text($parser.source, id))
+                    .expect("failed to query text for token");
+
+                if matches!(text, $expected) {
+                    $parser.bump()
+                } else {
+                    let pos = $parser.tokens.current();
+                    $parser.error(
+                        pos,
+                        format!("expected {}, found {text:?}", stringify!($expected)),
+                    );
+                    pos
+                }
+            }
+            actual_kind => {
+                let pos = $parser.tokens.current();
+                $parser.error(
+                    pos,
+                    format!("expected {}, found {actual_kind:?}", stringify!($expected)),
+                );
+                pos
+            }
+        }
+    };
+}
+
 impl<'a> Parser<'a> {
     fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
@@ -656,22 +705,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_container(&mut self) -> NodeId {
-        let keyword_kind = self.tokens.peek_kind();
-        let keyword = self.bump();
+        let keyword = expect_matches!(
+            self,
+            TokenKind::Keyword(Keyword::Processor | Keyword::Graph | Keyword::Struct)
+        );
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
-        let attributes = if self.tokens.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
-            Some(self.parse_attribute_list())
-        } else {
-            None
-        };
+        let attributes = (self.tokens.peek_kind() == Some(TokenKind::DoubleBracketLeft))
+            .then(|| self.parse_attribute_list());
         self.expect(TokenKind::BraceLeft);
+
         let mut items = Vec::new();
         while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
             items.push(self.parse_statement());
         }
         self.expect(TokenKind::BraceRight);
-        match keyword_kind {
+
+        match self.tokens.stream().get(keyword).map(|token| token.kind) {
             Some(TokenKind::Keyword(Keyword::Graph)) => self.ast.push(Node::GraphDecl {
                 keyword,
                 name,
@@ -685,13 +735,14 @@ impl<'a> Parser<'a> {
                 attributes,
                 items,
             }),
-            _ => self.ast.push(Node::ProcessorDecl {
+            Some(TokenKind::Keyword(Keyword::Processor)) => self.ast.push(Node::ProcessorDecl {
                 keyword,
                 name,
                 params,
                 attributes,
                 items,
             }),
+            _ => unreachable!(),
         }
     }
 
@@ -916,11 +967,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_endpoint_group(&mut self) -> NodeId {
-        let direction = self.bump();
+        let direction = expect_matches!(self, TokenKind::Keyword(Keyword::Input | Keyword::Output));
         if self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, TokenKind::Dot) {
             return self.parse_endpoint_wildcard(direction);
         }
-        let kind = self.bump();
+        let kind = expect_identifier!(self, "value" | "stream" | "event");
         let endpoints = if self.tokens.peek_kind() == Some(TokenKind::BraceLeft) {
             self.bump();
             let mut endpoints = Vec::new();
