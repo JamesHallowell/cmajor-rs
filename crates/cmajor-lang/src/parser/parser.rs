@@ -408,7 +408,11 @@ impl<'a> Parser<'a> {
 
     fn parse_index(&mut self, base: NodeId) -> NodeId {
         let bracket = self.expect(TokenKind::BracketLeft);
-        let index = self.parse_expr();
+        let index = if self.tokens.peek_kind() != Some(TokenKind::BracketRight) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
         self.expect(TokenKind::BracketRight);
         self.ast.push(Node::Index {
             bracket,
@@ -1391,6 +1395,14 @@ mod tests {
         Call
           advance
         ");
+    }
+
+    #[test]
+    fn empty_index() {
+        insta::assert_snapshot!(parse_expr("x[]"), @r#"
+        Index
+          x
+        "#);
     }
 
     #[test]

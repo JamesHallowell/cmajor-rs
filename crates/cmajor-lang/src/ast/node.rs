@@ -81,7 +81,7 @@ pub enum Node {
     Index {
         bracket: TokenId,
         base: NodeId,
-        index: NodeId,
+        index: Option<NodeId>,
     },
     Field {
         name: TokenId,

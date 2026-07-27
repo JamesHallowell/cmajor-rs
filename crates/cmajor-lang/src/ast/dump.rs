@@ -71,7 +71,11 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             node("Call".to_string(), children)
         }
         Node::Index { base, index, .. } => {
-            node("Index".to_string(), vec![child(base), child(index)])
+            let mut children = vec![child(base)];
+            if let Some(index) = index {
+                children.push(child(index));
+            }
+            node("Index".to_string(), children)
         }
         Node::Field { name, base } => node(format!("Field {:?}", text(name)), vec![child(base)]),
         Node::Block { stmts, .. } => node("Block".to_string(), stmts.iter().map(child).collect()),
