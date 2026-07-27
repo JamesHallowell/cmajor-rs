@@ -45,9 +45,9 @@ pub enum Node {
     Ident {
         token: TokenId,
     },
-    Paren {
+    Parentheses {
         paren: TokenId,
-        inner: NodeId,
+        inner: Vec<NodeId>,
     },
     Unary {
         op: TokenId,

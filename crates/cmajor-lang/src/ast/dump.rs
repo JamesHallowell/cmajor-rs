@@ -43,7 +43,9 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         | Node::ImaginaryLiteral { token }
         | Node::Ident { token } => leaf(text(token).to_string()),
         Node::Error { token } => leaf(format!("Error at {:?}", text(token))),
-        Node::Paren { inner, .. } => node("Paren".to_string(), vec![child(inner)]),
+        Node::Parentheses { inner, .. } => {
+            node("Parentheses".to_string(), inner.iter().map(child).collect())
+        }
         Node::Unary { op, operand } => node(format!("Unary {:?}", text(op)), vec![child(operand)]),
         Node::PostfixUnary { op, operand } => {
             node(format!("PostfixUnary {:?}", text(op)), vec![child(operand)])

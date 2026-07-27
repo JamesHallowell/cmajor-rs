@@ -299,9 +299,19 @@ impl<'a> Parser<'a> {
             }
             Some(TokenKind::ParenthesisLeft) => {
                 let paren = self.expect(TokenKind::ParenthesisLeft);
-                let inner = self.parse_expr();
+                let mut inner = vec![];
+                if self.tokens.peek_kind() != Some(TokenKind::ParenthesisRight) {
+                    loop {
+                        inner.push(self.parse_expr());
+                        if self.tokens.peek_kind() == Some(TokenKind::Comma) {
+                            self.bump();
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 self.expect(TokenKind::ParenthesisRight);
-                self.ast.push(Node::Paren { paren, inner })
+                self.ast.push(Node::Parentheses { paren, inner })
             }
             Some(token) if token.is_type() => {
                 let token = self.bump();
@@ -1267,6 +1277,24 @@ mod tests {
         Call
           float
           2.5
+        ");
+    }
+
+    #[test]
+    fn null_literal() {
+        insta::assert_snapshot!(parse_expr("()"), @"Parentheses");
+    }
+
+    #[test]
+    fn aggregate_literal() {
+        insta::assert_snapshot!(parse_expr("((1, 2), (3, 4))"), @"
+        Parentheses
+          Parentheses
+            1
+            2
+          Parentheses
+            3
+            4
         ");
     }
 
