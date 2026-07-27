@@ -210,7 +210,20 @@ pub enum Node {
     },
     ConnectionDecl {
         keyword: TokenId,
-        links: Vec<Vec<NodeId>>,
+        connections: Vec<NodeId>,
+    },
+    Connection {
+        interpolation: Option<TokenId>,
+        sources: Vec<NodeId>,
+        arrow: TokenId,
+        delay: Option<NodeId>,
+        destinations: Vec<NodeId>,
+    },
+    ConnectionIf {
+        keyword: TokenId,
+        cond: NodeId,
+        then_branch: Vec<NodeId>,
+        else_branch: Option<Vec<NodeId>>,
     },
     EndpointDecl {
         ty: NodeId,

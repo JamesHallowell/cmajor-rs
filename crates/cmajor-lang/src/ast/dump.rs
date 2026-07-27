@@ -251,13 +251,54 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
         Node::NodeDecl { name, value, .. } => {
             node(format!("NodeDecl {:?}", text(name)), vec![child(value)])
         }
-        Node::ConnectionDecl { links, .. } => node(
+        Node::ConnectionDecl {
+            connections: items, ..
+        } => node(
             "ConnectionDecl".to_string(),
-            links
-                .iter()
-                .map(|chain| node("Link".to_string(), chain.iter().map(child).collect()))
-                .collect(),
+            items.iter().map(child).collect(),
         ),
+        Node::Connection {
+            interpolation,
+            sources,
+            delay,
+            destinations,
+            ..
+        } => {
+            let label = match interpolation {
+                Some(token) => format!("Connection [{}]", text(token)),
+                None => "Connection".to_string(),
+            };
+            let mut children = vec![node(
+                "Sources".to_string(),
+                sources.iter().map(child).collect(),
+            )];
+            if let Some(delay) = delay {
+                children.push(node("Delay".to_string(), vec![child(delay)]));
+            }
+            children.push(node(
+                "Destinations".to_string(),
+                destinations.iter().map(child).collect(),
+            ));
+            node(label, children)
+        }
+        Node::ConnectionIf {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let mut children = vec![
+                child(cond),
+                node("Then".to_string(), then_branch.iter().map(child).collect()),
+            ];
+            if let Some(else_branch) = else_branch {
+                children.push(node(
+                    "Else".to_string(),
+                    else_branch.iter().map(child).collect(),
+                ));
+            }
+            node("ConnectionIf".to_string(), children)
+        }
         Node::EndpointDecl {
             ty,
             name,
@@ -300,7 +341,10 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             children.extend(params.iter().map(child));
             children.push(child(body));
             node(
-                format!("FunctionDecl {:?}{generics_suffix}{const_suffix}", text(name)),
+                format!(
+                    "FunctionDecl {:?}{generics_suffix}{const_suffix}",
+                    text(name)
+                ),
                 children,
             )
         }

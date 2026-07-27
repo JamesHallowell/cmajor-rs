@@ -379,8 +379,8 @@ impl<'a> Parser<'a> {
             };
         }
 
-        while let Some(token) = self.tokens.peek() {
-            let Some(infix) = Infix::from_token(token.kind) else {
+        while let Some(token) = self.tokens.peek_kind() {
+            let Some(infix) = Infix::from_token(token) else {
                 break;
             };
             let binding_power = infix.binding_power();
@@ -442,7 +442,6 @@ impl<'a> Parser<'a> {
         let (start, separator, stop) = (start.into(), separator.into(), stop.into());
 
         let start = self.expect(start);
-        let stop = stop.into();
         let mut items = Vec::new();
         while self.tokens.peek_kind() != Some(stop) {
             items.push(parse(self));
@@ -521,7 +520,8 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Keyword(Keyword::Continue)) => self.parse_continue(),
             Some(TokenKind::Keyword(Keyword::Namespace)) => self.parse_namespace(),
             Some(TokenKind::Keyword(Keyword::Processor))
-                if self.tokens.peek_nth(1).map(|token| token.kind) == Some(TokenKind::Dot) =>
+                if self.tokens.clone().nth(1).map(|(_, token)| token.kind)
+                    == Some(TokenKind::Dot) =>
             {
                 self.parse_expr_stmt()
             }
@@ -761,59 +761,155 @@ impl<'a> Parser<'a> {
 
     fn parse_connection_decl(&mut self) -> NodeId {
         let keyword = self.expect(Keyword::Connection);
-        let mut links = Vec::new();
+        let connections = self.parse_connection_list();
+        self.ast.push(Node::ConnectionDecl {
+            keyword,
+            connections,
+        })
+    }
+
+    fn parse_connection_list(&mut self) -> Vec<NodeId> {
+        let braced = self.bump_if(TokenKind::BraceLeft).is_some();
+
+        let mut connections = Vec::new();
         loop {
-            let mut chain = vec![self.parse_expr()];
-            while self.tokens.peek_kind() == Some(TokenKind::ArrowRight) {
-                self.bump();
-                chain.push(self.parse_expr());
+            if braced && self.bump_if(TokenKind::BraceRight).is_some() {
+                break;
             }
-            links.push(chain);
-            if self.tokens.peek_kind() == Some(TokenKind::Comma) {
-                self.bump();
+
+            if self.tokens.peek_kind() == Some(TokenKind::Keyword(Keyword::If)) {
+                connections.push(self.parse_connection_if());
             } else {
+                connections.extend(self.parse_connection_chain());
+                self.expect(TokenKind::Semicolon);
+            }
+
+            if !braced {
                 break;
             }
         }
-        self.expect(TokenKind::Semicolon);
-        self.ast.push(Node::ConnectionDecl { keyword, links })
+        connections
+    }
+
+    fn parse_connection_if(&mut self) -> NodeId {
+        let keyword = self.expect(Keyword::If);
+        self.expect(TokenKind::ParenthesisLeft);
+        let cond = self.parse_expr();
+        self.expect(TokenKind::ParenthesisRight);
+        let then_branch = self.parse_connection_list();
+        let else_branch = self
+            .bump_if(Keyword::Else)
+            .is_some()
+            .then(|| self.parse_connection_list());
+        self.ast.push(Node::ConnectionIf {
+            keyword,
+            cond,
+            then_branch,
+            else_branch,
+        })
+    }
+
+    fn parse_connection_chain(&mut self) -> Vec<NodeId> {
+        let interpolation = self.parse_interpolation_if_present();
+        let mut connections = Vec::new();
+        let mut sources = self.parse_connection_endpoints();
+        loop {
+            let arrow = self.expect(TokenKind::ArrowRight);
+
+            let delay = self.bump_if(TokenKind::BracketLeft).is_some().then(|| {
+                let delay = self.parse_expr();
+                self.expect(TokenKind::BracketRight);
+                self.expect(TokenKind::ArrowRight);
+                delay
+            });
+
+            let destinations = self.parse_connection_endpoints();
+            if sources.len() > 1 && destinations.len() > 1 {
+                self.error(arrow, "many-to-many connections are not supported");
+            }
+
+            let is_end_of_chain = self.tokens.peek_kind() != Some(TokenKind::ArrowRight);
+            if !is_end_of_chain {
+                if destinations.len() > 1 {
+                    self.error(
+                        arrow,
+                        "cannot chain a connection with multiple destinations",
+                    );
+                } else if let Some(&dest) = destinations.first() {
+                    if matches!(self.ast.get(dest), Node::Field { .. }) {
+                        self.error(
+                            arrow,
+                            "cannot name an endpoint in the middle of a connection chain",
+                        );
+                    }
+                }
+            }
+
+            connections.push(self.ast.push(Node::Connection {
+                interpolation,
+                sources,
+                arrow,
+                delay,
+                destinations: destinations.clone(),
+            }));
+
+            if is_end_of_chain {
+                break;
+            }
+            sources = destinations;
+        }
+        connections
+    }
+
+    fn parse_connection_endpoints(&mut self) -> Vec<NodeId> {
+        let mut endpoints = vec![self.parse_expr()];
+        while self.bump_if(TokenKind::Comma).is_some() {
+            endpoints.push(self.parse_expr());
+        }
+        endpoints
+    }
+
+    fn parse_interpolation_if_present(&mut self) -> Option<TokenId> {
+        let mut peek = self.tokens.clone().map(|(id, token)| (id, token.kind));
+
+        match (peek.next(), peek.next(), peek.next()) {
+            (
+                Some((_, TokenKind::BracketLeft)),
+                Some((delay, TokenKind::Identifier)),
+                Some((_, TokenKind::BracketRight)),
+            ) => {
+                if matches!(
+                    self.tokens.stream().text(self.source, delay),
+                    Some("none" | "latch" | "linear" | "sinc" | "fast" | "best")
+                ) {
+                    self.expect(TokenKind::BracketLeft);
+                    let interpolation = self.expect(TokenKind::Identifier);
+                    self.expect(TokenKind::BracketRight);
+                    return Some(interpolation);
+                }
+
+                None
+            }
+            _ => None,
+        }
     }
 
     fn parse_for(&mut self) -> NodeId {
         let keyword = self.expect(Keyword::For);
         self.expect(TokenKind::ParenthesisLeft);
 
-        let init = if self.tokens.peek_kind() == Some(TokenKind::Semicolon) {
-            None
-        } else {
-            Some(self.parse_for_init())
-        };
-
-        if self.tokens.peek_kind() == Some(TokenKind::ParenthesisRight) {
-            self.bump();
-            let body = self.parse_statement();
-            return self.ast.push(Node::ForStmt {
-                keyword,
-                init,
-                cond: None,
-                update: None,
-                body,
-            });
-        }
-
+        let init =
+            (self.tokens.peek_kind() != Some(TokenKind::Semicolon)).then(|| self.parse_for_init());
         self.expect(TokenKind::Semicolon);
-        let cond = if self.tokens.peek_kind() == Some(TokenKind::Semicolon) {
-            None
-        } else {
-            Some(self.parse_expr())
-        };
+
+        let cond =
+            (self.tokens.peek_kind() != Some(TokenKind::Semicolon)).then(|| self.parse_expr());
         self.expect(TokenKind::Semicolon);
-        let update = if self.tokens.peek_kind() == Some(TokenKind::ParenthesisRight) {
-            None
-        } else {
-            Some(self.parse_expr())
-        };
+
+        let update = (self.tokens.peek_kind() != Some(TokenKind::ParenthesisRight))
+            .then(|| self.parse_expr());
         self.expect(TokenKind::ParenthesisRight);
+
         let body = self.parse_statement();
         self.ast.push(Node::ForStmt {
             keyword,
@@ -844,8 +940,9 @@ impl<'a> Parser<'a> {
 
     fn at(&self, offset: usize, kind: TokenKind) -> bool {
         self.tokens
-            .peek_nth(offset)
-            .is_some_and(|token| token.kind == kind)
+            .clone()
+            .nth(offset)
+            .is_some_and(|(_, token)| token.kind == kind)
     }
 
     fn looks_like_typed_decl(&self) -> bool {
@@ -880,7 +977,7 @@ impl<'a> Parser<'a> {
     fn skip_to_matching_angle_bracket(&self, mut offset: usize) -> Option<usize> {
         offset += 1;
         loop {
-            match self.tokens.peek_nth(offset).map(|t| t.kind) {
+            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind) {
                 Some(TokenKind::AngleBracketRight) => return Some(offset + 1),
                 Some(TokenKind::Semicolon | TokenKind::BraceLeft | TokenKind::BraceRight)
                 | None => {
@@ -894,7 +991,7 @@ impl<'a> Parser<'a> {
     fn skip_to_matching_bracket(&self, mut offset: usize) -> Option<usize> {
         let mut depth = 0;
         loop {
-            match self.tokens.peek_nth(offset).map(|t| t.kind) {
+            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind) {
                 Some(TokenKind::BracketLeft) => {
                     depth += 1;
                     offset += 1;
@@ -1739,6 +1836,194 @@ mod tests {
             a
             b
           c
+        "#);
+    }
+
+    #[test]
+    fn connection() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2.in;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Destinations
+              Field "in"
+                node2
+        "#);
+    }
+
+    #[test]
+    fn connection_to_single_input() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Destinations
+              node2
+        "#);
+    }
+
+    #[test]
+    fn connections_in_a_chain() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2 -> node3;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Destinations
+              node2
+          Connection
+            Sources
+              node2
+            Destinations
+              node3
+        "#);
+    }
+
+    #[test]
+    fn connection_to_multiple_destinations() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2, node3;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Destinations
+              node2
+              node3
+        "#);
+    }
+
+    #[test]
+    fn connection_to_multiple_sources() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out, node2.out -> node3;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+              Field "out"
+                node2
+            Destinations
+              node3
+        "#);
+    }
+
+    #[test]
+    fn connection_with_delay() {
+        insta::assert_snapshot!(parse_stmt("connection node1.out -> [100] -> node2;"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Delay
+              100
+            Destinations
+              node2
+        "#);
+    }
+
+    #[test]
+    fn connection_with_interpolation() {
+        insta::assert_snapshot!(parse_stmt("connection [linear] node1.out -> node2;"), @r#"
+        ConnectionDecl
+          Connection [linear]
+            Sources
+              Field "out"
+                node1
+            Destinations
+              node2
+        "#);
+    }
+
+    #[test]
+    fn connection_block() {
+        insta::assert_snapshot!(parse_stmt("connection  { node1.out -> node2, node3; node2.out -> node4; }"), @r#"
+        ConnectionDecl
+          Connection
+            Sources
+              Field "out"
+                node1
+            Destinations
+              node2
+              node3
+          Connection
+            Sources
+              Field "out"
+                node2
+            Destinations
+              node4
+        "#);
+    }
+
+    #[test]
+    fn empty_connection_block() {
+        insta::assert_snapshot!(parse_stmt("connection {}"), @r#"
+        ConnectionDecl
+        "#);
+    }
+
+    #[test]
+    fn conditional_connection() {
+        insta::assert_snapshot!(
+            parse_stmt("connection { if (useDistortionFirst) in -> distortion -> out; else in -> out; }"),
+            @"
+        ConnectionDecl
+          ConnectionIf
+            useDistortionFirst
+            Then
+              Connection
+                Sources
+                  in
+                Destinations
+                  distortion
+              Connection
+                Sources
+                  distortion
+                Destinations
+                  out
+            Else
+              Connection
+                Sources
+                  in
+                Destinations
+                  out
+        "
+        );
+    }
+
+    #[test]
+    fn infinite_for_loop() {
+        insta::assert_snapshot!(parse_stmt("for (;;) { advance(); }"), @"
+        ForStmt
+          Block
+            ExprStmt
+              Call
+                advance
+        ");
+    }
+
+    #[test]
+    fn classic_for_loop() {
+        insta::assert_snapshot!(parse_stmt("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
+        ForStmt
+          VarDeclStmt "i"
+            TypeName "int"
+            0
+          Binary "<"
+            i
+            10
+          Unary "++"
+            i
+          Block
+            ExprStmt
+              Call
+                advance
         "#);
     }
 }
