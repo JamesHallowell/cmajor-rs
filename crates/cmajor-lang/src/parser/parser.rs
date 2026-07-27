@@ -303,6 +303,10 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::ParenthesisRight);
                 self.ast.push(Node::Paren { paren, inner })
             }
+            Some(token) if token.is_type() => {
+                let token = self.bump();
+                self.ast.push(Node::Ident { token })
+            }
             peeked => {
                 let message = format!("expected expression, found {peeked:?}");
                 let token = self.bump();
@@ -1251,6 +1255,15 @@ mod tests {
           Array
             TypeName "int"
         "#);
+    }
+
+    #[test]
+    fn type_cast() {
+        insta::assert_snapshot!(parse_expr("float (2.5)"), @"
+        Call
+          float
+          2.5
+        ");
     }
 
     #[test]
