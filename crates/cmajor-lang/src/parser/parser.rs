@@ -575,12 +575,14 @@ impl<'a> Parser<'a> {
 
     fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
         let params = self.parse_params();
+        let is_const = self.bump_if(Keyword::Const).is_some();
         let body = self.parse_block();
         self.ast.push(Node::FunctionDecl {
             ty,
             name,
             generics,
             params,
+            is_const,
             body,
         })
     }
@@ -969,7 +971,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self) -> NodeId {
-        let brace = self.bump();
+        let brace = self.expect(TokenKind::BraceLeft);
 
         let mut stmts = Vec::new();
         while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
@@ -1382,7 +1384,7 @@ mod tests {
     fn unary_and_parens() {
         insta::assert_snapshot!(parse_expr("-(1 + 2)"), @r#"
         Unary "-"
-          Paren
+          Parentheses
             Binary "+"
               1
               2
@@ -1595,6 +1597,15 @@ mod tests {
               Array
                 TypeName "float32"
                 10
+          Block
+        "#);
+    }
+
+    #[test]
+    fn const_member_function() {
+        insta::assert_snapshot!(parse_stmt("void f() const { }"), @r#"
+        FunctionDecl "f" const
+          TypeName "void"
           Block
         "#);
     }

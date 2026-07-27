@@ -284,6 +284,7 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
             name,
             generics,
             params,
+            is_const,
             body,
         } => {
             let generics_suffix = if generics.is_empty() {
@@ -294,11 +295,12 @@ fn write_node(ast: &Ast, tokens: &TokenStream, source: &str, id: NodeId) -> Dump
                     generics.iter().map(text).collect::<Vec<_>>().join(", ")
                 )
             };
+            let const_suffix = if *is_const { " const" } else { "" };
             let mut children = vec![child(ty)];
             children.extend(params.iter().map(child));
             children.push(child(body));
             node(
-                format!("FunctionDecl {:?}{generics_suffix}", text(name)),
+                format!("FunctionDecl {:?}{generics_suffix}{const_suffix}", text(name)),
                 children,
             )
         }

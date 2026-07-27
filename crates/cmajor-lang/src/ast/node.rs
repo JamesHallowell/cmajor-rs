@@ -225,6 +225,7 @@ pub enum Node {
         name: TokenId,
         generics: Vec<TokenId>,
         params: Vec<NodeId>,
+        is_const: bool,
         body: NodeId,
     },
     Param {
