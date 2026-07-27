@@ -9,13 +9,15 @@ fn main() {
 
     let parser::Parse {
         ast,
-        root,
+        roots,
         tokens,
         diagnostics,
     } = parser::parse(&source);
 
     println!("{} tokens, {} AST nodes\n", tokens.len(), ast.len());
-    print!("{}", ast::dump(&ast, &tokens, &source, root));
+    for root in roots {
+        print!("{}", ast::dump(&ast, &tokens, &source, root));
+    }
 
     for diagnostic in &diagnostics {
         println!("error: {diagnostic}");

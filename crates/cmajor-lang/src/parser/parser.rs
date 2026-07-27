@@ -7,7 +7,7 @@ use crate::{
 
 pub struct Parse {
     pub ast: Ast,
-    pub root: NodeId,
+    pub roots: Vec<NodeId>,
     pub tokens: TokenStream,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -15,10 +15,10 @@ pub struct Parse {
 pub fn parse(source: &str) -> Parse {
     let tokens = TokenStream::tokenize(source);
     let mut parser = Parser::new(&tokens, source);
-    let root = parser.parse();
+    let roots = parser.parse();
     Parse {
         ast: parser.ast,
-        root,
+        roots,
         diagnostics: parser.diagnostics,
         tokens,
     }
@@ -260,16 +260,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> NodeId {
+    pub fn parse(&mut self) -> Vec<NodeId> {
         let mut stmts = Vec::new();
         while self.tokens.peek().is_some() {
             stmts.push(self.parse_statement());
         }
-        let root = self.ast.push(Node::Block {
-            brace: TokenId(0),
-            stmts,
-        });
-        root
+        stmts
     }
 
     fn parse_expr(&mut self) -> NodeId {
