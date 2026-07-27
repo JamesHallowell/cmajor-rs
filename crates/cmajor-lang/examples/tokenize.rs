@@ -7,21 +7,17 @@ fn main() {
         std::process::exit(1);
     });
 
-    let mut pos = 0usize;
-
-    for token in tokenize(&source) {
-        let start = pos;
-        pos += token.len as usize;
-        let text = &source[start..pos];
-
-        if token.kind.is_trivia() {
-            continue;
-        }
+    let token_stream = tokenize(&source);
+    for (id, token) in token_stream.into_iter().ignore_trivia() {
+        let span = token_stream.span(id).expect("no span found for this token");
+        let text = token_stream
+            .text(&source, id)
+            .expect("no text found for this token");
 
         println!(
             "{:>4}..{:<4} {:<15} {:?}",
-            start,
-            pos,
+            span.start,
+            span.end,
             format!("{:?}", token.kind),
             text
         );

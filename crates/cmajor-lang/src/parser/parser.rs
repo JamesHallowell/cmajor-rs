@@ -1,6 +1,8 @@
 use crate::{
     ast::{Ast, Node, NodeId, SpecialisationParamKind},
-    lexer::{Keyword, Literal, TokenId, TokenKind, TokenStream, TokenStreamIterator},
+    lexer::{
+        tokenize, Keyword, Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream,
+    },
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
     utils, Diagnostic,
 };
@@ -13,7 +15,7 @@ pub struct Parse {
 }
 
 pub fn parse(source: &str) -> Parse {
-    let tokens = TokenStream::tokenize(source);
+    let tokens = tokenize(source);
     let mut parser = Parser::new(&tokens, source);
     let roots = parser.parse();
     Parse {
@@ -199,7 +201,7 @@ impl Infix {
 }
 
 struct Parser<'a> {
-    tokens: TokenStreamIterator<'a>,
+    tokens: NonTrivialTokenStreamIterator<'a>,
     source: &'a str,
     ast: Ast,
     diagnostics: Vec<Diagnostic>,
@@ -208,7 +210,7 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
-            tokens: tokens.into_iter(),
+            tokens: tokens.into_iter().ignore_trivia(),
             source,
             ast: Ast::new(),
             diagnostics: Vec::new(),
@@ -234,6 +236,7 @@ impl<'a> Parser<'a> {
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
         let offset = self
             .tokens
+            .stream()
             .span(token)
             .map(|span| span.start)
             .unwrap_or(self.source.len() as u32);
@@ -1132,7 +1135,7 @@ mod tests {
     use {super::*, crate::ast};
 
     fn dump(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> String {
-        let tokens = TokenStream::tokenize(source);
+        let tokens = tokenize(source);
         let mut parser = Parser::new(&tokens, source);
         let root = parse_fn(&mut parser);
         assert_eq!(parser.diagnostics, vec![]);

@@ -1,15 +1,16 @@
 use crate::lexer::{
     cursor::Cursor,
     token::{Keyword, Literal, Token, TokenKind, Trivia},
+    TokenStream,
 };
 
-pub fn tokenize(input: &str) -> Vec<Token> {
+pub fn tokenize(input: &str) -> TokenStream {
     let mut lexer = Lexer::new(input);
     let mut tokens = Vec::new();
     while let Some(token) = lexer.next_token() {
         tokens.push(token);
     }
-    tokens
+    TokenStream::new(tokens)
 }
 
 struct Lexer<'a> {
@@ -375,20 +376,24 @@ mod tests {
     use {super::*, crate::lexer::token::Keyword};
 
     fn lex(input: &str) -> Vec<(TokenKind, &str)> {
-        let mut pos = 0usize;
-        tokenize(input)
+        let token_stream = tokenize(input);
+
+        token_stream
             .into_iter()
-            .map(|token| {
-                let start = pos;
-                pos += token.len as usize;
-                (token.kind, &input[start..pos])
+            .map(|(id, token)| {
+                (
+                    token.kind,
+                    token_stream
+                        .text(input, id)
+                        .expect("failed to get text for token"),
+                )
             })
             .collect()
     }
 
     #[test]
     fn empty_input_produces_no_tokens() {
-        assert_eq!(tokenize(""), vec![]);
+        assert!(tokenize("").is_empty());
     }
 
     #[test]
