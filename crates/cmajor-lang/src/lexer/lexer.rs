@@ -1,7 +1,10 @@
-use crate::lexer::{
-    cursor::Cursor,
-    token::{Keyword, Literal, Token, TokenKind, Trivia},
-    TokenStream,
+use crate::{
+    lexer::{
+        cursor::Cursor,
+        token::{Keyword, Literal, Token, TokenKind, Trivia},
+        TokenStream,
+    },
+    token,
 };
 
 pub fn tokenize(input: &str) -> TokenStream {
@@ -48,97 +51,97 @@ impl<'a> Lexer<'a> {
             '+' => match self.cursor.peek() {
                 Some('+') => {
                     self.cursor.take();
-                    TokenKind::PlusPlus
+                    token!(++)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::PlusEqual
+                    token!(+=)
                 }
-                _ => TokenKind::Plus,
+                _ => token!(+),
             },
             '-' => match self.cursor.peek() {
                 Some('-') => {
                     self.cursor.take();
-                    TokenKind::MinusMinus
+                    token!(--)
                 }
                 Some('>') => {
                     self.cursor.take();
-                    TokenKind::ArrowRight
+                    token!(->)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::MinusEqual
+                    token!(-=)
                 }
-                _ => TokenKind::Minus,
+                _ => token!(-),
             },
             '*' => match self.cursor.peek() {
                 Some('*') => {
                     self.cursor.take();
-                    TokenKind::StarStar
+                    token!(**)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::StarEqual
+                    token!(*=)
                 }
-                _ => TokenKind::Star,
+                _ => token!(*),
             },
-            '/' => self.one_or_two('=', TokenKind::SlashEqual, TokenKind::Slash),
-            '%' => self.one_or_two('=', TokenKind::PercentEqual, TokenKind::Percent),
-            '~' => TokenKind::Tilde,
-            '^' => self.one_or_two('=', TokenKind::CaretEqual, TokenKind::Caret),
+            '/' => self.one_or_two('=', token!(/=), token!(/)),
+            '%' => self.one_or_two('=', token!(%=), token!(%)),
+            '~' => token!(~),
+            '^' => self.one_or_two('=', token!(^=), token!(^)),
             '&' if self.cursor.peek_at(0) == Some('&') && self.cursor.peek_at(1) == Some('=') => {
                 self.cursor.take();
                 self.cursor.take();
-                TokenKind::AmpersandAmpersandEqual
+                token!(&&=)
             }
             '&' => match self.cursor.peek() {
                 Some('&') => {
                     self.cursor.take();
-                    TokenKind::AmpersandAmpersand
+                    token!(&&)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::AmpersandEqual
+                    token!(&=)
                 }
-                _ => TokenKind::Ampersand,
+                _ => token!(&),
             },
             '|' if self.cursor.peek_at(0) == Some('|') && self.cursor.peek_at(1) == Some('=') => {
                 self.cursor.take();
                 self.cursor.take();
-                TokenKind::PipePipeEqual
+                token!(||=)
             }
             '|' => match self.cursor.peek() {
                 Some('|') => {
                     self.cursor.take();
-                    TokenKind::PipePipe
+                    token!(||)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::PipeEqual
+                    token!(|=)
                 }
-                _ => TokenKind::Pipe,
+                _ => token!(|),
             },
-            '!' => self.one_or_two('=', TokenKind::BangEqual, TokenKind::Bang),
-            '=' => self.one_or_two('=', TokenKind::EqualEqual, TokenKind::Equal),
+            '!' => self.one_or_two('=', token!(!=), token!(!)),
+            '=' => self.one_or_two('=', token!(==), token!(=)),
             '<' => match self.cursor.peek() {
                 Some('<') if self.cursor.peek_two() == (Some('<'), Some('=')) => {
                     self.cursor.take();
                     self.cursor.take();
-                    TokenKind::ShiftLeftEqual
+                    token!(<<=)
                 }
                 Some('<') => {
                     self.cursor.take();
-                    TokenKind::ShiftLeft
+                    token!(<<)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::AngleBracketLeftEqual
+                    token!(<=)
                 }
                 Some('-') => {
                     self.cursor.take();
-                    TokenKind::ArrowLeft
+                    token!(<-)
                 }
-                _ => TokenKind::AngleBracketLeft,
+                _ => token!(<),
             },
             '>' if self.cursor.peek_at(0) == Some('>')
                 && self.cursor.peek_at(1) == Some('>')
@@ -147,40 +150,40 @@ impl<'a> Lexer<'a> {
                 self.cursor.take();
                 self.cursor.take();
                 self.cursor.take();
-                TokenKind::ShiftRightShiftRightEqual
+                token!(>>>=)
             }
             '>' if self.cursor.peek_at(0) == Some('>') && self.cursor.peek_at(1) == Some('>') => {
                 self.cursor.take();
                 self.cursor.take();
-                TokenKind::ShiftRightShiftRight
+                token!(>>>)
             }
             '>' if self.cursor.peek_at(0) == Some('>') && self.cursor.peek_at(1) == Some('=') => {
                 self.cursor.take();
                 self.cursor.take();
-                TokenKind::ShiftRightEqual
+                token!(>>=)
             }
             '>' => match self.cursor.peek() {
                 Some('>') => {
                     self.cursor.take();
-                    TokenKind::ShiftRight
+                    token!(>>)
                 }
                 Some('=') => {
                     self.cursor.take();
-                    TokenKind::AngleBracketRightEqual
+                    token!(>=)
                 }
-                _ => TokenKind::AngleBracketRight,
+                _ => token!(>),
             },
-            ':' => self.one_or_two(':', TokenKind::ColonColon, TokenKind::Colon),
-            ',' => TokenKind::Comma,
-            ';' => TokenKind::Semicolon,
-            '.' => TokenKind::Dot,
-            '?' => TokenKind::Question,
-            '(' => TokenKind::ParenthesisLeft,
-            ')' => TokenKind::ParenthesisRight,
-            '[' => self.one_or_two('[', TokenKind::DoubleBracketLeft, TokenKind::BracketLeft),
-            ']' => self.one_or_two(']', TokenKind::DoubleBracketRight, TokenKind::BracketRight),
-            '{' => TokenKind::BraceLeft,
-            '}' => TokenKind::BraceRight,
+            ':' => self.one_or_two(':', token!(::), token!(:)),
+            ',' => token!(,),
+            ';' => token!(;),
+            '.' => token!(.),
+            '?' => token!(?),
+            '(' => token!('('),
+            ')' => token!(')'),
+            '[' => self.one_or_two('[', token!("[["), token!('[')),
+            ']' => self.one_or_two(']', token!("]]"), token!(']')),
+            '{' => token!('{'),
+            '}' => token!('}'),
             _ => TokenKind::Error,
         };
 

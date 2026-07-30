@@ -1,10 +1,8 @@
 use crate::{
     ast::{Ast, Node, NodeId, SpecialisationParamKind},
-    lexer::{
-        tokenize, Keyword, Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream,
-    },
+    lexer::{tokenize, Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream},
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
-    utils, Diagnostic,
+    token, utils, Diagnostic,
 };
 
 pub struct Parse {
@@ -24,10 +22,6 @@ pub fn parse(source: &str) -> Parse {
         diagnostics: parser.diagnostics,
         tokens,
     }
-}
-
-fn is_type_name_start(kind: TokenKind) -> bool {
-    kind == TokenKind::Identifier || kind.is_type()
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -72,41 +66,41 @@ enum BinaryOp {
 impl BinaryOp {
     fn from_token(kind: TokenKind) -> Option<Self> {
         Some(match kind {
-            TokenKind::Equal => Self::Assign,
-            TokenKind::ArrowLeft => Self::Write,
-            TokenKind::PlusEqual => Self::AddAssign,
-            TokenKind::MinusEqual => Self::SubtractAssign,
-            TokenKind::StarEqual => Self::MultiplyAssign,
-            TokenKind::SlashEqual => Self::DivideAssign,
-            TokenKind::PercentEqual => Self::RemainderAssign,
-            TokenKind::AmpersandEqual => Self::BitwiseAndAssign,
-            TokenKind::PipeEqual => Self::BitwiseOrAssign,
-            TokenKind::CaretEqual => Self::BitwiseXorAssign,
-            TokenKind::ShiftLeftEqual => Self::ShiftLeftAssign,
-            TokenKind::ShiftRightEqual => Self::ShiftRightAssign,
-            TokenKind::ShiftRightShiftRightEqual => Self::UnsignedShiftRightAssign,
-            TokenKind::AmpersandAmpersandEqual => Self::LogicalAndAssign,
-            TokenKind::PipePipeEqual => Self::LogicalOrAssign,
-            TokenKind::PipePipe => Self::Or,
-            TokenKind::AmpersandAmpersand => Self::And,
-            TokenKind::Pipe => Self::BitwiseOr,
-            TokenKind::Caret => Self::BitwiseXor,
-            TokenKind::Ampersand => Self::BitwiseAnd,
-            TokenKind::EqualEqual => Self::Equal,
-            TokenKind::BangEqual => Self::NotEqual,
-            TokenKind::AngleBracketLeft => Self::LessThan,
-            TokenKind::AngleBracketLeftEqual => Self::LessThanOrEqual,
-            TokenKind::AngleBracketRight => Self::GreaterThan,
-            TokenKind::AngleBracketRightEqual => Self::GreaterThanOrEqual,
-            TokenKind::ShiftLeft => Self::ShiftLeft,
-            TokenKind::ShiftRight => Self::ShiftRight,
-            TokenKind::ShiftRightShiftRight => Self::UnsignedShiftRight,
-            TokenKind::Plus => Self::Add,
-            TokenKind::Minus => Self::Subtract,
-            TokenKind::Star => Self::Multiply,
-            TokenKind::Slash => Self::Divide,
-            TokenKind::Percent => Self::Remainder,
-            TokenKind::StarStar => Self::Power,
+            token!(=) => Self::Assign,
+            token!(<-) => Self::Write,
+            token!(+=) => Self::AddAssign,
+            token!(-=) => Self::SubtractAssign,
+            token!(*=) => Self::MultiplyAssign,
+            token!(/=) => Self::DivideAssign,
+            token!(%=) => Self::RemainderAssign,
+            token!(&=) => Self::BitwiseAndAssign,
+            token!(|=) => Self::BitwiseOrAssign,
+            token!(^=) => Self::BitwiseXorAssign,
+            token!(<<=) => Self::ShiftLeftAssign,
+            token!(>>=) => Self::ShiftRightAssign,
+            token!(>>>=) => Self::UnsignedShiftRightAssign,
+            token!(&&=) => Self::LogicalAndAssign,
+            token!(||=) => Self::LogicalOrAssign,
+            token!(||) => Self::Or,
+            token!(&&) => Self::And,
+            token!(|) => Self::BitwiseOr,
+            token!(^) => Self::BitwiseXor,
+            token!(&) => Self::BitwiseAnd,
+            token!(==) => Self::Equal,
+            token!(!=) => Self::NotEqual,
+            token!(<) => Self::LessThan,
+            token!(<=) => Self::LessThanOrEqual,
+            token!(>) => Self::GreaterThan,
+            token!(>=) => Self::GreaterThanOrEqual,
+            token!(<<) => Self::ShiftLeft,
+            token!(>>) => Self::ShiftRight,
+            token!(>>>) => Self::UnsignedShiftRight,
+            token!(+) => Self::Add,
+            token!(-) => Self::Subtract,
+            token!(*) => Self::Multiply,
+            token!(/) => Self::Divide,
+            token!(%) => Self::Remainder,
+            token!(**) => Self::Power,
             _ => return None,
         })
     }
@@ -179,7 +173,7 @@ enum Infix {
 
 impl Infix {
     fn from_token(kind: TokenKind) -> Option<Self> {
-        if kind == TokenKind::Question {
+        if kind == token!(?) {
             Some(Self::Ternary)
         } else {
             BinaryOp::from_token(kind).map(Self::Binary)
@@ -256,6 +250,55 @@ macro_rules! expect_identifier {
     };
 }
 
+macro_rules! expect {
+    ($parser:expr, $($rest:tt)+) => {
+        expect!(@munch $parser; (); $($rest)+)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); { $($e:tt)* } $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* { $($e)* }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if ! peek token!($($cond:tt)+) $body:block else $else_body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() != Some(token!($($cond)+)) { $body } else { $else_body }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if ! peek token!($($cond:tt)+) $body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() != Some(token!($($cond)+)) { Some($body) } else { None }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if peek token!($($cond:tt)+) $body:block else $else_body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { $body } else { $else_body }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if peek token!($($cond:tt)+) $body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { Some($body) } else { None }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) { $($seq:tt)+ } else $else_body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) {
+            expect!($parser, token!($($cond)+), $($seq)+)
+        } else { $else_body }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) { $($seq:tt)+ } $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) {
+            Some(expect!($parser, token!($($cond)+), $($seq)+))
+        } else { None }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) else $else_body:block $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { $parser.bump() } else { $else_body }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { Some($parser.bump()) } else { None }); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); token!($($kind:tt)+) $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* $parser.expect(token!($($kind)+))); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); TokenKind::$kind:ident $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* $parser.expect(TokenKind::$kind)); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),*); $e:expr $(, $($rest:tt)*)?) => {
+        expect!(@munch $parser; ($($acc,)* $e); $($($rest)*)?)
+    };
+    (@munch $parser:expr; ($($acc:expr),+); ) => {
+        ($($acc),+)
+    };
+}
+
 impl<'a> Parser<'a> {
     fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
@@ -326,31 +369,25 @@ impl<'a> Parser<'a> {
 
     fn parse_expr_with_min_binding_power(&mut self, min_binding_power: BindingPower) -> NodeId {
         let mut lhs = match self.tokens.peek_kind() {
-            Some(
-                TokenKind::Bang
-                | TokenKind::Tilde
-                | TokenKind::Minus
-                | TokenKind::PlusPlus
-                | TokenKind::MinusMinus,
-            ) => {
+            Some(token!(! | ~ | - | ++ | --)) => {
                 let op = self.bump();
                 let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
                 self.ast.push(Node::Unary { op, operand })
             }
             Some(TokenKind::Literal(literal)) => self.parse_literal(literal),
-            Some(TokenKind::Keyword(Keyword::True | Keyword::False)) => {
+            Some(token!(true | false)) => {
                 let token = self.bump();
                 self.ast.push(Node::BoolLiteral { token })
             }
-            Some(TokenKind::Identifier | TokenKind::Keyword(Keyword::Processor)) => {
+            Some(TokenKind::Identifier | token!(processor)) => {
                 let token = self.bump();
                 self.ast.push(Node::Ident { token })
             }
-            Some(TokenKind::ParenthesisLeft) => {
+            Some(token!('(')) => {
                 let (paren, inner, _) = self.parse_parenthetical_list(|parser| parser.parse_expr());
                 self.ast.push(Node::Parentheses { paren, inner })
             }
-            Some(token) if token.is_type() => {
+            Some(token) if token.is_type_like() => {
                 let token = self.bump();
                 self.ast.push(Node::Ident { token })
             }
@@ -364,14 +401,27 @@ impl<'a> Parser<'a> {
 
         loop {
             lhs = match self.tokens.peek_kind() {
-                Some(TokenKind::ParenthesisLeft) => self.parse_call(lhs),
-                Some(TokenKind::BracketLeft) => self.parse_index(lhs),
-                Some(TokenKind::Dot) => self.parse_field(lhs),
-                Some(TokenKind::ColonColon) => self.parse_scope_access(lhs),
-                Some(TokenKind::AngleBracketLeft) if self.at_vector_construct_chevron() => {
-                    self.parse_chevroned_suffix(lhs)
+                Some(token!('(')) => self.parse_call(lhs),
+                Some(token!('[')) => self.parse_index(lhs),
+                Some(token!(.)) => self.parse_field(lhs),
+                Some(token!(::)) => self.parse_scope_access(lhs),
+                Some(token!(<)) => {
+                    let is_part_of_type_constructor = self
+                        .tokens
+                        .clone()
+                        .take_while(|(_, token)| !matches!(token.kind, token!(; | '{' | '}')))
+                        .find_map(|(id, token)| (token.kind == token!(>)).then_some(id))
+                        .and_then(|token| self.tokens.peek_after(token))
+                        .map(|token| token.kind == token!('('))
+                        .unwrap_or(false);
+
+                    if is_part_of_type_constructor {
+                        self.parse_chevroned_suffix(lhs)
+                    } else {
+                        break;
+                    }
                 }
-                Some(TokenKind::PlusPlus | TokenKind::MinusMinus) => {
+                Some(token!(++ | --)) => {
                     let op = self.bump();
                     self.ast.push(Node::PostfixUnary { op, operand: lhs })
                 }
@@ -390,11 +440,14 @@ impl<'a> Parser<'a> {
 
             lhs = match infix {
                 Infix::Ternary => {
-                    let question = self.expect(TokenKind::Question);
-                    let then_branch = self.parse_expr();
-                    self.expect(TokenKind::Colon);
-                    let else_branch =
-                        self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
+                    let (question, then_branch, _, else_branch) = expect!(
+                        self,
+                        token!(?),
+                        self.parse_expr(),
+                        token!(:),
+                        self.parse_expr_with_min_binding_power(binding_power.min_for_rhs)
+                    );
+
                     self.ast.push(Node::Ternary {
                         question,
                         cond: lhs,
@@ -421,14 +474,8 @@ impl<'a> Parser<'a> {
         lhs
     }
 
-    fn at_vector_construct_chevron(&self) -> bool {
-        self.skip_to_matching_angle_bracket(0)
-            .is_some_and(|after| self.at(after, TokenKind::ParenthesisLeft))
-    }
-
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
-        self.expect(TokenKind::ColonColon);
-        let name = self.expect(TokenKind::Identifier);
+        let (_, name) = expect!(self, token!(::), TokenKind::Identifier);
         self.ast.push(Node::ScopeAccess { name, base })
     }
 
@@ -441,29 +488,28 @@ impl<'a> Parser<'a> {
     ) -> (TokenId, Vec<T>, TokenId) {
         let (start, separator, stop) = (start.into(), separator.into(), stop.into());
 
-        let start = self.expect(start);
-        let mut items = Vec::new();
-        while self.tokens.peek_kind() != Some(stop) {
-            items.push(parse(self));
-            if self.bump_if(separator).is_none() {
-                break;
-            }
-        }
-        let stop = self.expect(stop);
-
-        (start, items, stop)
+        expect!(
+            self,
+            self.expect(start),
+            {
+                let mut items = Vec::new();
+                while self.tokens.peek_kind() != Some(stop) {
+                    items.push(parse(self));
+                    if self.bump_if(separator).is_none() {
+                        break;
+                    }
+                }
+                items
+            },
+            self.expect(stop)
+        )
     }
 
     fn parse_parenthetical_list(
         &mut self,
         parse: fn(&mut Self) -> NodeId,
     ) -> (TokenId, Vec<NodeId>, TokenId) {
-        self.parse_list(
-            TokenKind::ParenthesisLeft,
-            parse,
-            TokenKind::Comma,
-            TokenKind::ParenthesisRight,
-        )
+        self.parse_list(token!('('), parse, token!(,), token!(')'))
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
@@ -476,10 +522,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_index(&mut self, base: NodeId) -> NodeId {
-        let bracket = self.expect(TokenKind::BracketLeft);
-        let index =
-            (self.tokens.peek_kind() != Some(TokenKind::BracketRight)).then(|| self.parse_expr());
-        self.expect(TokenKind::BracketRight);
+        let (bracket, index, _) = expect!(
+            self,
+            token!('['),
+            if !peek token!(']') {
+                self.parse_expr()
+            },
+            token!(']'),
+        );
+
         self.ast.push(Node::Index {
             bracket,
             base,
@@ -488,8 +539,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_field(&mut self, base: NodeId) -> NodeId {
-        self.expect(TokenKind::Dot);
-        let name = self.expect(TokenKind::Identifier);
+        let (_, name) = expect!(self, token!(.), TokenKind::Identifier);
         self.ast.push(Node::Field { name, base })
     }
 
@@ -506,36 +556,29 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> NodeId {
         match self.tokens.peek_kind() {
-            Some(TokenKind::BraceLeft) => self.parse_block(),
-            Some(TokenKind::Keyword(Keyword::Let)) => self.parse_let(),
-            Some(TokenKind::Keyword(Keyword::Var)) => self.parse_var(),
-            Some(TokenKind::Keyword(Keyword::If)) => self.parse_if(),
-            Some(TokenKind::Keyword(Keyword::While)) => self.parse_while(),
-            Some(TokenKind::Keyword(Keyword::Loop)) => self.parse_loop(),
-            Some(TokenKind::Keyword(Keyword::For)) => self.parse_for(),
-            Some(TokenKind::Keyword(Keyword::Node)) => self.parse_node_decl(),
-            Some(TokenKind::Keyword(Keyword::Connection)) => self.parse_connection_decl(),
-            Some(TokenKind::Keyword(Keyword::Return)) => self.parse_return(),
-            Some(TokenKind::Keyword(Keyword::Break)) => self.parse_break(),
-            Some(TokenKind::Keyword(Keyword::Continue)) => self.parse_continue(),
-            Some(TokenKind::Keyword(Keyword::Namespace)) => self.parse_namespace(),
-            Some(TokenKind::Keyword(Keyword::Processor))
-                if self.tokens.clone().nth(1).map(|(_, token)| token.kind)
-                    == Some(TokenKind::Dot) =>
+            Some(token!('{')) => self.parse_block(),
+            Some(token!(let)) => self.parse_let(),
+            Some(token!(var)) => self.parse_var(),
+            Some(token!(if)) => self.parse_if(),
+            Some(token!(while)) => self.parse_while(),
+            Some(token!(loop)) => self.parse_loop(),
+            Some(token!(for)) => self.parse_for(),
+            Some(token!(node)) => self.parse_node_decl(),
+            Some(token!(connection)) => self.parse_connection_decl(),
+            Some(token!(return)) => self.parse_return(),
+            Some(token!(break)) => self.parse_break(),
+            Some(token!(continue)) => self.parse_continue(),
+            Some(token!(namespace)) => self.parse_namespace(),
+            Some(token!(processor))
+                if self.tokens.clone().nth(1).map(|(_, token)| token.kind) == Some(token!(.)) =>
             {
                 self.parse_expr_stmt()
             }
-            Some(TokenKind::Keyword(Keyword::Processor | Keyword::Graph | Keyword::Struct)) => {
-                self.parse_container()
-            }
-            Some(TokenKind::Keyword(Keyword::Input | Keyword::Output)) => {
-                self.parse_endpoint_group()
-            }
-            Some(TokenKind::Keyword(Keyword::Event)) => self.parse_event_handler(),
-            Some(TokenKind::Keyword(Keyword::Const)) => self.parse_typed_decl(),
-            Some(TokenKind::Keyword(keyword))
-                if is_type_name_start(TokenKind::Keyword(keyword)) =>
-            {
+            Some(token!(processor | graph | struct)) => self.parse_container(),
+            Some(token!(input | output)) => self.parse_endpoint_group(),
+            Some(token!(event)) => self.parse_event_handler(),
+            Some(token!(const)) => self.parse_typed_decl(),
+            Some(TokenKind::Keyword(keyword)) if TokenKind::Keyword(keyword).is_type_like() => {
                 self.parse_typed_decl()
             }
             Some(TokenKind::Identifier) if self.looks_like_typed_decl() => self.parse_typed_decl(),
@@ -544,14 +587,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_break(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Break);
-        self.expect(TokenKind::Semicolon);
+        let (keyword, _) = expect!(self, token!(break), token!(;));
         self.ast.push(Node::BreakStmt { keyword })
     }
 
     fn parse_continue(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Continue);
-        self.expect(TokenKind::Semicolon);
+        let (keyword, _) = expect!(self, token!(continue), token!(;));
         self.ast.push(Node::ContinueStmt { keyword })
     }
 
@@ -560,74 +601,106 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_typed_decl_inner(&mut self, consume_semicolon: bool) -> NodeId {
-        let ty = self.parse_type();
-        let name = self.expect(TokenKind::Identifier);
-        if self.tokens.peek_kind() == Some(TokenKind::AngleBracketLeft)
-            || self.tokens.peek_kind() == Some(TokenKind::ParenthesisLeft)
+        let (ty, name) = expect!(self, self.parse_type(), TokenKind::Identifier);
+
+        if self.tokens.peek_kind() == Some(token!(<))
+            || self.tokens.peek_kind() == Some(token!('('))
         {
             let generics = self.parse_optional_generics();
             self.parse_function_decl(ty, name, generics)
         } else {
-            let mut declarators = vec![self.parse_declarator(name)];
-            while self.tokens.peek_kind() == Some(TokenKind::Comma) {
+            let mut declarators = vec![(
+                name,
+                expect!(
+                    self,
+                    if token!(=) {
+                        self.parse_expr()
+                    }
+                )
+                .map(|(_, init)| init),
+            )];
+            while self.tokens.peek_kind() == Some(token!(,)) {
                 self.bump();
-                let name = self.expect(TokenKind::Identifier);
-                declarators.push(self.parse_declarator(name));
+
+                let (name, init) = expect!(
+                    self,
+                    TokenKind::Identifier,
+                    if token!(=) {
+                        self.parse_expr()
+                    }
+                );
+                declarators.push((name, init.map(|(_, init)| init)));
             }
             if consume_semicolon {
-                self.expect(TokenKind::Semicolon);
+                self.expect(token!(;));
             }
             self.ast.push(Node::VarDeclStmt { ty, declarators })
         }
     }
 
-    fn parse_declarator(&mut self, name: TokenId) -> (TokenId, Option<NodeId>) {
-        let init = self.bump_if(TokenKind::Equal).map(|_| self.parse_expr());
-        (name, init)
+    fn parse_optional_generics(&mut self) -> Vec<TokenId> {
+        expect!(
+            self,
+            if peek token!(<) {
+                self.parse_list(
+                    token!(<),
+                    |parser| parser.expect(TokenKind::Identifier),
+                    token!(,),
+                    token!(>),
+                )
+            }
+        )
+        .map(|(_, generics, _)| generics)
+        .unwrap_or_default()
     }
 
-    fn parse_optional_generics(&mut self) -> Vec<TokenId> {
-        if self.tokens.peek_kind() != Some(TokenKind::AngleBracketLeft) {
-            return Vec::new();
-        }
-        self.bump();
-        let mut generics = vec![self.expect(TokenKind::Identifier)];
-        while self.bump_if(TokenKind::Comma).is_some() {
-            generics.push(self.expect(TokenKind::Identifier));
-        }
-        self.expect(TokenKind::AngleBracketRight);
-        generics
+    fn parse_param(&mut self) -> NodeId {
+        let (ty, by_ref, name) = expect!(
+            self,
+            self.parse_type(),
+            if token!(&),
+            TokenKind::Identifier
+        );
+
+        self.ast.push(Node::Param {
+            ty,
+            name,
+            by_ref: by_ref.is_some(),
+        })
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
-        let (_, params, _) = self.parse_parenthetical_list(|parser| {
-            let ty = parser.parse_type();
-            let by_ref = parser.bump_if(TokenKind::Ampersand).is_some();
-            let name = parser.expect(TokenKind::Identifier);
-            parser.ast.push(Node::Param { ty, name, by_ref })
-        });
+        let (_, params, _) = self.parse_parenthetical_list(|parser| parser.parse_param());
         params
     }
 
     fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
-        let params = self.parse_params();
-        let is_const = self.bump_if(Keyword::Const).is_some();
-        let body = self.parse_block();
+        let (params, is_const, body) = expect!(
+            self,
+            self.parse_params(),
+            if token!(const),
+            self.parse_block()
+        );
+
         self.ast.push(Node::FunctionDecl {
             ty,
             name,
             generics,
             params,
-            is_const,
+            is_const: is_const.is_some(),
             body,
         })
     }
 
     fn parse_event_handler(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Event);
-        let name = self.expect(TokenKind::Identifier);
-        let params = self.parse_params();
-        let body = self.parse_block();
+        let (keyword, name, params, body) = expect!(
+            self,
+            token!(event),
+            TokenKind::Identifier,
+            self.parse_params(),
+            self.parse_block()
+        );
+
         self.ast.push(Node::EventHandlerDecl {
             keyword,
             name,
@@ -637,18 +710,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_namespace(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Namespace);
-        let mut segments = vec![self.expect(TokenKind::Identifier)];
-        while self.bump_if(TokenKind::ColonColon).is_some() {
-            segments.push(self.expect(TokenKind::Identifier));
-        }
-        let params = self.parse_optional_specialisation_params();
-        self.expect(TokenKind::BraceLeft);
-        let mut items = Vec::new();
-        while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
-            items.push(self.parse_statement());
-        }
-        self.expect(TokenKind::BraceRight);
+        let (keyword, segments, params, _, items, _) = expect!(
+            self,
+            token!(namespace),
+            {
+                let mut segments = vec![self.expect(TokenKind::Identifier)];
+                while self.bump_if(token!(::)).is_some() {
+                    segments.push(self.expect(TokenKind::Identifier));
+                }
+                segments
+            },
+            self.parse_optional_specialisation_params(),
+            token!('{'),
+            {
+                let mut items = Vec::new();
+                while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+                    items.push(self.parse_statement());
+                }
+                items
+            },
+            token!('}')
+        );
+
         self.ast.push(Node::NamespaceDecl {
             keyword,
             segments,
@@ -658,27 +741,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
-        match self.tokens.peek_kind() {
-            Some(TokenKind::ParenthesisLeft) => {
-                let (_, params, _) =
-                    self.parse_parenthetical_list(|parser| parser.parse_specialisation_param());
-                params
-            }
-            _ => vec![],
-        }
+        expect!(self, if peek token!('(') {
+            self.parse_parenthetical_list(|parser| parser.parse_specialisation_param())
+        })
+        .map(|(_, params, _)| params)
+        .unwrap_or_default()
     }
 
     fn parse_specialisation_param(&mut self) -> NodeId {
         let kind = match self.tokens.peek_kind() {
-            Some(TokenKind::Keyword(Keyword::Using)) => {
+            Some(token!(using)) => {
                 self.bump();
                 SpecialisationParamKind::Using
             }
-            Some(TokenKind::Keyword(Keyword::Processor)) => {
+            Some(token!(processor)) => {
                 self.bump();
                 SpecialisationParamKind::Processor
             }
-            Some(TokenKind::Keyword(Keyword::Namespace)) => {
+            Some(token!(namespace)) => {
                 self.bump();
                 SpecialisationParamKind::Namespace
             }
@@ -688,7 +768,7 @@ impl<'a> Parser<'a> {
             }
         };
         let name = self.expect(TokenKind::Identifier);
-        let default = if self.tokens.peek_kind() == Some(TokenKind::Equal) {
+        let default = if self.tokens.peek_kind() == Some(token!(=)) {
             self.bump();
             Some(match kind {
                 SpecialisationParamKind::Value { .. } => self.parse_expr(),
@@ -705,37 +785,34 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_container(&mut self) -> NodeId {
-        let keyword = expect_matches!(
-            self,
-            TokenKind::Keyword(Keyword::Processor | Keyword::Graph | Keyword::Struct)
-        );
+        let keyword = expect_matches!(self, token!(processor | graph | struct));
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
-        let attributes = (self.tokens.peek_kind() == Some(TokenKind::DoubleBracketLeft))
-            .then(|| self.parse_attribute_list());
-        self.expect(TokenKind::BraceLeft);
+        let attributes =
+            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        self.expect(token!('{'));
 
         let mut items = Vec::new();
-        while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
+        while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
             items.push(self.parse_statement());
         }
-        self.expect(TokenKind::BraceRight);
+        self.expect(token!('}'));
 
         match self.tokens.stream().get(keyword).map(|token| token.kind) {
-            Some(TokenKind::Keyword(Keyword::Graph)) => self.ast.push(Node::GraphDecl {
+            Some(token!(graph)) => self.ast.push(Node::GraphDecl {
                 keyword,
                 name,
                 params,
                 attributes,
                 items,
             }),
-            Some(TokenKind::Keyword(Keyword::Struct)) => self.ast.push(Node::StructDecl {
+            Some(token!(struct)) => self.ast.push(Node::StructDecl {
                 keyword,
                 name,
                 attributes,
                 items,
             }),
-            Some(TokenKind::Keyword(Keyword::Processor)) => self.ast.push(Node::ProcessorDecl {
+            Some(token!(processor)) => self.ast.push(Node::ProcessorDecl {
                 keyword,
                 name,
                 params,
@@ -747,11 +824,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_node_decl(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Node);
-        let name = self.expect(TokenKind::Identifier);
-        self.expect(TokenKind::Equal);
-        let value = self.parse_expr();
-        self.expect(TokenKind::Semicolon);
+        let (keyword, name, _, value, _) = expect!(
+            self,
+            token!(node),
+            TokenKind::Identifier,
+            token!(=),
+            self.parse_expr(),
+            token!(;)
+        );
+
         self.ast.push(Node::NodeDecl {
             keyword,
             name,
@@ -760,7 +841,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_decl(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Connection);
+        let keyword = self.expect(token!(connection));
         let connections = self.parse_connection_list();
         self.ast.push(Node::ConnectionDecl {
             keyword,
@@ -769,19 +850,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_list(&mut self) -> Vec<NodeId> {
-        let braced = self.bump_if(TokenKind::BraceLeft).is_some();
+        let braced = self.bump_if(token!('{')).is_some();
 
         let mut connections = Vec::new();
         loop {
-            if braced && self.bump_if(TokenKind::BraceRight).is_some() {
+            if braced && self.bump_if(token!('}')).is_some() {
                 break;
             }
 
-            if self.tokens.peek_kind() == Some(TokenKind::Keyword(Keyword::If)) {
+            if self.tokens.peek_kind() == Some(token!(if)) {
                 connections.push(self.parse_connection_if());
             } else {
                 connections.extend(self.parse_connection_chain());
-                self.expect(TokenKind::Semicolon);
+                self.expect(token!(;));
             }
 
             if !braced {
@@ -792,15 +873,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_if(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::If);
-        self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr();
-        self.expect(TokenKind::ParenthesisRight);
-        let then_branch = self.parse_connection_list();
-        let else_branch = self
-            .bump_if(Keyword::Else)
-            .is_some()
-            .then(|| self.parse_connection_list());
+        let (keyword, _, cond, _, then_branch, else_branch) = expect!(
+            self,
+            token!(if),
+            token!('('),
+            self.parse_expr(),
+            token!(')'),
+            self.parse_connection_list(),
+            if token!(else) {
+                self.parse_connection_list()
+            }
+        );
+        let else_branch = else_branch.map(|(_, else_branch)| else_branch);
+
         self.ast.push(Node::ConnectionIf {
             keyword,
             cond,
@@ -814,21 +899,22 @@ impl<'a> Parser<'a> {
         let mut connections = Vec::new();
         let mut sources = self.parse_connection_endpoints();
         loop {
-            let arrow = self.expect(TokenKind::ArrowRight);
+            let (arrow, delay, destinations) = expect!(
+                self,
+                token!(->),
+                if token!('[') {
+                    self.parse_expr(),
+                    token!(']'),
+                    token!(->)
+                },
+                self.parse_connection_endpoints()
+            );
 
-            let delay = self.bump_if(TokenKind::BracketLeft).is_some().then(|| {
-                let delay = self.parse_expr();
-                self.expect(TokenKind::BracketRight);
-                self.expect(TokenKind::ArrowRight);
-                delay
-            });
-
-            let destinations = self.parse_connection_endpoints();
             if sources.len() > 1 && destinations.len() > 1 {
                 self.error(arrow, "many-to-many connections are not supported");
             }
 
-            let is_end_of_chain = self.tokens.peek_kind() != Some(TokenKind::ArrowRight);
+            let is_end_of_chain = self.tokens.peek_kind() != Some(token!(->));
             if !is_end_of_chain {
                 if destinations.len() > 1 {
                     self.error(
@@ -849,7 +935,7 @@ impl<'a> Parser<'a> {
                 interpolation,
                 sources,
                 arrow,
-                delay,
+                delay: delay.map(|(_, delay, _, _)| delay),
                 destinations: destinations.clone(),
             }));
 
@@ -863,7 +949,7 @@ impl<'a> Parser<'a> {
 
     fn parse_connection_endpoints(&mut self) -> Vec<NodeId> {
         let mut endpoints = vec![self.parse_expr()];
-        while self.bump_if(TokenKind::Comma).is_some() {
+        while self.bump_if(token!(,)).is_some() {
             endpoints.push(self.parse_expr());
         }
         endpoints
@@ -874,17 +960,16 @@ impl<'a> Parser<'a> {
 
         match (peek.next(), peek.next(), peek.next()) {
             (
-                Some((_, TokenKind::BracketLeft)),
+                Some((_, token!('['))),
                 Some((delay, TokenKind::Identifier)),
-                Some((_, TokenKind::BracketRight)),
+                Some((_, token!(']'))),
             ) => {
                 if matches!(
                     self.tokens.stream().text(self.source, delay),
                     Some("none" | "latch" | "linear" | "sinc" | "fast" | "best")
                 ) {
-                    self.expect(TokenKind::BracketLeft);
-                    let interpolation = self.expect(TokenKind::Identifier);
-                    self.expect(TokenKind::BracketRight);
+                    let (_, interpolation, _) =
+                        expect!(self, token!('['), TokenKind::Identifier, token!(']'));
                     return Some(interpolation);
                 }
 
@@ -895,22 +980,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_for(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::For);
-        self.expect(TokenKind::ParenthesisLeft);
+        let (keyword, _, init, _, cond, _, update, _, body) = expect!(
+            self,
+            token!(for),
+            token!('('),
+            if !peek token!(;) {
+                self.parse_for_init()
+            },
+            token!(;),
+            if !peek token!(;) {
+                self.parse_expr()
+            },
+            token!(;),
+            if !peek token!(')') {
+                self.parse_expr()
+            },
+            token!(')'),
+            self.parse_statement()
+        );
 
-        let init =
-            (self.tokens.peek_kind() != Some(TokenKind::Semicolon)).then(|| self.parse_for_init());
-        self.expect(TokenKind::Semicolon);
-
-        let cond =
-            (self.tokens.peek_kind() != Some(TokenKind::Semicolon)).then(|| self.parse_expr());
-        self.expect(TokenKind::Semicolon);
-
-        let update = (self.tokens.peek_kind() != Some(TokenKind::ParenthesisRight))
-            .then(|| self.parse_expr());
-        self.expect(TokenKind::ParenthesisRight);
-
-        let body = self.parse_statement();
         self.ast.push(Node::ForStmt {
             keyword,
             init,
@@ -922,10 +1010,8 @@ impl<'a> Parser<'a> {
 
     fn parse_for_init(&mut self) -> NodeId {
         match self.tokens.peek_kind() {
-            Some(TokenKind::Keyword(Keyword::Const)) => self.parse_typed_decl_inner(false),
-            Some(TokenKind::Keyword(keyword))
-                if is_type_name_start(TokenKind::Keyword(keyword)) =>
-            {
+            Some(token!(const)) => self.parse_typed_decl_inner(false),
+            Some(TokenKind::Keyword(keyword)) if keyword.is_type() => {
                 self.parse_typed_decl_inner(false)
             }
             Some(TokenKind::Identifier) if self.looks_like_typed_decl() => {
@@ -951,7 +1037,7 @@ impl<'a> Parser<'a> {
             return false;
         }
         offset += 1;
-        while self.at(offset, TokenKind::ColonColon) {
+        while self.at(offset, token!(::)) {
             offset += 1;
             if !self.at(offset, TokenKind::Identifier) {
                 return false;
@@ -959,9 +1045,9 @@ impl<'a> Parser<'a> {
             offset += 1;
         }
         loop {
-            let next = if self.at(offset, TokenKind::AngleBracketLeft) {
+            let next = if self.at(offset, token!(<)) {
                 self.skip_to_matching_angle_bracket(offset)
-            } else if self.at(offset, TokenKind::BracketLeft) {
+            } else if self.at(offset, token!('[')) {
                 self.skip_to_matching_bracket(offset)
             } else {
                 break;
@@ -977,13 +1063,10 @@ impl<'a> Parser<'a> {
     fn skip_to_matching_angle_bracket(&self, mut offset: usize) -> Option<usize> {
         offset += 1;
         loop {
-            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind) {
-                Some(TokenKind::AngleBracketRight) => return Some(offset + 1),
-                Some(TokenKind::Semicolon | TokenKind::BraceLeft | TokenKind::BraceRight)
-                | None => {
-                    return None;
-                }
-                Some(_) => offset += 1,
+            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind)? {
+                token!(>) => return Some(offset + 1),
+                token!(; | '{' | '}') => return None,
+                _ => offset += 1,
             }
         }
     }
@@ -991,40 +1074,42 @@ impl<'a> Parser<'a> {
     fn skip_to_matching_bracket(&self, mut offset: usize) -> Option<usize> {
         let mut depth = 0;
         loop {
-            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind) {
-                Some(TokenKind::BracketLeft) => {
+            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind)? {
+                token!('[') => {
                     depth += 1;
                     offset += 1;
                 }
-                Some(TokenKind::BracketRight) => {
+                token!(']') => {
                     depth -= 1;
                     offset += 1;
                     if depth == 0 {
                         return Some(offset);
                     }
                 }
-                Some(TokenKind::Semicolon | TokenKind::BraceLeft | TokenKind::BraceRight)
-                | None => {
-                    return None;
-                }
-                Some(_) => offset += 1,
+                token!(; | '{' | '}') => return None,
+                _ => offset += 1,
             }
         }
     }
 
+    fn parse_attribute(&mut self) -> (TokenId, Option<NodeId>) {
+        let (key, value) = expect!(
+            self,
+            TokenKind::Identifier,
+            if token!(:) {
+                self.parse_expr()
+            }
+        );
+
+        (key, value.map(|(_, value)| value))
+    }
+
     fn parse_attribute_list(&mut self) -> NodeId {
         let (_, attrs, _) = self.parse_list(
-            TokenKind::DoubleBracketLeft,
-            |parser| {
-                let key = parser.expect(TokenKind::Identifier);
-                let value = parser
-                    .bump_if(TokenKind::Colon)
-                    .is_some()
-                    .then(|| parser.parse_expr());
-                (key, value)
-            },
-            TokenKind::Comma,
-            TokenKind::DoubleBracketRight,
+            token!("[["),
+            |parser| parser.parse_attribute(),
+            token!(,),
+            token!("]]"),
         );
 
         self.ast.push(Node::AttributeList { attrs })
@@ -1036,18 +1121,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_endpoint_member(&mut self) -> NodeId {
-        let ty = if self.tokens.peek_kind() == Some(TokenKind::ParenthesisLeft) {
-            self.parse_type_list()
-        } else {
-            self.parse_type()
-        };
-        let name = self.expect(TokenKind::Identifier);
-        let attributes = if self.tokens.peek_kind() == Some(TokenKind::DoubleBracketLeft) {
-            Some(self.parse_attribute_list())
-        } else {
-            None
-        };
-        self.expect(TokenKind::Semicolon);
+        let (ty, name, attributes, _) = expect!(
+            self,
+            if peek token!('(') {
+                self.parse_type_list()
+            } else {
+                self.parse_type()
+            },
+            TokenKind::Identifier,
+            if peek token!("[[") {
+                self.parse_attribute_list()
+            },
+            token!(;)
+        );
+
         self.ast.push(Node::EndpointDecl {
             ty,
             name,
@@ -1056,26 +1143,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_endpoint_wildcard(&mut self, direction: TokenId) -> NodeId {
-        let name = self.bump();
-        self.bump();
-        self.expect(TokenKind::Star);
-        self.expect(TokenKind::Semicolon);
+        let (name, _, _, _) = expect!(self, TokenKind::Identifier, token!(.), token!(*), token!(;));
         self.ast.push(Node::EndpointWildcard { direction, name })
     }
 
     fn parse_endpoint_group(&mut self) -> NodeId {
-        let direction = expect_matches!(self, TokenKind::Keyword(Keyword::Input | Keyword::Output));
-        if self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, TokenKind::Dot) {
+        let direction = expect_matches!(self, token!(input | output));
+        if self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, token!(.)) {
             return self.parse_endpoint_wildcard(direction);
         }
         let kind = expect_identifier!(self, "value" | "stream" | "event");
-        let endpoints = if self.tokens.peek_kind() == Some(TokenKind::BraceLeft) {
+        let endpoints = if self.tokens.peek_kind() == Some(token!('{')) {
             self.bump();
             let mut endpoints = Vec::new();
-            while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
+            while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
                 endpoints.push(self.parse_endpoint_member());
             }
-            self.expect(TokenKind::BraceRight);
+            self.expect(token!('}'));
             endpoints
         } else {
             vec![self.parse_endpoint_member()]
@@ -1088,71 +1172,83 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self) -> NodeId {
-        let brace = self.expect(TokenKind::BraceLeft);
+        let (brace, stmts, _) = expect!(
+            self,
+            token!('{'),
+            {
+                let mut stmts = Vec::new();
+                while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+                    stmts.push(self.parse_statement());
+                }
+                stmts
+            },
+            token!('}')
+        );
 
-        let mut stmts = Vec::new();
-        while !matches!(self.tokens.peek_kind(), Some(TokenKind::BraceRight) | None) {
-            stmts.push(self.parse_statement());
-        }
-        self.expect(TokenKind::BraceRight);
         self.ast.push(Node::Block { brace, stmts })
     }
 
     fn parse_let(&mut self) -> NodeId {
         let (_, declarators, _) = self.parse_list(
-            Keyword::Let,
+            token!(let),
             |parser| parser.parse_let_declarator(),
-            TokenKind::Comma,
-            TokenKind::Semicolon,
+            token!(,),
+            token!(;),
         );
 
         self.ast.push(Node::LetStmt { declarators })
     }
 
     fn parse_let_declarator(&mut self) -> (TokenId, NodeId) {
-        let name = self.expect(TokenKind::Identifier);
-        self.expect(TokenKind::Equal);
-        let init = self.parse_expr();
+        let (name, _, init) = expect!(self, TokenKind::Identifier, token!(=), self.parse_expr());
         (name, init)
     }
 
     fn parse_var(&mut self) -> NodeId {
-        self.expect(Keyword::Var);
-        let name = self.expect(TokenKind::Identifier);
-        let init = self
-            .bump_if(TokenKind::Equal)
-            .is_some()
-            .then(|| self.parse_expr());
-        self.expect(TokenKind::Semicolon);
+        let (_, name, init, _) = expect!(
+            self,
+            token!(var),
+            TokenKind::Identifier,
+            { self.bump_if(token!(=)).is_some().then(|| self.parse_expr()) },
+            token!(;)
+        );
+
         self.ast.push(Node::VarStmt { name, init })
     }
 
     fn parse_if(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::If);
-        let is_const = self.bump_if(TokenKind::Keyword(Keyword::Const)).is_some();
-        self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr();
-        self.expect(TokenKind::ParenthesisRight);
-        let then_branch = self.parse_statement();
-        let else_branch = self
-            .bump_if(Keyword::Else)
-            .is_some()
-            .then(|| self.parse_statement());
+        let (keyword, is_const, _, cond, _, then_branch, else_branch) = expect!(
+            self,
+            token!(if),
+            if token!(const),
+            token!('('),
+            self.parse_expr(),
+            token!(')'),
+            self.parse_statement(),
+            if token!(else) {
+                self.parse_statement()
+            }
+        );
+
         self.ast.push(Node::IfStmt {
             keyword,
-            is_const,
+            is_const: is_const.is_some(),
             cond,
             then_branch,
-            else_branch,
+            else_branch: else_branch.map(|(_, else_branch)| else_branch),
         })
     }
 
     fn parse_while(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::While);
-        self.expect(TokenKind::ParenthesisLeft);
-        let cond = self.parse_expr();
-        self.expect(TokenKind::ParenthesisRight);
-        let body = self.parse_statement();
+        let (keyword, _, cond, _, body) = expect!(
+            self,
+            token!(while),
+            token!('('),
+            self.parse_expr(),
+            token!(')'),
+            self.parse_statement()
+        );
+
         self.ast.push(Node::WhileStmt {
             keyword,
             cond,
@@ -1161,42 +1257,52 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_loop(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Loop);
-        let count = self.bump_if(TokenKind::ParenthesisLeft).is_some().then(|| {
-            let count = self.parse_expr();
-            self.expect(TokenKind::ParenthesisRight);
-            count
-        });
-        let body = self.parse_statement();
+        let (keyword, count, body) = expect!(
+            self,
+            token!(loop),
+            if token!('(') {
+                self.parse_expr(), token!(')')
+            },
+            self.parse_statement()
+        );
+
         self.ast.push(Node::LoopStmt {
             keyword,
-            count,
+            count: count.map(|(_, count, _)| count),
             body,
         })
     }
 
     fn parse_return(&mut self) -> NodeId {
-        let keyword = self.expect(Keyword::Return);
-        let value =
-            (self.tokens.peek_kind() != Some(TokenKind::Semicolon)).then(|| self.parse_expr());
-        self.expect(TokenKind::Semicolon);
+        let (keyword, value, _) = expect!(
+            self,
+            token!(return),
+            if !peek token!(;) {
+                self.parse_expr()
+            },
+            token!(;)
+        );
+
         self.ast.push(Node::ReturnStmt { keyword, value })
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
-        let expr = self.parse_expr();
-        self.expect(TokenKind::Semicolon);
+        let (expr, _) = expect!(self, self.parse_expr(), token!(;));
         self.ast.push(Node::ExprStmt { expr })
     }
 
     fn parse_type(&mut self) -> NodeId {
-        if let Some(keyword) = self.bump_if(Keyword::Const) {
-            let inner = self.parse_type();
+        if let Some((keyword, inner)) = expect!(
+            self,
+            if token!(const) {
+                self.parse_type()
+            }
+        ) {
             return self.ast.push(Node::ConstType { keyword, inner });
         }
 
         let mut ty = match self.tokens.peek_kind() {
-            Some(kind) if is_type_name_start(kind) => self.parse_type_name(),
+            Some(kind) if kind.is_type_like() => self.parse_type_name(),
             peeked => {
                 let message = format!("expected type, found {peeked:?}");
                 let token = self.bump();
@@ -1207,8 +1313,8 @@ impl<'a> Parser<'a> {
 
         loop {
             ty = match self.tokens.peek_kind() {
-                Some(TokenKind::BracketLeft) => self.parse_array(ty),
-                Some(TokenKind::AngleBracketLeft) => self.parse_chevroned_suffix(ty),
+                Some(token!('[')) => self.parse_array(ty),
+                Some(token!(<)) => self.parse_chevroned_suffix(ty),
                 _ => break,
             };
         }
@@ -1218,17 +1324,33 @@ impl<'a> Parser<'a> {
 
     fn parse_type_name(&mut self) -> NodeId {
         let mut segments = vec![self.bump()];
-        while self.bump_if(TokenKind::ColonColon).is_some() {
-            segments.push(self.expect(TokenKind::Identifier));
+
+        loop {
+            let Some((_, segment)) = expect!(
+                self,
+                if token!(::) {
+                    TokenKind::Identifier
+                }
+            ) else {
+                break;
+            };
+
+            segments.push(segment);
         }
+
         self.ast.push(Node::TypeName { segments })
     }
 
     fn parse_array(&mut self, element: NodeId) -> NodeId {
-        let bracket = self.expect(TokenKind::BracketLeft);
-        let size =
-            (self.tokens.peek_kind() != Some(TokenKind::BracketRight)).then(|| self.parse_expr());
-        self.expect(TokenKind::BracketRight);
+        let (bracket, size, _) = expect!(
+            self,
+            token!('['),
+            if !peek token!(']') {
+                self.parse_expr()
+            },
+            token!(']')
+        );
+
         self.ast.push(Node::Array {
             bracket,
             element,
@@ -1237,9 +1359,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_chevroned_suffix(&mut self, element: NodeId) -> NodeId {
-        let angle = self.bump();
-        let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
-        self.expect(TokenKind::AngleBracketRight);
+        let (angle, term, _) = expect!(
+            self,
+            token!(<),
+            self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()),
+            token!(>)
+        );
+
         self.ast.push(Node::ChevronSuffix {
             angle,
             element,
@@ -1830,7 +1956,7 @@ mod tests {
 
     #[test]
     fn ambiguous_angle_brackets_expression() {
-        insta::assert_snapshot!(parse_expr("a < b > c"), @r#"
+        insta::assert_snapshot!(parse_expr("a<b>c"), @r#"
         Binary ">"
           Binary "<"
             a
