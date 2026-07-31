@@ -26,6 +26,7 @@ pub enum Keyword {
     Float32,
     Float64,
     For,
+    ForwardBranch,
     Graph,
     If,
     Import,
@@ -84,6 +85,7 @@ impl TryFrom<&str> for Keyword {
             "float32" => Keyword::Float32,
             "float64" => Keyword::Float64,
             "for" => Keyword::For,
+            "forward_branch" => Keyword::ForwardBranch,
             "graph" => Keyword::Graph,
             "if" => Keyword::If,
             "import" => Keyword::Import,
@@ -481,6 +483,9 @@ macro_rules! token {
     };
     (for) => {
         $crate::lexer::TokenKind::Keyword($crate::lexer::Keyword::For)
+    };
+    (forward_branch) => {
+        $crate::lexer::TokenKind::Keyword($crate::lexer::Keyword::ForwardBranch)
     };
     (graph) => {
         $crate::lexer::TokenKind::Keyword($crate::lexer::Keyword::Graph)

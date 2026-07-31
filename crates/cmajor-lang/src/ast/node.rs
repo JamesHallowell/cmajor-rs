@@ -1,261 +1,61 @@
-use crate::lexer::TokenId;
+use crate::{
+    ast::{decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
+    lexer::TokenId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
 
-impl NodeId {
-    pub const fn from_raw(raw: u32) -> Self {
-        NodeId(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpecialisationParamKind {
-    Using,
-    Processor,
-    Namespace,
-    Value { ty: NodeId },
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    IntLiteral {
-        token: TokenId,
-    },
-    FloatLiteral {
-        token: TokenId,
-    },
-    ImaginaryLiteral {
-        token: TokenId,
-    },
-    StringLiteral {
-        token: TokenId,
-    },
-    BoolLiteral {
-        token: TokenId,
-    },
-    Ident {
-        token: TokenId,
-    },
-    Parentheses {
-        paren: TokenId,
-        inner: Vec<NodeId>,
-    },
-    Unary {
-        op: TokenId,
-        operand: NodeId,
-    },
-    PostfixUnary {
-        op: TokenId,
-        operand: NodeId,
-    },
-    Binary {
-        op: TokenId,
-        lhs: NodeId,
-        rhs: NodeId,
-    },
-    Assign {
-        op: TokenId,
-        target: NodeId,
-        value: NodeId,
-    },
-    Ternary {
-        question: TokenId,
-        cond: NodeId,
-        then_branch: NodeId,
-        else_branch: NodeId,
-    },
-    Call {
-        paren: TokenId,
-        callee: NodeId,
-        args: Vec<NodeId>,
-    },
-    Index {
-        bracket: TokenId,
-        base: NodeId,
-        index: Option<NodeId>,
-    },
-    Field {
-        name: TokenId,
-        base: NodeId,
-    },
-    Block {
-        brace: TokenId,
-        stmts: Vec<NodeId>,
-    },
-    ExprStmt {
-        expr: NodeId,
-    },
-    LetStmt {
-        declarators: Vec<(TokenId, NodeId)>,
-    },
-    VarStmt {
-        name: TokenId,
-        init: Option<NodeId>,
-    },
-    VarDeclStmt {
-        ty: NodeId,
-        declarators: Vec<(TokenId, Option<NodeId>)>,
-    },
-    ForStmt {
-        keyword: TokenId,
-        init: Option<NodeId>,
-        cond: Option<NodeId>,
-        update: Option<NodeId>,
-        body: NodeId,
-    },
-    IfStmt {
-        keyword: TokenId,
-        is_const: bool,
-        cond: NodeId,
-        then_branch: NodeId,
-        else_branch: Option<NodeId>,
-    },
-    WhileStmt {
-        keyword: TokenId,
-        cond: NodeId,
-        body: NodeId,
-    },
-    LoopStmt {
-        keyword: TokenId,
-        count: Option<NodeId>,
-        body: NodeId,
-    },
-    ReturnStmt {
-        keyword: TokenId,
-        value: Option<NodeId>,
-    },
-    BreakStmt {
-        keyword: TokenId,
-    },
-    ContinueStmt {
-        keyword: TokenId,
-    },
-    TypeName {
-        segments: Vec<TokenId>,
-    },
-    ConstType {
-        keyword: TokenId,
-        inner: NodeId,
-    },
-    Array {
-        bracket: TokenId,
-        element: NodeId,
-        size: Option<NodeId>,
-    },
-    ChevronSuffix {
-        angle: TokenId,
-        element: NodeId,
-        term: NodeId,
-    },
-    TypeList {
-        paren: TokenId,
-        types: Vec<NodeId>,
-    },
-    Error {
-        token: TokenId,
-    },
-    NamespaceDecl {
-        keyword: TokenId,
-        segments: Vec<TokenId>,
-        params: Vec<NodeId>,
-        items: Vec<NodeId>,
-    },
-    SpecialisationParam {
-        kind: SpecialisationParamKind,
-        name: TokenId,
-        default: Option<NodeId>,
-    },
-    ProcessorDecl {
-        keyword: TokenId,
-        name: TokenId,
-        params: Vec<NodeId>,
-        attributes: Option<NodeId>,
-        items: Vec<NodeId>,
-    },
-    GraphDecl {
-        keyword: TokenId,
-        name: TokenId,
-        params: Vec<NodeId>,
-        attributes: Option<NodeId>,
-        items: Vec<NodeId>,
-    },
-    StructDecl {
-        keyword: TokenId,
-        name: TokenId,
-        attributes: Option<NodeId>,
-        items: Vec<NodeId>,
-    },
-    EndpointGroup {
-        direction: TokenId,
-        kind: TokenId,
-        endpoints: Vec<NodeId>,
-    },
-    EndpointWildcard {
-        direction: TokenId,
-        name: TokenId,
-    },
-    NodeDecl {
-        keyword: TokenId,
-        name: TokenId,
-        value: NodeId,
-    },
-    ConnectionDecl {
-        keyword: TokenId,
-        connections: Vec<NodeId>,
-    },
-    Connection {
-        interpolation: Option<TokenId>,
-        sources: Vec<NodeId>,
-        arrow: TokenId,
-        delay: Option<NodeId>,
-        destinations: Vec<NodeId>,
-    },
-    ConnectionIf {
-        keyword: TokenId,
-        cond: NodeId,
-        then_branch: Vec<NodeId>,
-        else_branch: Option<Vec<NodeId>>,
-    },
-    EndpointDecl {
-        ty: NodeId,
-        name: TokenId,
-        attributes: Option<NodeId>,
-    },
-    AttributeList {
-        attrs: Vec<(TokenId, Option<NodeId>)>,
-    },
-    FunctionDecl {
-        ty: NodeId,
-        name: TokenId,
-        generics: Vec<TokenId>,
-        params: Vec<NodeId>,
-        is_const: bool,
-        body: NodeId,
-    },
-    Param {
-        ty: NodeId,
-        name: TokenId,
-        by_ref: bool,
-    },
-    EventHandlerDecl {
-        keyword: TokenId,
-        name: TokenId,
-        params: Vec<NodeId>,
-        body: NodeId,
-    },
-    ScopeAccess {
-        name: TokenId,
-        base: NodeId,
-    },
+    Expr(Expr),
+    Stmt(Stmt),
+    Decl(Decl),
+    Item(Item),
+    Graph(Graph),
+    Error { token: TokenId },
+}
+
+impl From<Expr> for Node {
+    fn from(expr: Expr) -> Self {
+        Node::Expr(expr)
+    }
+}
+
+impl From<Stmt> for Node {
+    fn from(stmt: Stmt) -> Self {
+        Node::Stmt(stmt)
+    }
+}
+
+impl From<Decl> for Node {
+    fn from(decl: Decl) -> Self {
+        Node::Decl(decl)
+    }
+}
+
+impl From<Item> for Node {
+    fn from(item: Item) -> Self {
+        Node::Item(item)
+    }
+}
+
+impl From<Graph> for Node {
+    fn from(member: Graph) -> Self {
+        Node::Graph(member)
+    }
+}
+
+impl From<u32> for NodeId {
+    fn from(id: u32) -> Self {
+        NodeId(id)
+    }
+}
+
+impl From<NodeId> for u32 {
+    fn from(id: NodeId) -> Self {
+        id.0
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -268,18 +68,22 @@ impl Ast {
         Self { nodes: Vec::new() }
     }
 
-    pub fn push(&mut self, node: Node) -> NodeId {
-        let id = NodeId::from_raw(self.nodes.len() as u32);
-        self.nodes.push(node);
+    pub fn push(&mut self, node: impl Into<Node>) -> NodeId {
+        let id = NodeId::from(self.nodes.len() as u32);
+        self.nodes.push(node.into());
         id
     }
 
     pub fn get(&self, id: NodeId) -> &Node {
-        &self.nodes[id.index()]
+        &self.nodes[u32::from(id) as usize]
     }
 
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.nodes.truncate(len);
     }
 
     pub fn is_empty(&self) -> bool {

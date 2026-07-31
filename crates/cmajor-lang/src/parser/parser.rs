@@ -1,5 +1,8 @@
 use crate::{
-    ast::{Ast, Node, NodeId, SpecialisationParamKind},
+    ast::{
+        self, Ast, BracketTerm, Decl, Declarator, Expr, Graph, HoistTarget, HoistedPath,
+        InterpolationKind, Item, Node, NodeId, Stmt, VarRole,
+    },
     lexer::{tokenize, Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream},
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
     token, utils, Diagnostic,
@@ -355,6 +358,13 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn peek_text_is(&self, expected: &str) -> bool {
+        self.tokens
+            .peek_id()
+            .and_then(|id| self.tokens.stream().text(self.source, id))
+            == Some(expected)
+    }
+
     pub fn parse(&mut self) -> Vec<NodeId> {
         let mut stmts = Vec::new();
         while self.tokens.peek().is_some() {
@@ -372,24 +382,30 @@ impl<'a> Parser<'a> {
             Some(token!(! | ~ | - | ++ | --)) => {
                 let op = self.bump();
                 let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
-                self.ast.push(Node::Unary { op, operand })
+                self.ast.push(Expr::Unary { op, operand })
             }
             Some(TokenKind::Literal(literal)) => self.parse_literal(literal),
             Some(token!(true | false)) => {
                 let token = self.bump();
-                self.ast.push(Node::BoolLiteral { token })
+                self.ast.push(Expr::Literal(ast::Literal::Bool { token }))
+            }
+            Some(token!(processor)) if self.at(1, token!(.)) => {
+                self.bump();
+                self.bump();
+                let name = self.expect(TokenKind::Identifier);
+                self.ast.push(Expr::ProcessorProperty { name })
             }
             Some(TokenKind::Identifier | token!(processor)) => {
                 let token = self.bump();
-                self.ast.push(Node::Ident { token })
+                self.ast.push(Expr::Ident { token })
             }
             Some(token!('(')) => {
                 let (paren, inner, _) = self.parse_parenthetical_list(|parser| parser.parse_expr());
-                self.ast.push(Node::Parentheses { paren, inner })
+                self.ast.push(Expr::Parentheses { paren, inner })
             }
             Some(token) if token.is_type_like() => {
                 let token = self.bump();
-                self.ast.push(Node::Ident { token })
+                self.ast.push(Expr::Ident { token })
             }
             peeked => {
                 let message = format!("expected expression, found {peeked:?}");
@@ -402,28 +418,16 @@ impl<'a> Parser<'a> {
         loop {
             lhs = match self.tokens.peek_kind() {
                 Some(token!('(')) => self.parse_call(lhs),
-                Some(token!('[')) => self.parse_index(lhs),
+                Some(token!('[')) => self.parse_bracketed_suffix(lhs),
                 Some(token!(.)) => self.parse_field(lhs),
                 Some(token!(::)) => self.parse_scope_access(lhs),
-                Some(token!(<)) => {
-                    let is_part_of_type_constructor = self
-                        .tokens
-                        .clone()
-                        .take_while(|(_, token)| !matches!(token.kind, token!(; | '{' | '}')))
-                        .find_map(|(id, token)| (token.kind == token!(>)).then_some(id))
-                        .and_then(|token| self.tokens.peek_after(token))
-                        .map(|token| token.kind == token!('('))
-                        .unwrap_or(false);
-
-                    if is_part_of_type_constructor {
-                        self.parse_chevroned_suffix(lhs)
-                    } else {
-                        break;
-                    }
-                }
+                Some(token!(<)) => match self.try_parse_vector_size_suffix(lhs) {
+                    Some(suffixed) => suffixed,
+                    None => break,
+                },
                 Some(token!(++ | --)) => {
                     let op = self.bump();
-                    self.ast.push(Node::PostfixUnary { op, operand: lhs })
+                    self.ast.push(Expr::PostfixUnary { op, operand: lhs })
                 }
                 _ => break,
             };
@@ -448,7 +452,7 @@ impl<'a> Parser<'a> {
                         self.parse_expr_with_min_binding_power(binding_power.min_for_rhs)
                     );
 
-                    self.ast.push(Node::Ternary {
+                    self.ast.push(Expr::Ternary {
                         question,
                         cond: lhs,
                         then_branch,
@@ -459,13 +463,13 @@ impl<'a> Parser<'a> {
                     let op = self.bump();
                     let rhs = self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
                     self.ast.push(if bin_op.is_assignment() {
-                        Node::Assign {
+                        Expr::Assign {
                             op,
                             target: lhs,
                             value: rhs,
                         }
                     } else {
-                        Node::Binary { op, lhs, rhs }
+                        Expr::Binary { op, lhs, rhs }
                     })
                 }
             };
@@ -476,7 +480,7 @@ impl<'a> Parser<'a> {
 
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
         let (_, name) = expect!(self, token!(::), TokenKind::Identifier);
-        self.ast.push(Node::ScopeAccess { name, base })
+        self.ast.push(Expr::ScopeAccess { name, base })
     }
 
     fn parse_list<T>(
@@ -514,70 +518,136 @@ impl<'a> Parser<'a> {
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
         let (paren, args, _) = self.parse_parenthetical_list(|parser| parser.parse_expr());
-        self.ast.push(Node::Call {
+        self.ast.push(Expr::Call {
             paren,
             callee,
             args,
         })
     }
 
-    fn parse_index(&mut self, base: NodeId) -> NodeId {
-        let (bracket, index, _) = expect!(
-            self,
+    fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
+        let (bracket, terms, _) = self.parse_list(
             token!('['),
-            if !peek token!(']') {
-                self.parse_expr()
-            },
+            |parser| parser.parse_bracket_term(),
+            token!(,),
             token!(']'),
         );
-
-        self.ast.push(Node::Index {
+        self.ast.push(Expr::Bracketed {
             bracket,
             base,
-            index,
+            terms,
         })
+    }
+
+    fn parse_bracket_term(&mut self) -> BracketTerm {
+        let start = if self.tokens.peek_kind() != Some(token!(:)) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+
+        if self.bump_if(token!(:)).is_some() {
+            let end = if !matches!(self.tokens.peek_kind(), Some(token!(']') | token!(,))) {
+                Some(self.parse_expr())
+            } else {
+                None
+            };
+            BracketTerm {
+                start,
+                end,
+                is_range: true,
+            }
+        } else {
+            BracketTerm {
+                start,
+                end: None,
+                is_range: false,
+            }
+        }
     }
 
     fn parse_field(&mut self, base: NodeId) -> NodeId {
         let (_, name) = expect!(self, token!(.), TokenKind::Identifier);
-        self.ast.push(Node::Field { name, base })
+        self.ast.push(Expr::Field { name, base })
     }
 
     fn parse_literal(&mut self, literal: Literal) -> NodeId {
         let token = self.bump();
         let node = match literal {
-            Literal::Int32 | Literal::Int64 => Node::IntLiteral { token },
-            Literal::Float32 | Literal::Float64 => Node::FloatLiteral { token },
-            Literal::Imaginary32 | Literal::Imaginary64 => Node::ImaginaryLiteral { token },
-            Literal::String => Node::StringLiteral { token },
+            Literal::Int32 => ast::Literal::Int32 { token },
+            Literal::Int64 => ast::Literal::Int64 { token },
+            Literal::Float32 => ast::Literal::Float32 { token },
+            Literal::Float64 => ast::Literal::Float64 { token },
+            Literal::Imaginary32 => ast::Literal::Imaginary32 { token },
+            Literal::Imaginary64 => ast::Literal::Imaginary64 { token },
+            Literal::String => ast::Literal::String { token },
         };
-        self.ast.push(node)
+        self.ast.push(Expr::Literal(node))
+    }
+
+    fn try_parse_label(&mut self) -> Option<TokenId> {
+        let starts_labellable_stmt = matches!(
+            self.tokens.clone().nth(2).map(|(_, token)| token.kind),
+            Some(token!('{') | token!(loop) | token!(for) | token!(while))
+        );
+        if self.tokens.peek_kind() == Some(TokenKind::Identifier)
+            && self.at(1, token!(:))
+            && starts_labellable_stmt
+        {
+            let label = self.bump();
+            self.bump();
+            Some(label)
+        } else {
+            None
+        }
     }
 
     fn parse_statement(&mut self) -> NodeId {
+        let label = self.try_parse_label();
+
         match self.tokens.peek_kind() {
-            Some(token!('{')) => self.parse_block(),
+            Some(token!('{')) => self.parse_block(label),
             Some(token!(let)) => self.parse_let(),
             Some(token!(var)) => self.parse_var(),
+            Some(token!(using)) => self.parse_using_stmt(),
             Some(token!(if)) => self.parse_if(),
-            Some(token!(while)) => self.parse_while(),
-            Some(token!(loop)) => self.parse_loop(),
-            Some(token!(for)) => self.parse_for(),
-            Some(token!(node)) => self.parse_node_decl(),
+            Some(token!(while)) => self.parse_while(label),
+            Some(token!(loop)) => self.parse_loop(label),
+            Some(token!(for)) => self.parse_for(label),
+            Some(token!(forward_branch)) => self.parse_forward_branch(),
+            Some(token!(node)) => {
+                let mut nodes = self.parse_node_group();
+                nodes.pop().unwrap_or_else(|| {
+                    let token = self.tokens.current();
+                    self.ast.push(Node::Error { token })
+                })
+            }
             Some(token!(connection)) => self.parse_connection_decl(),
             Some(token!(return)) => self.parse_return(),
             Some(token!(break)) => self.parse_break(),
             Some(token!(continue)) => self.parse_continue(),
             Some(token!(namespace)) => self.parse_namespace(),
+            Some(token!(import)) => self.parse_import(),
+            Some(token!(enum)) => self.parse_enum(),
+            Some(token!(external)) => self.parse_external_decl(),
             Some(token!(processor))
                 if self.tokens.clone().nth(1).map(|(_, token)| token.kind) == Some(token!(.)) =>
             {
                 self.parse_expr_stmt()
             }
             Some(token!(processor | graph | struct)) => self.parse_container(),
-            Some(token!(input | output)) => self.parse_endpoint_group(),
+            Some(token!(input | output)) => {
+                let mut endpoints = self.parse_endpoint_group();
+                endpoints.pop().unwrap_or_else(|| {
+                    let token = self.tokens.current();
+                    self.ast.push(Node::Error { token })
+                })
+            }
             Some(token!(event)) => self.parse_event_handler(),
             Some(token!(const)) => self.parse_typed_decl(),
+            Some(TokenKind::Identifier) if self.peek_text_is("static_assert") => {
+                self.parse_static_assert()
+            }
             Some(TokenKind::Keyword(keyword)) if TokenKind::Keyword(keyword).is_type_like() => {
                 self.parse_typed_decl()
             }
@@ -586,56 +656,174 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_container_items(&mut self) -> Vec<NodeId> {
+        let mut items = Vec::new();
+        while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+            if matches!(self.tokens.peek_kind(), Some(token!(input | output))) {
+                items.extend(self.parse_endpoint_group());
+            } else if matches!(self.tokens.peek_kind(), Some(token!(node))) {
+                items.extend(self.parse_node_group());
+            } else {
+                items.push(self.parse_statement());
+            }
+        }
+        items
+    }
+
     fn parse_break(&mut self) -> NodeId {
-        let (keyword, _) = expect!(self, token!(break), token!(;));
-        self.ast.push(Node::BreakStmt { keyword })
+        let keyword = self.expect(token!(break));
+        let target = (self.tokens.peek_kind() == Some(TokenKind::Identifier)).then(|| self.bump());
+        self.expect(token!(;));
+        self.ast.push(Stmt::BreakStmt { keyword, target })
     }
 
     fn parse_continue(&mut self) -> NodeId {
-        let (keyword, _) = expect!(self, token!(continue), token!(;));
-        self.ast.push(Node::ContinueStmt { keyword })
+        let keyword = self.expect(token!(continue));
+        let target = (self.tokens.peek_kind() == Some(TokenKind::Identifier)).then(|| self.bump());
+        self.expect(token!(;));
+        self.ast.push(Stmt::ContinueStmt { keyword, target })
+    }
+
+    fn parse_forward_branch(&mut self) -> NodeId {
+        let keyword = self.expect(token!(forward_branch));
+        self.expect(token!('('));
+        let cond = self.parse_expr();
+        self.expect(token!(')'));
+        self.expect(token!(->));
+        let (_, targets, _) = self.parse_list(
+            token!('('),
+            |p| p.expect(TokenKind::Identifier),
+            token!(,),
+            token!(')'),
+        );
+        self.expect(token!(;));
+        self.ast.push(Stmt::ForwardBranchStmt {
+            keyword,
+            cond,
+            targets,
+        })
+    }
+
+    fn parse_static_assert(&mut self) -> NodeId {
+        let keyword = self.bump();
+        self.expect(token!('('));
+        let cond = self.parse_expr();
+        let message = self.bump_if(token!(,)).map(|_| self.parse_expr());
+        self.expect(token!(')'));
+        self.expect(token!(;));
+        self.ast.push(Stmt::StaticAssertStmt {
+            keyword,
+            cond,
+            message,
+        })
+    }
+
+    fn parse_import(&mut self) -> NodeId {
+        let keyword = self.expect(token!(import));
+        let path = if self.tokens.peek_kind() == Some(TokenKind::Literal(Literal::String)) {
+            vec![self.bump()]
+        } else {
+            let mut path = vec![self.expect(TokenKind::Identifier)];
+            while self.bump_if(token!(.)).is_some() {
+                path.push(self.expect(TokenKind::Identifier));
+            }
+            path
+        };
+        self.expect(token!(;));
+        self.ast.push(Item::Import { keyword, path })
+    }
+
+    fn parse_enum(&mut self) -> NodeId {
+        let keyword = self.expect(token!(enum));
+        let name = self.expect(TokenKind::Identifier);
+        let (_, values, _) = self.parse_list(
+            token!('{'),
+            |p| p.expect(TokenKind::Identifier),
+            token!(,),
+            token!('}'),
+        );
+        self.ast.push(Item::EnumDecl {
+            keyword,
+            name,
+            values,
+        })
+    }
+
+    fn parse_external_decl(&mut self) -> NodeId {
+        self.expect(token!(external));
+        self.parse_typed_decl_inner(true, true)
+    }
+
+    fn parse_using_stmt(&mut self) -> NodeId {
+        let (keyword, name, _, target, _) = expect!(
+            self,
+            token!(using),
+            TokenKind::Identifier,
+            token!(=),
+            self.parse_type(),
+            token!(;)
+        );
+        let decl = self.ast.push(Decl::Alias {
+            keyword,
+            kind: ast::AliasKind::Using,
+            name,
+            target: Some(target),
+        });
+        self.ast.push(Stmt::DeclStmt { decl })
     }
 
     fn parse_typed_decl(&mut self) -> NodeId {
-        self.parse_typed_decl_inner(true)
+        self.parse_typed_decl_inner(true, false)
     }
 
-    fn parse_typed_decl_inner(&mut self, consume_semicolon: bool) -> NodeId {
+    fn parse_typed_decl_inner(&mut self, consume_semicolon: bool, is_external: bool) -> NodeId {
         let (ty, name) = expect!(self, self.parse_type(), TokenKind::Identifier);
 
         if self.tokens.peek_kind() == Some(token!(<))
             || self.tokens.peek_kind() == Some(token!('('))
         {
             let generics = self.parse_optional_generics();
-            self.parse_function_decl(ty, name, generics)
-        } else {
-            let mut declarators = vec![(
-                name,
-                expect!(
-                    self,
-                    if token!(=) {
-                        self.parse_expr()
-                    }
-                )
-                .map(|(_, init)| init),
-            )];
-            while self.tokens.peek_kind() == Some(token!(,)) {
-                self.bump();
-
-                let (name, init) = expect!(
-                    self,
-                    TokenKind::Identifier,
-                    if token!(=) {
-                        self.parse_expr()
-                    }
-                );
-                declarators.push((name, init.map(|(_, init)| init)));
-            }
-            if consume_semicolon {
-                self.expect(token!(;));
-            }
-            self.ast.push(Node::VarDeclStmt { ty, declarators })
+            return self.parse_function_decl(Some(ty), name, generics);
         }
+
+        let mut declarators = vec![Declarator {
+            name,
+            init: expect!(
+                self,
+                if token!(=) {
+                    self.parse_expr()
+                }
+            )
+            .map(|(_, init)| init),
+        }];
+        while self.tokens.peek_kind() == Some(token!(,)) {
+            self.bump();
+
+            let (name, init) = expect!(
+                self,
+                TokenKind::Identifier,
+                if token!(=) {
+                    self.parse_expr()
+                }
+            );
+            declarators.push(Declarator {
+                name,
+                init: init.map(|(_, init)| init),
+            });
+        }
+        let attributes =
+            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        if consume_semicolon {
+            self.expect(token!(;));
+        }
+        let decl = self.ast.push(Decl::Var {
+            role: VarRole::Typed,
+            ty: Some(ty),
+            is_external,
+            declarators,
+            attributes,
+        });
+        self.ast.push(Stmt::DeclStmt { decl })
     }
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
@@ -655,17 +843,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_param(&mut self) -> NodeId {
-        let (ty, by_ref, name) = expect!(
-            self,
-            self.parse_type(),
-            if token!(&),
-            TokenKind::Identifier
-        );
+        let (ty, name) = expect!(self, self.parse_type(), TokenKind::Identifier);
 
-        self.ast.push(Node::Param {
-            ty,
-            name,
-            by_ref: by_ref.is_some(),
+        self.ast.push(Decl::Var {
+            role: VarRole::Parameter,
+            ty: Some(ty),
+            is_external: false,
+            declarators: vec![Declarator { name, init: None }],
+            attributes: None,
         })
     }
 
@@ -674,68 +859,79 @@ impl<'a> Parser<'a> {
         params
     }
 
-    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
-        let (params, is_const, body) = expect!(
-            self,
-            self.parse_params(),
-            if token!(const),
-            self.parse_block()
-        );
+    fn parse_function_decl(
+        &mut self,
+        ty: Option<NodeId>,
+        name: TokenId,
+        generics: Vec<TokenId>,
+    ) -> NodeId {
+        let params = self.parse_params();
+        let is_const = self.bump_if(token!(const)).is_some();
+        let attributes =
+            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let body = self.parse_block(None);
 
-        self.ast.push(Node::FunctionDecl {
+        self.ast.push(Item::FunctionDecl {
             ty,
             name,
             generics,
             params,
-            is_const: is_const.is_some(),
+            is_const,
+            is_event_handler: false,
+            attributes,
             body,
         })
     }
 
     fn parse_event_handler(&mut self) -> NodeId {
-        let (keyword, name, params, body) = expect!(
-            self,
-            token!(event),
-            TokenKind::Identifier,
-            self.parse_params(),
-            self.parse_block()
-        );
+        self.expect(token!(event));
+        let name = self.expect(TokenKind::Identifier);
+        let params = self.parse_params();
+        let body = self.parse_block(None);
 
-        self.ast.push(Node::EventHandlerDecl {
-            keyword,
+        self.ast.push(Item::FunctionDecl {
+            ty: None,
             name,
+            generics: Vec::new(),
             params,
+            is_const: false,
+            is_event_handler: true,
+            attributes: None,
             body,
         })
     }
 
     fn parse_namespace(&mut self) -> NodeId {
-        let (keyword, segments, params, _, items, _) = expect!(
-            self,
-            token!(namespace),
-            {
-                let mut segments = vec![self.expect(TokenKind::Identifier)];
-                while self.bump_if(token!(::)).is_some() {
-                    segments.push(self.expect(TokenKind::Identifier));
-                }
-                segments
-            },
-            self.parse_optional_specialisation_params(),
-            token!('{'),
-            {
-                let mut items = Vec::new();
-                while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
-                    items.push(self.parse_statement());
-                }
-                items
-            },
-            token!('}')
-        );
+        let keyword = self.expect(token!(namespace));
+        let mut segments = vec![self.expect(TokenKind::Identifier)];
+        while self.bump_if(token!(::)).is_some() {
+            segments.push(self.expect(TokenKind::Identifier));
+        }
+        let params = self.parse_optional_specialisation_params();
 
-        self.ast.push(Node::NamespaceDecl {
+        if self.bump_if(token!(=)).is_some() {
+            let target = self.parse_expr();
+            self.expect(token!(;));
+            let name = *segments.last().expect("namespace has at least one segment");
+            return self.ast.push(Item::ModuleAlias {
+                keyword,
+                kind: ast::AliasKind::Namespace,
+                name,
+                target,
+            });
+        }
+
+        let attributes =
+            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        self.expect(token!('{'));
+        let items = self.parse_container_items();
+        self.expect(token!('}'));
+
+        self.ast.push(Item::NamespaceDecl {
             keyword,
             segments,
             params,
+            attributes,
             items,
         })
     }
@@ -749,70 +945,96 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_specialisation_param(&mut self) -> NodeId {
-        let kind = match self.tokens.peek_kind() {
+        match self.tokens.peek_kind() {
             Some(token!(using)) => {
-                self.bump();
-                SpecialisationParamKind::Using
+                let keyword = self.bump();
+                let name = self.expect(TokenKind::Identifier);
+                let target = self.bump_if(token!(=)).map(|_| self.parse_type());
+                self.ast.push(Decl::Alias {
+                    keyword,
+                    kind: ast::AliasKind::Using,
+                    name,
+                    target,
+                })
             }
             Some(token!(processor)) => {
-                self.bump();
-                SpecialisationParamKind::Processor
+                let keyword = self.bump();
+                let name = self.expect(TokenKind::Identifier);
+                let target = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                self.ast.push(Decl::Alias {
+                    keyword,
+                    kind: ast::AliasKind::Processor,
+                    name,
+                    target,
+                })
             }
             Some(token!(namespace)) => {
-                self.bump();
-                SpecialisationParamKind::Namespace
+                let keyword = self.bump();
+                let name = self.expect(TokenKind::Identifier);
+                let target = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                self.ast.push(Decl::Alias {
+                    keyword,
+                    kind: ast::AliasKind::Namespace,
+                    name,
+                    target,
+                })
             }
             _ => {
                 let ty = self.parse_type();
-                SpecialisationParamKind::Value { ty }
+                let name = self.expect(TokenKind::Identifier);
+                let init = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                self.ast.push(Decl::Var {
+                    role: VarRole::SpecialisationValue,
+                    ty: Some(ty),
+                    is_external: false,
+                    declarators: vec![Declarator { name, init }],
+                    attributes: None,
+                })
             }
-        };
-        let name = self.expect(TokenKind::Identifier);
-        let default = if self.tokens.peek_kind() == Some(token!(=)) {
-            self.bump();
-            Some(match kind {
-                SpecialisationParamKind::Value { .. } => self.parse_expr(),
-                _ => self.parse_type(),
-            })
-        } else {
-            None
-        };
-        self.ast.push(Node::SpecialisationParam {
-            kind,
-            name,
-            default,
-        })
+        }
     }
 
     fn parse_container(&mut self) -> NodeId {
         let keyword = expect_matches!(self, token!(processor | graph | struct));
+        let keyword_kind = self.tokens.stream().get(keyword).map(|token| token.kind);
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
+
+        if matches!(keyword_kind, Some(token!(processor | graph)))
+            && self.tokens.peek_kind() == Some(token!(=))
+        {
+            self.bump();
+            let target = self.parse_expr();
+            self.expect(token!(;));
+            return self.ast.push(Item::ModuleAlias {
+                keyword,
+                kind: ast::AliasKind::Processor,
+                name,
+                target,
+            });
+        }
+
         let attributes =
             (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
         self.expect(token!('{'));
-
-        let mut items = Vec::new();
-        while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
-            items.push(self.parse_statement());
-        }
+        let items = self.parse_container_items();
         self.expect(token!('}'));
 
-        match self.tokens.stream().get(keyword).map(|token| token.kind) {
-            Some(token!(graph)) => self.ast.push(Node::GraphDecl {
+        match keyword_kind {
+            Some(token!(graph)) => self.ast.push(Item::GraphDecl {
                 keyword,
                 name,
                 params,
                 attributes,
                 items,
             }),
-            Some(token!(struct)) => self.ast.push(Node::StructDecl {
+            Some(token!(struct)) => self.ast.push(Item::StructDecl {
                 keyword,
                 name,
                 attributes,
                 items,
             }),
-            Some(token!(processor)) => self.ast.push(Node::ProcessorDecl {
+            Some(token!(processor)) => self.ast.push(Item::ProcessorDecl {
                 keyword,
                 name,
                 params,
@@ -823,27 +1045,47 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_node_decl(&mut self) -> NodeId {
-        let (keyword, name, _, value, _) = expect!(
-            self,
-            token!(node),
-            TokenKind::Identifier,
-            token!(=),
-            self.parse_expr(),
-            token!(;)
-        );
+    fn parse_node_group(&mut self) -> Vec<NodeId> {
+        let keyword = self.expect(token!(node));
+        if self.bump_if(token!('{')).is_some() {
+            let mut nodes = Vec::new();
+            while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+                nodes.push(self.parse_node_decl_entry(keyword));
+            }
+            self.expect(token!('}'));
+            nodes
+        } else {
+            vec![self.parse_node_decl_entry(keyword)]
+        }
+    }
 
-        self.ast.push(Node::NodeDecl {
+    fn parse_node_decl_entry(&mut self, keyword: TokenId) -> NodeId {
+        let name = self.expect(TokenKind::Identifier);
+        let array_size = self.bump_if(token!('[')).map(|_| {
+            let size = if self.tokens.peek_kind() != Some(token!(']')) {
+                Some(self.parse_expr())
+            } else {
+                None
+            };
+            self.expect(token!(']'));
+            size
+        });
+        self.expect(token!(=));
+        let processor = self.parse_expr();
+        self.expect(token!(;));
+
+        self.ast.push(Graph::NodeDecl {
             keyword,
             name,
-            value,
+            processor,
+            array_size: array_size.flatten(),
         })
     }
 
     fn parse_connection_decl(&mut self) -> NodeId {
         let keyword = self.expect(token!(connection));
         let connections = self.parse_connection_list();
-        self.ast.push(Node::ConnectionDecl {
+        self.ast.push(Graph::ConnectionDecl {
             keyword,
             connections,
         })
@@ -886,7 +1128,7 @@ impl<'a> Parser<'a> {
         );
         let else_branch = else_branch.map(|(_, else_branch)| else_branch);
 
-        self.ast.push(Node::ConnectionIf {
+        self.ast.push(Graph::ConnectionIf {
             keyword,
             cond,
             then_branch,
@@ -922,7 +1164,7 @@ impl<'a> Parser<'a> {
                         "cannot chain a connection with multiple destinations",
                     );
                 } else if let Some(&dest) = destinations.first() {
-                    if matches!(self.ast.get(dest), Node::Field { .. }) {
+                    if matches!(self.ast.get(dest), Node::Expr(Expr::Field { .. })) {
                         self.error(
                             arrow,
                             "cannot name an endpoint in the middle of a connection chain",
@@ -931,7 +1173,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            connections.push(self.ast.push(Node::Connection {
+            connections.push(self.ast.push(Graph::Connection {
                 interpolation,
                 sources,
                 arrow,
@@ -955,7 +1197,7 @@ impl<'a> Parser<'a> {
         endpoints
     }
 
-    fn parse_interpolation_if_present(&mut self) -> Option<TokenId> {
+    fn parse_interpolation_if_present(&mut self) -> Option<InterpolationKind> {
         let mut peek = self.tokens.clone().map(|(id, token)| (id, token.kind));
 
         match (peek.next(), peek.next(), peek.next()) {
@@ -964,13 +1206,19 @@ impl<'a> Parser<'a> {
                 Some((delay, TokenKind::Identifier)),
                 Some((_, token!(']'))),
             ) => {
-                if matches!(
-                    self.tokens.stream().text(self.source, delay),
-                    Some("none" | "latch" | "linear" | "sinc" | "fast" | "best")
-                ) {
-                    let (_, interpolation, _) =
-                        expect!(self, token!('['), TokenKind::Identifier, token!(']'));
-                    return Some(interpolation);
+                let kind = match self.tokens.stream().text(self.source, delay) {
+                    Some("none") => Some(InterpolationKind::None),
+                    Some("latch") => Some(InterpolationKind::Latch),
+                    Some("linear") => Some(InterpolationKind::Linear),
+                    Some("sinc") => Some(InterpolationKind::Sinc),
+                    Some("fast") => Some(InterpolationKind::Fast),
+                    Some("best") => Some(InterpolationKind::Best),
+                    _ => None,
+                };
+
+                if let Some(kind) = kind {
+                    let _ = expect!(self, token!('['), TokenKind::Identifier, token!(']'));
+                    return Some(kind);
                 }
 
                 None
@@ -979,28 +1227,39 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_for(&mut self) -> NodeId {
-        let (keyword, _, init, _, cond, _, update, _, body) = expect!(
-            self,
-            token!(for),
-            token!('('),
-            if !peek token!(;) {
-                self.parse_for_init()
-            },
-            token!(;),
-            if !peek token!(;) {
-                self.parse_expr()
-            },
-            token!(;),
-            if !peek token!(')') {
-                self.parse_expr()
-            },
-            token!(')'),
-            self.parse_statement()
-        );
+    fn parse_for(&mut self, label: Option<TokenId>) -> NodeId {
+        let keyword = self.expect(token!(for));
+        self.expect(token!('('));
 
-        self.ast.push(Node::ForStmt {
+        let init = (self.tokens.peek_kind() != Some(token!(;))).then(|| self.parse_for_init());
+
+        let is_bounded_range_for = self.tokens.peek_kind() == Some(token!(')'))
+            && matches!(
+                init.map(|id| self.ast.get(id)),
+                Some(Node::Stmt(Stmt::DeclStmt { .. }))
+            );
+
+        if is_bounded_range_for {
+            self.bump();
+            let body = self.parse_statement();
+            return self.ast.push(Stmt::LoopStmt {
+                keyword,
+                label,
+                count: init,
+                body,
+            });
+        }
+
+        self.expect(token!(;));
+        let cond = (self.tokens.peek_kind() != Some(token!(;))).then(|| self.parse_expr());
+        self.expect(token!(;));
+        let update = (self.tokens.peek_kind() != Some(token!(')'))).then(|| self.parse_expr());
+        self.expect(token!(')'));
+        let body = self.parse_statement();
+
+        self.ast.push(Stmt::ForStmt {
             keyword,
+            label,
             init,
             cond,
             update,
@@ -1010,16 +1269,16 @@ impl<'a> Parser<'a> {
 
     fn parse_for_init(&mut self) -> NodeId {
         match self.tokens.peek_kind() {
-            Some(token!(const)) => self.parse_typed_decl_inner(false),
+            Some(token!(const)) => self.parse_typed_decl_inner(false, false),
             Some(TokenKind::Keyword(keyword)) if keyword.is_type() => {
-                self.parse_typed_decl_inner(false)
+                self.parse_typed_decl_inner(false, false)
             }
             Some(TokenKind::Identifier) if self.looks_like_typed_decl() => {
-                self.parse_typed_decl_inner(false)
+                self.parse_typed_decl_inner(false, false)
             }
             _ => {
                 let expr = self.parse_expr();
-                self.ast.push(Node::ExprStmt { expr })
+                self.ast.push(Stmt::ExprStmt { expr })
             }
         }
     }
@@ -1093,85 +1352,141 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_attribute(&mut self) -> (TokenId, Option<NodeId>) {
-        let (key, value) = expect!(
-            self,
-            TokenKind::Identifier,
-            if token!(:) {
-                self.parse_expr()
-            }
-        );
+        let key = match self.tokens.peek_kind() {
+            Some(TokenKind::Identifier | TokenKind::Keyword(_)) => self.bump(),
+            _ => self.expect(TokenKind::Identifier),
+        };
+        let value = self.bump_if(token!(:)).map(|_| self.parse_expr());
 
-        (key, value.map(|(_, value)| value))
+        (key, value)
     }
 
-    fn parse_attribute_list(&mut self) -> NodeId {
+    fn parse_attribute_list(&mut self) -> Vec<(TokenId, Option<NodeId>)> {
         let (_, attrs, _) = self.parse_list(
             token!("[["),
             |parser| parser.parse_attribute(),
             token!(,),
             token!("]]"),
         );
-
-        self.ast.push(Node::AttributeList { attrs })
+        attrs
     }
 
-    fn parse_type_list(&mut self) -> NodeId {
-        let (paren, types, _) = self.parse_parenthetical_list(|parser| parser.parse_type());
-        self.ast.push(Node::TypeList { paren, types })
+    fn looks_like_hoisted_endpoint(&self) -> bool {
+        self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, token!(.))
     }
 
-    fn parse_endpoint_member(&mut self) -> NodeId {
-        let (ty, name, attributes, _) = expect!(
-            self,
-            if peek token!('(') {
-                self.parse_type_list()
+    fn parse_hoisted_endpoint(&mut self, direction: TokenId) -> NodeId {
+        let child = self.expect(TokenKind::Identifier);
+        let index = self.bump_if(token!('[')).map(|_| {
+            let index = self.parse_expr();
+            self.expect(token!(']'));
+            index
+        });
+        self.expect(token!(.));
+
+        let target = if self.bump_if(token!(*)).is_some() {
+            HoistTarget::Wildcard { prefix: None }
+        } else {
+            let name = self.expect(TokenKind::Identifier);
+            if self.bump_if(token!(*)).is_some() {
+                HoistTarget::Wildcard { prefix: Some(name) }
             } else {
-                self.parse_type()
-            },
-            TokenKind::Identifier,
-            if peek token!("[[") {
-                self.parse_attribute_list()
-            },
-            token!(;)
-        );
+                HoistTarget::Name(name)
+            }
+        };
+        self.expect(token!(;));
 
-        self.ast.push(Node::EndpointDecl {
-            ty,
+        let name = match target {
+            HoistTarget::Name(name) => Some(name),
+            HoistTarget::Wildcard { .. } => None,
+        };
+
+        self.ast.push(Graph::EndpointDecl {
+            direction,
+            kind: None,
+            types: Vec::new(),
             name,
-            attributes,
+            size: None,
+            hoisted: Some(HoistedPath {
+                segments: vec![child],
+                index,
+                target,
+            }),
+            attributes: None,
         })
     }
 
-    fn parse_endpoint_wildcard(&mut self, direction: TokenId) -> NodeId {
-        let (name, _, _, _) = expect!(self, TokenKind::Identifier, token!(.), token!(*), token!(;));
-        self.ast.push(Node::EndpointWildcard { direction, name })
+    fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
+        let types = if self.tokens.peek_kind() == Some(token!('(')) {
+            let (_, types, _) = self.parse_parenthetical_list(|parser| parser.parse_type());
+            types
+        } else {
+            vec![self.parse_type()]
+        };
+
+        let mut names = vec![self.parse_endpoint_name()];
+        while self.bump_if(token!(,)).is_some() {
+            names.push(self.parse_endpoint_name());
+        }
+
+        let attributes =
+            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        self.expect(token!(;));
+
+        names
+            .into_iter()
+            .map(|(name, size)| {
+                self.ast.push(Graph::EndpointDecl {
+                    direction,
+                    kind: Some(kind),
+                    types: types.clone(),
+                    name: Some(name),
+                    size,
+                    hoisted: None,
+                    attributes: attributes.clone(),
+                })
+            })
+            .collect()
     }
 
-    fn parse_endpoint_group(&mut self) -> NodeId {
+    fn parse_endpoint_name(&mut self) -> (TokenId, Option<NodeId>) {
+        let name = self.expect(TokenKind::Identifier);
+        let size = self.bump_if(token!('[')).map(|_| {
+            let size = if self.tokens.peek_kind() != Some(token!(']')) {
+                Some(self.parse_expr())
+            } else {
+                None
+            };
+            self.expect(token!(']'));
+            size
+        });
+        (name, size.flatten())
+    }
+
+    fn parse_endpoint_group(&mut self) -> Vec<NodeId> {
         let direction = expect_matches!(self, token!(input | output));
-        if self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, token!(.)) {
-            return self.parse_endpoint_wildcard(direction);
+        if self.looks_like_hoisted_endpoint() {
+            return vec![self.parse_hoisted_endpoint(direction)];
         }
-        let kind = expect_identifier!(self, "value" | "stream" | "event");
-        let endpoints = if self.tokens.peek_kind() == Some(token!('{')) {
+        let kind = if self.tokens.peek_kind() == Some(token!(event)) {
+            self.bump()
+        } else {
+            expect_identifier!(self, "value" | "stream")
+        };
+        if self.tokens.peek_kind() == Some(token!('{')) {
             self.bump();
             let mut endpoints = Vec::new();
             while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
-                endpoints.push(self.parse_endpoint_member());
+                endpoints.extend(self.parse_endpoint_member(direction, kind));
             }
             self.expect(token!('}'));
             endpoints
         } else {
-            vec![self.parse_endpoint_member()]
-        };
-        self.ast.push(Node::EndpointGroup {
-            direction,
-            kind,
-            endpoints,
-        })
+            self.parse_endpoint_member(direction, kind)
+        }
     }
 
-    fn parse_block(&mut self) -> NodeId {
+    fn parse_block(&mut self, label: Option<TokenId>) -> NodeId {
         let (brace, stmts, _) = expect!(
             self,
             token!('{'),
@@ -1185,35 +1500,45 @@ impl<'a> Parser<'a> {
             token!('}')
         );
 
-        self.ast.push(Node::Block { brace, stmts })
+        self.ast.push(Stmt::Block {
+            brace,
+            label,
+            stmts,
+        })
     }
 
     fn parse_let(&mut self) -> NodeId {
+        self.parse_let_or_var(token!(let), VarRole::Let)
+    }
+
+    fn parse_var(&mut self) -> NodeId {
+        self.parse_let_or_var(token!(var), VarRole::Var)
+    }
+
+    fn parse_let_or_var(&mut self, keyword: impl Into<TokenKind>, role: VarRole) -> NodeId {
         let (_, declarators, _) = self.parse_list(
-            token!(let),
+            keyword,
             |parser| parser.parse_let_declarator(),
             token!(,),
             token!(;),
         );
 
-        self.ast.push(Node::LetStmt { declarators })
+        let decl = self.ast.push(Decl::Var {
+            role,
+            ty: None,
+            is_external: false,
+            declarators,
+            attributes: None,
+        });
+        self.ast.push(Stmt::DeclStmt { decl })
     }
 
-    fn parse_let_declarator(&mut self) -> (TokenId, NodeId) {
+    fn parse_let_declarator(&mut self) -> Declarator {
         let (name, _, init) = expect!(self, TokenKind::Identifier, token!(=), self.parse_expr());
-        (name, init)
-    }
-
-    fn parse_var(&mut self) -> NodeId {
-        let (_, name, init, _) = expect!(
-            self,
-            token!(var),
-            TokenKind::Identifier,
-            { self.bump_if(token!(=)).is_some().then(|| self.parse_expr()) },
-            token!(;)
-        );
-
-        self.ast.push(Node::VarStmt { name, init })
+        Declarator {
+            name,
+            init: Some(init),
+        }
     }
 
     fn parse_if(&mut self) -> NodeId {
@@ -1230,7 +1555,7 @@ impl<'a> Parser<'a> {
             }
         );
 
-        self.ast.push(Node::IfStmt {
+        self.ast.push(Stmt::IfStmt {
             keyword,
             is_const: is_const.is_some(),
             cond,
@@ -1239,7 +1564,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_while(&mut self) -> NodeId {
+    fn parse_while(&mut self, label: Option<TokenId>) -> NodeId {
         let (keyword, _, cond, _, body) = expect!(
             self,
             token!(while),
@@ -1249,14 +1574,15 @@ impl<'a> Parser<'a> {
             self.parse_statement()
         );
 
-        self.ast.push(Node::WhileStmt {
+        self.ast.push(Stmt::WhileStmt {
             keyword,
+            label,
             cond,
             body,
         })
     }
 
-    fn parse_loop(&mut self) -> NodeId {
+    fn parse_loop(&mut self, label: Option<TokenId>) -> NodeId {
         let (keyword, count, body) = expect!(
             self,
             token!(loop),
@@ -1266,8 +1592,9 @@ impl<'a> Parser<'a> {
             self.parse_statement()
         );
 
-        self.ast.push(Node::LoopStmt {
+        self.ast.push(Stmt::LoopStmt {
             keyword,
+            label,
             count: count.map(|(_, count, _)| count),
             body,
         })
@@ -1283,26 +1610,33 @@ impl<'a> Parser<'a> {
             token!(;)
         );
 
-        self.ast.push(Node::ReturnStmt { keyword, value })
+        self.ast.push(Stmt::ReturnStmt { keyword, value })
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
         let (expr, _) = expect!(self, self.parse_expr(), token!(;));
-        self.ast.push(Node::ExprStmt { expr })
+        self.ast.push(Stmt::ExprStmt { expr })
     }
 
     fn parse_type(&mut self) -> NodeId {
-        if let Some((keyword, inner)) = expect!(
-            self,
-            if token!(const) {
-                self.parse_type()
-            }
-        ) {
-            return self.ast.push(Node::ConstType { keyword, inner });
+        let is_const = self.bump_if(token!(const)).is_some();
+        let mut ty = self.parse_type_base();
+        let is_ref = self.bump_if(token!(&)).is_some();
+
+        if is_const || is_ref {
+            ty = self.ast.push(Expr::TypeModifier {
+                source: ty,
+                is_const,
+                is_ref,
+            });
         }
 
+        ty
+    }
+
+    fn parse_type_base(&mut self) -> NodeId {
         let mut ty = match self.tokens.peek_kind() {
-            Some(kind) if kind.is_type_like() => self.parse_type_name(),
+            Some(kind) if kind.is_type_like() => self.parse_qualified_name(),
             peeked => {
                 let message = format!("expected type, found {peeked:?}");
                 let token = self.bump();
@@ -1313,8 +1647,8 @@ impl<'a> Parser<'a> {
 
         loop {
             ty = match self.tokens.peek_kind() {
-                Some(token!('[')) => self.parse_array(ty),
-                Some(token!(<)) => self.parse_chevroned_suffix(ty),
+                Some(token!('[')) => self.parse_bracketed_suffix(ty),
+                Some(token!(<)) => self.parse_vector_size_suffix(ty),
                 _ => break,
             };
         }
@@ -1322,43 +1656,18 @@ impl<'a> Parser<'a> {
         ty
     }
 
-    fn parse_type_name(&mut self) -> NodeId {
-        let mut segments = vec![self.bump()];
+    fn parse_qualified_name(&mut self) -> NodeId {
+        let token = self.bump();
+        let mut name = self.ast.push(Expr::Ident { token });
 
-        loop {
-            let Some((_, segment)) = expect!(
-                self,
-                if token!(::) {
-                    TokenKind::Identifier
-                }
-            ) else {
-                break;
-            };
-
-            segments.push(segment);
+        while self.tokens.peek_kind() == Some(token!(::)) {
+            name = self.parse_scope_access(name);
         }
 
-        self.ast.push(Node::TypeName { segments })
+        name
     }
 
-    fn parse_array(&mut self, element: NodeId) -> NodeId {
-        let (bracket, size, _) = expect!(
-            self,
-            token!('['),
-            if !peek token!(']') {
-                self.parse_expr()
-            },
-            token!(']')
-        );
-
-        self.ast.push(Node::Array {
-            bracket,
-            element,
-            size,
-        })
-    }
-
-    fn parse_chevroned_suffix(&mut self, element: NodeId) -> NodeId {
+    fn parse_vector_size_suffix(&mut self, element: NodeId) -> NodeId {
         let (angle, term, _) = expect!(
             self,
             token!(<),
@@ -1366,11 +1675,40 @@ impl<'a> Parser<'a> {
             token!(>)
         );
 
-        self.ast.push(Node::ChevronSuffix {
+        self.ast.push(Expr::VectorSizeSuffix {
             angle,
             element,
-            term,
+            terms: vec![term],
         })
+    }
+
+    fn try_parse_vector_size_suffix(&mut self, element: NodeId) -> Option<NodeId> {
+        let tokens_checkpoint = self.tokens.clone();
+        let ast_len = self.ast.len();
+        let diagnostics_len = self.diagnostics.len();
+
+        let angle = self.bump();
+        let mut terms = vec![self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base())];
+        while self.bump_if(token!(,)).is_some() {
+            terms.push(self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()));
+        }
+
+        let succeeded =
+            self.diagnostics.len() == diagnostics_len && self.tokens.peek_kind() == Some(token!(>));
+
+        if !succeeded {
+            self.tokens = tokens_checkpoint;
+            self.ast.truncate(ast_len);
+            self.diagnostics.truncate(diagnostics_len);
+            return None;
+        }
+
+        self.bump();
+        Some(self.ast.push(Expr::VectorSizeSuffix {
+            angle,
+            element,
+            terms,
+        }))
     }
 }
 
@@ -1387,6 +1725,13 @@ mod tests {
         ast::dump(&parser.ast, &tokens, source, root)
     }
 
+    fn has_diagnostics(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> bool {
+        let tokens = tokenize(source);
+        let mut parser = Parser::new(&tokens, source);
+        parse_fn(&mut parser);
+        !parser.diagnostics.is_empty()
+    }
+
     fn parse_type(source: &str) -> String {
         dump(source, |parser| parser.parse_type())
     }
@@ -1401,68 +1746,72 @@ mod tests {
 
     #[test]
     fn primitive_type() {
-        insta::assert_snapshot!(parse_type("float"), @r#"TypeName "float""#);
+        insta::assert_snapshot!(parse_type("float"), @"float");
     }
 
     #[test]
     fn named_type() {
-        insta::assert_snapshot!(parse_type("MyStruct"), @r#"TypeName "MyStruct""#);
+        insta::assert_snapshot!(parse_type("MyStruct"), @"MyStruct");
     }
 
     #[test]
     fn qualified_type_name() {
-        insta::assert_snapshot!(parse_type("std::midi::Message"), @r#"TypeName "std::midi::Message""#);
+        insta::assert_snapshot!(parse_type("std::midi::Message"), @r#"
+        ScopeAccess "Message"
+          ScopeAccess "midi"
+            std
+        "#);
     }
 
     #[test]
     fn array_type() {
-        insta::assert_snapshot!(parse_type("int[3]"), @r#"
-        Array
-          TypeName "int"
+        insta::assert_snapshot!(parse_type("int[3]"), @"
+        Bracketed
+          int
           3
-        "#);
+        ");
     }
 
     #[test]
     fn slice_type_has_no_size() {
-        insta::assert_snapshot!(parse_type("int[]"), @r#"
-        Array
-          TypeName "int"
-        "#);
+        insta::assert_snapshot!(parse_type("int[]"), @"
+        Bracketed
+          int
+        ");
     }
 
     #[test]
     fn vector_type() {
-        insta::assert_snapshot!(parse_type("int<4>"), @r#"
-        ChevronSuffix
-          TypeName "int"
+        insta::assert_snapshot!(parse_type("int<4>"), @"
+        VectorSizeSuffix
+          int
           4
-        "#);
+        ");
     }
 
     #[test]
     fn clamp() {
-        insta::assert_snapshot!(parse_type("clamp<10>"), @r#"
-        ChevronSuffix
-          TypeName "clamp"
+        insta::assert_snapshot!(parse_type("clamp<10>"), @"
+        VectorSizeSuffix
+          clamp
           10
-        "#);
+        ");
     }
 
     #[test]
     fn wrap() {
-        insta::assert_snapshot!(parse_type("wrap<4>"), @r#"
-        ChevronSuffix
-          TypeName "wrap"
+        insta::assert_snapshot!(parse_type("wrap<4>"), @"
+        VectorSizeSuffix
+          wrap
           4
-        "#);
+        ");
     }
 
     #[test]
     fn angle_bracket_close_is_not_a_comparison() {
         insta::assert_snapshot!(parse_type("wrap<1 + 2>"), @r#"
-        ChevronSuffix
-          TypeName "wrap"
+        VectorSizeSuffix
+          wrap
           Binary "+"
             1
             2
@@ -1471,30 +1820,30 @@ mod tests {
 
     #[test]
     fn postfix_type_modifiers_apply_left_to_right() {
-        insta::assert_snapshot!(parse_type("int<4>[2]"), @r#"
-        Array
-          ChevronSuffix
-            TypeName "int"
+        insta::assert_snapshot!(parse_type("int<4>[2]"), @"
+        Bracketed
+          VectorSizeSuffix
+            int
             4
           2
-        "#);
+        ");
     }
 
     #[test]
     fn const_type() {
-        insta::assert_snapshot!(parse_type("const int"), @r#"
-        ConstType
-          TypeName "int"
-        "#);
+        insta::assert_snapshot!(parse_type("const int"), @"
+        TypeModifier const
+          int
+        ");
     }
 
     #[test]
     fn const_array_type() {
-        insta::assert_snapshot!(parse_type("const int[]"), @r#"
-        ConstType
-          Array
-            TypeName "int"
-        "#);
+        insta::assert_snapshot!(parse_type("const int[]"), @"
+        TypeModifier const
+          Bracketed
+            int
+        ");
     }
 
     #[test]
@@ -1653,16 +2002,16 @@ mod tests {
 
     #[test]
     fn empty_index() {
-        insta::assert_snapshot!(parse_expr("x[]"), @r#"
-        Index
+        insta::assert_snapshot!(parse_expr("x[]"), @"
+        Bracketed
           x
-        "#);
+        ");
     }
 
     #[test]
     fn index_and_field_postfix() {
         insta::assert_snapshot!(parse_expr("x.left[3]"), @r#"
-        Index
+        Bracketed
           Field "left"
             x
           3
@@ -1672,30 +2021,34 @@ mod tests {
     #[test]
     fn let_statement() {
         insta::assert_snapshot!(parse_stmt("let x = 1;"), @r#"
-        LetStmt "x"
+        VarDecl let "x"
           1
         "#);
     }
 
     #[test]
-    fn var_statement() {
-        insta::assert_snapshot!(parse_stmt("var y;"), @r#"VarStmt "y""#);
+    fn var_with_init_statement() {
+        insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
+        VarDecl var "y"
+          3
+        "#);
     }
 
     #[test]
-    fn var_with_init_statement() {
-        insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
-        VarStmt "y"
-          3
+    fn var_multiple_declarators() {
+        insta::assert_snapshot!(parse_stmt("var a = 1, b = 2;"), @r#"
+        VarDecl var "a, b"
+          1
+          2
         "#);
     }
 
     #[test]
     fn typed_var_decl_statements() {
         insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
-        VarDeclStmt "w"
-          ChevronSuffix
-            TypeName "wrap"
+        VarDecl typed "w"
+          VectorSizeSuffix
+            wrap
             5
         "#);
     }
@@ -1703,9 +2056,9 @@ mod tests {
     #[test]
     fn const_var_decl_statement() {
         insta::assert_snapshot!(parse_stmt("const int x = 1;"), @r#"
-        VarDeclStmt "x"
-          ConstType
-            TypeName "int"
+        VarDecl typed "x"
+          TypeModifier const
+            int
           1
         "#);
     }
@@ -1795,11 +2148,11 @@ mod tests {
     fn function() {
         insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"), @r#"
         FunctionDecl "add"
-          TypeName "int"
-          Param "a"
-            TypeName "int"
-          Param "b"
-            TypeName "int"
+          int
+          VarDecl param "a"
+            int
+          VarDecl param "b"
+            int
           Block
             ReturnStmt
               Binary "+"
@@ -1812,14 +2165,14 @@ mod tests {
     fn function_with_const_params() {
         insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"), @r#"
         FunctionDecl "f"
-          TypeName "void"
-          Param &"a"
-            ConstType
-              TypeName "int"
-          Param &"b"
-            ConstType
-              Array
-                TypeName "float32"
+          void
+          VarDecl param "a"
+            TypeModifier const ref
+              int
+          VarDecl param "b"
+            TypeModifier const ref
+              Bracketed
+                float32
                 10
           Block
         "#);
@@ -1829,7 +2182,7 @@ mod tests {
     fn const_member_function() {
         insta::assert_snapshot!(parse_stmt("void f() const { }"), @r#"
         FunctionDecl "f" const
-          TypeName "void"
+          void
           Block
         "#);
     }
@@ -1838,7 +2191,7 @@ mod tests {
     fn loop_with_unbraced_body() {
         insta::assert_snapshot!(parse_stmt("void main() { loop advance(); }"), @r#"
         FunctionDecl "main"
-          TypeName "void"
+          void
           Block
             LoopStmt
               ExprStmt
@@ -1853,11 +2206,10 @@ mod tests {
             "processor SquareWave (int length) { output stream int out; }"
         ), @r#"
         ProcessorDecl "SquareWave"
-          SpecialisationParam value "length"
-            TypeName "int"
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          VarDecl specialisation "length"
+            int
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1867,12 +2219,11 @@ mod tests {
             "processor Gain (int channelCount = 2) { output stream int out; }"
         ), @r#"
         ProcessorDecl "Gain"
-          SpecialisationParam value "channelCount"
-            TypeName "int"
+          VarDecl specialisation "channelCount"
+            int
             2
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1882,10 +2233,9 @@ mod tests {
             "processor Source (using DataType) { output stream int out; }"
         ), @r#"
         ProcessorDecl "Source"
-          SpecialisationParam using "DataType"
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          Alias using "DataType"
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1895,11 +2245,10 @@ mod tests {
             "processor P (using T = float32) { output stream int out; }"
         ), @r#"
         ProcessorDecl "P"
-          SpecialisationParam using "T"
-            TypeName "float32"
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          Alias using "T"
+            float32
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1909,12 +2258,11 @@ mod tests {
             "graph Wrapper (processor Parameterised, int x) { output stream int out; }"
         ), @r#"
         GraphDecl "Wrapper"
-          SpecialisationParam processor "Parameterised"
-          SpecialisationParam value "x"
-            TypeName "int"
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          Alias processor "Parameterised"
+          VarDecl specialisation "x"
+            int
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1922,8 +2270,8 @@ mod tests {
     fn namespace_with_specialisation_params() {
         insta::assert_snapshot!(parse_stmt("namespace n (processor p, namespace ns) {}"), @r#"
         NamespaceDecl "n"
-          SpecialisationParam processor "p"
-          SpecialisationParam namespace "ns"
+          Alias processor "p"
+          Alias namespace "ns"
         "#);
     }
 
@@ -1933,13 +2281,12 @@ mod tests {
             "processor P (using T, int length = 4) { output stream int out; }"
         ), @r#"
         ProcessorDecl "P"
-          SpecialisationParam using "T"
-          SpecialisationParam value "length"
-            TypeName "int"
+          Alias using "T"
+          VarDecl specialisation "length"
+            int
             4
-          EndpointGroup output stream
-            EndpointDecl "out"
-              TypeName "int"
+          EndpointDecl output stream "out"
+            int
         "#);
     }
 
@@ -1948,20 +2295,78 @@ mod tests {
         insta::assert_snapshot!(parse_stmt("processor.latency = length;"), @r#"
         ExprStmt
           Assign "="
-            Field "latency"
-              processor
+            ProcessorProperty "latency"
             length
         "#);
     }
 
     #[test]
-    fn ambiguous_angle_brackets_expression() {
-        insta::assert_snapshot!(parse_expr("a<b>c"), @r#"
+    fn chevron_suffix_wins_over_comparison_when_it_parses_cleanly() {
+        insta::assert_snapshot!(parse_expr("a<b>"), @r#"
+        VectorSizeSuffix
+          a
+          b
+        "#);
+    }
+
+    #[test]
+    fn bare_less_than_comparison_without_a_following_greater_than() {
+        insta::assert_snapshot!(parse_expr("a < b"), @r#"
+        Binary "<"
+          a
+          b
+        "#);
+    }
+
+    #[test]
+    fn comparison_chain_requires_parens() {
+        insta::assert_snapshot!(parse_expr("(a < b) > c"), @r#"
         Binary ">"
+          Parentheses
+            Binary "<"
+              a
+              b
+          c
+        "#);
+    }
+
+    #[test]
+    fn dangling_identifier_after_greedy_chevron_suffix_is_a_parse_error_in_expression_position() {
+        assert!(has_diagnostics("return a < b > c;", |parser| parser.parse_statement()));
+    }
+
+    #[test]
+    fn ambiguous_chevron_at_statement_start_is_read_as_a_type_decl() {
+        insta::assert_snapshot!(parse_stmt("a < b > c;"), @r#"
+        VarDecl typed "c"
+          VectorSizeSuffix
+            a
+            b
+        "#);
+    }
+
+    #[test]
+    fn short_circuit_comparison_is_unaffected_by_chevron_backtracking() {
+        insta::assert_snapshot!(parse_expr("a < b && b < c"), @r#"
+        Binary "&&"
           Binary "<"
             a
             b
-          c
+          Binary "<"
+            b
+            c
+        "#);
+    }
+
+    #[test]
+    fn type_sized_call_argument() {
+        insta::assert_snapshot!(parse_expr("Sine(float64<2>, 100.0f)"), @r#"
+        Call
+          Sine
+          VectorSizeSuffix
+            float64
+            2
+          100.0f
         "#);
     }
 
@@ -2138,8 +2543,8 @@ mod tests {
     fn classic_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
         ForStmt
-          VarDeclStmt "i"
-            TypeName "int"
+          VarDecl typed "i"
+            int
             0
           Binary "<"
             i
@@ -2151,5 +2556,193 @@ mod tests {
               Call
                 advance
         "#);
+    }
+
+    #[test]
+    fn bounded_range_for_loop() {
+        insta::assert_snapshot!(parse_stmt("for (wrap<4> i) { advance(); }"), @r#"
+        LoopStmt
+          VarDecl typed "i"
+            VectorSizeSuffix
+              wrap
+              4
+          Block
+            ExprStmt
+              Call
+                advance
+        "#);
+    }
+
+    #[test]
+    fn labelled_bounded_range_for_loop() {
+        insta::assert_snapshot!(parse_stmt("outer: for (wrap<4> i) { advance(); }"), @r#"
+        LoopStmt "outer"
+          VarDecl typed "i"
+            VectorSizeSuffix
+              wrap
+              4
+          Block
+            ExprStmt
+              Call
+                advance
+        "#);
+    }
+
+    #[test]
+    fn enum_decl() {
+        insta::assert_snapshot!(parse_stmt("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C}"#);
+    }
+
+    #[test]
+    fn import_dotted_path() {
+        insta::assert_snapshot!(parse_stmt("import std.audio;"), @r#"Import "std.audio""#);
+    }
+
+    #[test]
+    fn import_string_path() {
+        insta::assert_snapshot!(parse_stmt(r#"import "foo.cmajor";"#), @r#"Import "\"foo.cmajor\"""#);
+    }
+
+    #[test]
+    fn external_var_decl() {
+        insta::assert_snapshot!(parse_stmt("external float64 one;"), @r#"
+        VarDecl external typed "one"
+          float64
+        "#);
+    }
+
+    #[test]
+    fn using_type_alias_statement() {
+        insta::assert_snapshot!(parse_stmt("using T = int;"), @r#"
+        Alias using "T"
+          int
+        "#);
+    }
+
+    #[test]
+    fn static_assert_with_message() {
+        insta::assert_snapshot!(
+            parse_stmt(r#"static_assert(x > 0, "must be positive");"#),
+            @r#"
+        StaticAssertStmt
+          Binary ">"
+            x
+            0
+          "must be positive"
+        "#
+        );
+    }
+
+    #[test]
+    fn forward_branch_stmt() {
+        insta::assert_snapshot!(
+            parse_stmt("forward_branch (cond) -> (a, b);"),
+            @r#"
+        ForwardBranchStmt
+          cond
+          a
+          b
+        "#
+        );
+    }
+
+    #[test]
+    fn labelled_loop_and_break_target() {
+        insta::assert_snapshot!(
+            parse_stmt("outer: loop { break outer; }"),
+            @r#"
+        LoopStmt "outer"
+          Block
+            BreakStmt "outer"
+        "#
+        );
+    }
+
+    #[test]
+    fn multi_dimensional_array_type() {
+        insta::assert_snapshot!(parse_type("float32[1, 2]"), @"
+        Bracketed
+          float32
+          1
+          2
+        ");
+    }
+
+    #[test]
+    fn slicing_expression() {
+        insta::assert_snapshot!(parse_expr("arr[1:3]"), @r#"
+        Bracketed
+          arr
+          Slice
+            1
+            3
+        "#);
+    }
+
+    #[test]
+    fn processor_alias_decl() {
+        insta::assert_snapshot!(
+            parse_stmt("processor Foo = Bar(4);"),
+            @r#"
+        ModuleAlias processor "Foo"
+          Call
+            Bar
+            4
+        "#
+        );
+    }
+
+    #[test]
+    fn hoisted_endpoint_named() {
+        insta::assert_snapshot!(parse_stmt("output child.out;"), @r#"EndpointDecl output child.out"#);
+    }
+
+    #[test]
+    fn hoisted_endpoint_wildcard() {
+        insta::assert_snapshot!(parse_stmt("output child.*;"), @r#"EndpointDecl output child.*"#);
+    }
+
+    #[test]
+    fn hoisted_endpoint_prefixed_wildcard() {
+        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @r#"EndpointDecl output g2.test*"#);
+    }
+
+    #[test]
+    fn sized_array_endpoint() {
+        insta::assert_snapshot!(parse_stmt("input stream float in[10];"), @r#"
+        EndpointDecl input stream "in"
+          float
+          10
+        "#);
+    }
+
+    #[test]
+    fn multi_type_event_endpoint() {
+        insta::assert_snapshot!(parse_stmt("input event (int, float) e;"), @r#"
+        EndpointDecl input event "e"
+          int
+          float
+        "#);
+    }
+
+    #[test]
+    fn braced_endpoint_group_desugars_to_flat_members() {
+        insta::assert_snapshot!(
+            dump("output stream { float32 a; int b; }", |parser| {
+                let items = parser.parse_container_items();
+                parser.ast.push(Stmt::Block {
+                    brace: parser.tokens.current(),
+                    label: None,
+                    stmts: items,
+                })
+            }),
+            @r#"
+        Block
+          EndpointDecl output stream "a"
+            float32
+          EndpointDecl output stream "b"
+            int
+        "#
+        );
     }
 }
