@@ -167,7 +167,7 @@ macro_rules! skip_to_matching {
 mod tests {
     use {
         super::*,
-        crate::lexer::{tokenize, Keyword, Literal, Trivia},
+        crate::lexer::{Keyword, Literal, Trivia, tokenize},
     };
 
     #[test]
