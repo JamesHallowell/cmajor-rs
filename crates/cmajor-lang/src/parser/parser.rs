@@ -360,13 +360,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek_text_is(&self, expected: &str) -> bool {
-        self.tokens
-            .peek_id()
-            .and_then(|id| self.tokens.stream().text(self.source, id))
-            == Some(expected)
-    }
-
     pub fn parse(&mut self) -> Vec<NodeId> {
         let mut stmts = Vec::new();
         while self.tokens.peek().is_some() {
@@ -538,7 +531,10 @@ impl<'a> Parser<'a> {
         match self.tokens.peek_kind() {
             Some(token!(']')) => self.bump(),
             Some(token!("]]")) => {
-                let id = self.tokens.peek_id().expect("peeked \"]]\" token must exist");
+                let id = self
+                    .tokens
+                    .peek_id()
+                    .expect("peeked \"]]\" token must exist");
                 self.split_bracket_at = Some(id);
                 id
             }
@@ -685,9 +681,6 @@ impl<'a> Parser<'a> {
             }
             Some(token!(event)) => self.parse_event_handler(),
             Some(token!(const)) => self.parse_typed_decl(),
-            Some(TokenKind::Identifier) if self.peek_text_is("static_assert") => {
-                self.parse_static_assert()
-            }
             Some(TokenKind::Keyword(keyword)) if TokenKind::Keyword(keyword).is_type_like() => {
                 self.parse_typed_decl()
             }
@@ -741,20 +734,6 @@ impl<'a> Parser<'a> {
             keyword,
             cond,
             targets,
-        })
-    }
-
-    fn parse_static_assert(&mut self) -> NodeId {
-        let keyword = self.bump();
-        self.expect(token!('('));
-        let cond = self.parse_expr();
-        let message = self.bump_if(token!(,)).map(|_| self.parse_expr());
-        self.expect(token!(')'));
-        self.expect(token!(;));
-        self.ast.push(Stmt::StaticAssertStmt {
-            keyword,
-            cond,
-            message,
         })
     }
 
@@ -2733,11 +2712,13 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt(r#"static_assert(x > 0, "must be positive");"#),
             @r#"
-        StaticAssertStmt
-          Binary ">"
-            x
-            0
-          "must be positive"
+        ExprStmt
+          Call
+            static_assert
+            Binary ">"
+              x
+              0
+            "must be positive"
         "#
         );
     }

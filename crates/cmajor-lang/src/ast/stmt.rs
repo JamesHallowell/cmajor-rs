@@ -57,9 +57,4 @@ pub enum Stmt {
         cond: NodeId,
         targets: Vec<TokenId>,
     },
-    StaticAssertStmt {
-        keyword: TokenId,
-        cond: NodeId,
-        message: Option<NodeId>,
-    },
 }

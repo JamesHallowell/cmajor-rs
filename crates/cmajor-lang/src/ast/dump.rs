@@ -244,11 +244,6 @@ fn write_stmt(ast: &Ast, tokens: &TokenStream, source: &str, stmt: &Stmt) -> Dum
             children.extend(targets.iter().map(|t| leaf(text(t).to_string())));
             node("ForwardBranchStmt".to_string(), children)
         }
-        Stmt::StaticAssertStmt { cond, message, .. } => {
-            let mut children = vec![child(cond)];
-            children.extend(message.iter().map(child));
-            node("StaticAssertStmt".to_string(), children)
-        }
     }
 }
 
