@@ -5,7 +5,7 @@ use crate::{
     },
     lexer::{tokenize, Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream},
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
-    token, utils, Diagnostic,
+    skip_to_matching, token, utils, Diagnostic,
 };
 
 pub struct Parse {
@@ -1238,95 +1238,49 @@ impl<'a> Parser<'a> {
     }
 
     fn looks_like_typed_decl(&self) -> bool {
-        let mut offset = 0;
-        if !peek!(self, +offset, TokenKind::Identifier) {
+        let mut tokens = self.tokens.clone();
+
+        if !matches!(tokens.peek_kind(), Some(TokenKind::Identifier)) {
             return false;
         }
-        offset += 1;
+        tokens.next();
+
         loop {
-            if peek!(self, +offset, token!('(')) {
-                match self.skip_to_matching_paren(offset) {
-                    Some(next) => offset = next,
-                    None => return false,
-                }
-            }
-            if peek!(self, +offset, token!(::)) || peek!(self, +offset, token!(.)) {
-                offset += 1;
-                if !peek!(self, +offset, TokenKind::Identifier) {
+            if tokens.peek_kind() == Some(token!('(')) {
+                tokens = if let Ok(skipped) = skip_to_matching!(tokens, ()) {
+                    skipped
+                } else {
                     return false;
                 }
-                offset += 1;
+            }
+
+            if matches!(tokens.peek_kind(), Some(token!(:: | .))) {
+                tokens.next();
+                if !matches!(tokens.next(), Some((_, token)) if token.kind == TokenKind::Identifier)
+                {
+                    return false;
+                }
             } else {
                 break;
             }
         }
+
         loop {
-            let next = if peek!(self, +offset, token!(<)) {
-                self.skip_to_matching_angle_bracket(offset)
-            } else if peek!(self, +offset, token!('[')) {
-                self.skip_to_matching_bracket(offset)
-            } else {
-                break;
+            let skipped = match tokens.peek_kind() {
+                Some(token!(<)) => skip_to_matching!(tokens, <>),
+                Some(token!('[')) => skip_to_matching!(tokens, []),
+                _ => break,
             };
-            match next {
-                Some(next) => offset = next,
-                None => return false,
-            }
-        }
-        peek!(self, +offset, TokenKind::Identifier)
-    }
 
-    fn skip_to_matching_angle_bracket(&self, mut offset: usize) -> Option<usize> {
-        offset += 1;
-        loop {
-            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind)? {
-                token!(>) => return Some(offset + 1),
-                token!(; | '{' | '}') => return None,
-                _ => offset += 1,
+            match skipped {
+                Ok(skipped) => {
+                    tokens = skipped;
+                }
+                Err(_) => return false,
             }
         }
-    }
 
-    fn skip_to_matching_paren(&self, mut offset: usize) -> Option<usize> {
-        let mut depth = 0;
-        loop {
-            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind)? {
-                token!('(') => {
-                    depth += 1;
-                    offset += 1;
-                }
-                token!(')') => {
-                    depth -= 1;
-                    offset += 1;
-                    if depth == 0 {
-                        return Some(offset);
-                    }
-                }
-                token!(; | '{' | '}') => return None,
-                _ => offset += 1,
-            }
-        }
-    }
-
-    fn skip_to_matching_bracket(&self, mut offset: usize) -> Option<usize> {
-        let mut depth = 0;
-        loop {
-            match self.tokens.clone().nth(offset).map(|(_, t)| t.kind)? {
-                token!('[') => {
-                    depth += 1;
-                    offset += 1;
-                }
-                token!(']') => {
-                    depth -= 1;
-                    offset += 1;
-                    if depth == 0 {
-                        return Some(offset);
-                    }
-                }
-                token!(; | '{' | '}') => return None,
-                _ => offset += 1,
-            }
-        }
+        matches!(tokens.next(), Some((_, token)) if token.kind == TokenKind::Identifier)
     }
 
     fn parse_attribute(&mut self) -> (TokenId, Option<NodeId>) {

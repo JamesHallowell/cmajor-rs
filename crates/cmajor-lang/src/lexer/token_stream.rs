@@ -130,6 +130,39 @@ impl<'a> IntoIterator for &'a TokenStream {
     }
 }
 
+#[macro_export]
+macro_rules! skip_to_matching {
+    ($tokens:ident, ()) => {
+        skip_to_matching!(@impl $tokens, $crate::token!('('), $crate::token!(')'))
+    };
+    ($tokens:ident, <>) => {
+        skip_to_matching!(@impl $tokens, $crate::token!(<), $crate::token!(>))
+    };
+    ($tokens:ident, []) => {
+        skip_to_matching!(@impl $tokens, $crate::token!('['), $crate::token!(']'))
+    };
+    (@impl $tokens:ident, $start:pat, $end:pat) => {
+        {
+            let mut skipped = $tokens.clone();
+            skipped.next();
+            let mut depth = 1;
+            loop {
+                match skipped.next().map(|(_, token)| token.kind) {
+                    Some($start) => depth += 1,
+                    Some($end) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break Ok(skipped);
+                        }
+                    }
+                    Some($crate::token!(; | '{' | '}')) | None => break Err($tokens),
+                    _ => {}
+                }
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -248,5 +281,28 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn skip_to_matching_delimiter() {
+        let tokens = tokenize("(([[()]))()");
+        let tokens = tokens.into_iter();
+
+        assert_eq!(tokens.current, TokenId(0));
+
+        let result = skip_to_matching!(tokens, ()).expect("found a matching delimiter");
+        assert_eq!(result.current, TokenId(8));
+    }
+
+    #[test]
+    fn skip_to_matching_delimiter_returns_unchanged_token_stream_if_no_matching_delim() {
+        let tokens = tokenize("(([[()])");
+        let tokens = tokens.into_iter();
+
+        assert_eq!(tokens.current, TokenId(0));
+
+        let result =
+            skip_to_matching!(tokens, ()).expect_err("no matching delimiter expected to be found");
+        assert_eq!(result.current, TokenId(0));
     }
 }
