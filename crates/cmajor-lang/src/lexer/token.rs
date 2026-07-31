@@ -245,6 +245,12 @@ impl From<Keyword> for TokenKind {
     }
 }
 
+impl From<Literal> for TokenKind {
+    fn from(literal: Literal) -> Self {
+        TokenKind::Literal(literal)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Token {
     pub kind: TokenKind,

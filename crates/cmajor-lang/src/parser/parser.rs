@@ -206,9 +206,9 @@ struct Parser<'a> {
 }
 
 macro_rules! expect_matches {
-    ($parser:expr, $expected:pat) => {
-        if matches!($parser.tokens.peek_kind(), Some($expected)) {
-            $parser.bump()
+    ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
+        if matches!($parser.tokens.peek_kind(), Some($expected) $(if $guard)?) {
+            bump!($parser)
         } else {
             let actual_kind = $parser.tokens.peek_kind();
             let pos = $parser.tokens.current();
@@ -221,8 +221,54 @@ macro_rules! expect_matches {
     };
 }
 
+macro_rules! peek {
+    ($parser:expr) => {
+        $parser.tokens.clone().next().map(|(_, token)| token.kind)
+    };
+    ($parser:expr, + $n:expr) => {
+        $parser.tokens.clone().nth($n).map(|(_, token)| token.kind)
+    };
+    ($parser:expr, $expected:expr) => {
+        peek!($parser) == Some(TokenKind::from($expected))
+    };
+    ($parser:expr, + $n:expr, $expected:expr) => {
+        peek!($parser, + $n) == Some(TokenKind::from($expected))
+    };
+    ($parser:expr, $expected:expr => $then:expr) => {
+        (peek!($parser) == Some(TokenKind::from($expected))).then(|| $then)
+    };
+    ($parser:expr, not $expected:expr) => {
+        peek!($parser) != Some(TokenKind::from($expected))
+    };
+    ($parser:expr, not $expected:expr => $then:expr) => {
+        (peek!($parser) != Some(TokenKind::from($expected))).then(|| $then)
+    };
+}
+
+macro_rules! peek_matches {
+    ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
+        matches!(peek!($parser), $expected $(if $guard)?)
+    };
+}
+
+macro_rules! bump {
+    ($parser:expr) => {
+        $parser
+            .tokens
+            .next()
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| $parser.tokens.current())
+    };
+    ($parser:expr, $expected:expr) => {
+        peek!($parser, $expected => bump!($parser))
+    };
+    ($parser:expr, $expected:expr => $then:expr) => {
+        bump!($parser, $expected).is_some().then(|| $then)
+    };
+}
+
 macro_rules! expect_identifier {
-    ($parser:expr, $expected:pat) => {
+    ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
         match $parser.tokens.peek_kind() {
             Some(TokenKind::Identifier) => {
                 let text = $parser
@@ -231,8 +277,8 @@ macro_rules! expect_identifier {
                     .and_then(|id| $parser.tokens.stream().text($parser.source, id))
                     .expect("failed to query text for token");
 
-                if matches!(text, $expected) {
-                    $parser.bump()
+                if matches!(text, $expected $(if $guard)?) {
+                    bump!($parser)
                 } else {
                     let pos = $parser.tokens.current();
                     $parser.error(
@@ -254,55 +300,6 @@ macro_rules! expect_identifier {
     };
 }
 
-macro_rules! expect {
-    ($parser:expr, $($rest:tt)+) => {
-        expect!(@munch $parser; (); $($rest)+)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); { $($e:tt)* } $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* { $($e)* }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if ! peek token!($($cond:tt)+) $body:block else $else_body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() != Some(token!($($cond)+)) { $body } else { $else_body }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if ! peek token!($($cond:tt)+) $body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() != Some(token!($($cond)+)) { Some($body) } else { None }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if peek token!($($cond:tt)+) $body:block else $else_body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { $body } else { $else_body }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if peek token!($($cond:tt)+) $body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { Some($body) } else { None }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) { $($seq:tt)+ } else $else_body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) {
-            expect!($parser, token!($($cond)+), $($seq)+)
-        } else { $else_body }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) { $($seq:tt)+ } $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) {
-            Some(expect!($parser, token!($($cond)+), $($seq)+))
-        } else { None }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) else $else_body:block $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { $parser.bump() } else { $else_body }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); if token!($($cond:tt)+) $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* if $parser.tokens.peek_kind() == Some(token!($($cond)+)) { Some($parser.bump()) } else { None }); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); token!($($kind:tt)+) $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* $parser.expect(token!($($kind)+))); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); TokenKind::$kind:ident $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* $parser.expect(TokenKind::$kind)); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),*); $e:expr $(, $($rest:tt)*)?) => {
-        expect!(@munch $parser; ($($acc,)* $e); $($($rest)*)?)
-    };
-    (@munch $parser:expr; ($($acc:expr),+); ) => {
-        ($($acc),+)
-    };
-}
-
 impl<'a> Parser<'a> {
     fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
@@ -314,30 +311,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn bump(&mut self) -> TokenId {
-        self.tokens
-            .next()
-            .map(|(id, _)| id)
-            .unwrap_or_else(|| self.tokens.current())
-    }
-
-    fn bump_if(&mut self, kind: impl Into<TokenKind>) -> Option<TokenId> {
-        if let Some(id) = self.tokens.peek_kind() {
-            if id == kind.into() {
-                return Some(self.bump());
-            }
-        }
-        None
-    }
-
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let offset = self
-            .tokens
-            .stream()
-            .span(token)
-            .map(|span| span.start)
-            .unwrap_or(self.source.len() as u32);
-        let (line, column) = utils::line_col(self.source, offset);
+        let position = self.tokens.stream().position(token).expect("invalid token");
+        let (line, column) = utils::line_col(self.source, position);
         self.diagnostics.push(Diagnostic {
             token,
             line,
@@ -348,16 +324,13 @@ impl<'a> Parser<'a> {
 
     fn expect(&mut self, kind: impl Into<TokenKind>) -> TokenId {
         let kind = kind.into();
-
-        if let Some(token) = self.bump_if(kind) {
-            token
-        } else {
-            let actual_kind = self.tokens.peek_kind();
-            let pos = self.tokens.current();
-
-            self.error(pos, format!("expected {kind:?}, found {actual_kind:?}"));
-            pos
-        }
+        bump!(self, kind).unwrap_or_else(|| {
+            self.error(
+                self.tokens.current(),
+                format!("expected {kind:?}, found {:?}", peek!(self)),
+            );
+            self.tokens.current()
+        })
     }
 
     pub fn parse(&mut self) -> Vec<NodeId> {
@@ -373,25 +346,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr_with_min_binding_power(&mut self, min_binding_power: BindingPower) -> NodeId {
-        let mut lhs = match self.tokens.peek_kind() {
+        let mut lhs = match peek!(self) {
             Some(token!(! | ~ | - | ++ | --)) => {
-                let op = self.bump();
+                let op = bump!(self);
                 let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
                 self.ast.push(Expr::Unary { op, operand })
             }
             Some(TokenKind::Literal(literal)) => self.parse_literal(literal),
             Some(token!(true | false)) => {
-                let token = self.bump();
+                let token = bump!(self);
                 self.ast.push(Expr::Literal(ast::Literal::Bool { token }))
             }
-            Some(token!(processor)) if self.at(1, token!(.)) => {
-                self.bump();
-                self.bump();
+            Some(token!(processor)) if peek!(self, +1, token!(.)) => {
+                bump!(self);
+                bump!(self);
                 let name = self.expect(TokenKind::Identifier);
                 self.ast.push(Expr::ProcessorProperty { name })
             }
             Some(TokenKind::Identifier | token!(processor)) => {
-                let token = self.bump();
+                let token = bump!(self);
                 self.ast.push(Expr::Ident { token })
             }
             Some(token!('(')) => {
@@ -399,19 +372,19 @@ impl<'a> Parser<'a> {
                 self.ast.push(Expr::Parentheses { paren, inner })
             }
             Some(token) if token.is_type_like() => {
-                let token = self.bump();
+                let token = bump!(self);
                 self.ast.push(Expr::Ident { token })
             }
             peeked => {
                 let message = format!("expected expression, found {peeked:?}");
-                let token = self.bump();
+                let token = bump!(self);
                 self.error(token, message);
                 self.ast.push(Node::Error { token })
             }
         };
 
         loop {
-            lhs = match self.tokens.peek_kind() {
+            lhs = match peek!(self) {
                 Some(token!('(')) => self.parse_call(lhs),
                 Some(token!('[')) => self.parse_bracketed_suffix(lhs),
                 Some(token!(.)) => self.parse_field(lhs),
@@ -421,14 +394,14 @@ impl<'a> Parser<'a> {
                     None => break,
                 },
                 Some(token!(++ | --)) => {
-                    let op = self.bump();
+                    let op = bump!(self);
                     self.ast.push(Expr::PostfixUnary { op, operand: lhs })
                 }
                 _ => break,
             };
         }
 
-        while let Some(token) = self.tokens.peek_kind() {
+        while let Some(token) = peek!(self) {
             let Some(infix) = Infix::from_token(token) else {
                 break;
             };
@@ -439,13 +412,11 @@ impl<'a> Parser<'a> {
 
             lhs = match infix {
                 Infix::Ternary => {
-                    let (question, then_branch, _, else_branch) = expect!(
-                        self,
-                        token!(?),
-                        self.parse_expr(),
-                        token!(:),
-                        self.parse_expr_with_min_binding_power(binding_power.min_for_rhs)
-                    );
+                    let question = self.expect(token!(?));
+                    let then_branch = self.parse_expr();
+                    self.expect(token!(:));
+                    let else_branch =
+                        self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
 
                     self.ast.push(Expr::Ternary {
                         question,
@@ -455,7 +426,7 @@ impl<'a> Parser<'a> {
                     })
                 }
                 Infix::Binary(bin_op) => {
-                    let op = self.bump();
+                    let op = bump!(self);
                     let rhs = self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
                     self.ast.push(if bin_op.is_assignment() {
                         Expr::Assign {
@@ -474,7 +445,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
-        let (_, name) = expect!(self, token!(::), TokenKind::Identifier);
+        self.expect(token!(::));
+        let name = self.expect(TokenKind::Identifier);
         self.ast.push(Expr::ScopeAccess { name, base })
     }
 
@@ -487,28 +459,23 @@ impl<'a> Parser<'a> {
     ) -> (TokenId, Vec<T>, TokenId) {
         let (start, separator, stop) = (start.into(), separator.into(), stop.into());
 
-        expect!(
-            self,
-            self.expect(start),
-            {
-                let mut items = Vec::new();
-                while !self.peek_is_stop(stop) {
-                    items.push(parse(self));
-                    if self.bump_if(separator).is_none() {
-                        break;
-                    }
-                }
-                items
-            },
-            self.expect_stop(stop)
-        )
+        let start = self.expect(start);
+        let mut items = vec![];
+        while !self.peek_is_stop(stop) {
+            items.push(parse(self));
+            if bump!(self, separator).is_none() {
+                break;
+            }
+        }
+        let stop = self.expect_stop(stop);
+        (start, items, stop)
     }
 
     fn peek_is_stop(&self, stop: TokenKind) -> bool {
-        if stop == token!(']') && self.tokens.peek_kind() == Some(token!("]]")) {
+        if stop == token!(']') && peek!(self, token!("]]")) {
             return true;
         }
-        self.tokens.peek_kind() == Some(stop)
+        peek!(self, stop)
     }
 
     fn expect_stop(&mut self, stop: TokenKind) -> TokenId {
@@ -523,13 +490,13 @@ impl<'a> Parser<'a> {
         if let Some(id) = self.split_bracket_at {
             if self.tokens.peek_id() == Some(id) {
                 self.split_bracket_at = None;
-                self.bump();
+                bump!(self);
                 return id;
             }
         }
 
-        match self.tokens.peek_kind() {
-            Some(token!(']')) => self.bump(),
+        match peek!(self) {
+            Some(token!(']')) => bump!(self),
             Some(token!("]]")) => {
                 let id = self
                     .tokens
@@ -573,17 +540,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bracket_term(&mut self) -> BracketTerm {
-        let start = if self.tokens.peek_kind() != Some(token!(:)) {
-            Some(self.parse_expr())
-        } else {
-            None
-        };
+        let start = peek!(self, not token!(:) => self.parse_expr());
 
-        if self.bump_if(token!(:)).is_some() {
-            let end = if !matches!(
-                self.tokens.peek_kind(),
-                Some(token!(']') | token!("]]") | token!(,))
-            ) {
+        if bump!(self, token!(:)).is_some() {
+            let end = if !peek_matches!(self, Some(token!(']' | "]]" | ,))) {
                 Some(self.parse_expr())
             } else {
                 None
@@ -603,12 +563,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_field(&mut self, base: NodeId) -> NodeId {
-        let (_, name) = expect!(self, token!(.), TokenKind::Identifier);
+        self.expect(token!(.));
+        let name = self.expect(TokenKind::Identifier);
+
         self.ast.push(Expr::Field { name, base })
     }
 
     fn parse_literal(&mut self, literal: Literal) -> NodeId {
-        let token = self.bump();
+        let token = bump!(self);
         let node = match literal {
             Literal::Int32 => ast::Literal::Int32 { token },
             Literal::Int64 => ast::Literal::Int64 { token },
@@ -626,12 +588,12 @@ impl<'a> Parser<'a> {
             self.tokens.clone().nth(2).map(|(_, token)| token.kind),
             Some(token!('{') | token!(loop) | token!(for) | token!(while))
         );
-        if self.tokens.peek_kind() == Some(TokenKind::Identifier)
-            && self.at(1, token!(:))
+        if peek!(self, TokenKind::Identifier)
+            && peek!(self, +1, token!(:))
             && starts_labellable_stmt
         {
-            let label = self.bump();
-            self.bump();
+            let label = bump!(self);
+            bump!(self);
             Some(label)
         } else {
             None
@@ -641,7 +603,7 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> NodeId {
         let label = self.try_parse_label();
 
-        match self.tokens.peek_kind() {
+        match peek!(self) {
             Some(token!('{')) => self.parse_block(label),
             Some(token!(let)) => self.parse_let(),
             Some(token!(var)) => self.parse_var(),
@@ -691,10 +653,10 @@ impl<'a> Parser<'a> {
 
     fn parse_container_items(&mut self) -> Vec<NodeId> {
         let mut items = Vec::new();
-        while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
-            if matches!(self.tokens.peek_kind(), Some(token!(input | output))) {
+        while !peek_matches!(self, Some(token!('}')) | None) {
+            if peek_matches!(self, Some(token!(input | output))) {
                 items.extend(self.parse_endpoint_group());
-            } else if matches!(self.tokens.peek_kind(), Some(token!(node))) {
+            } else if peek!(self, token!(node)) {
                 items.extend(self.parse_node_group());
             } else {
                 items.push(self.parse_statement());
@@ -705,14 +667,14 @@ impl<'a> Parser<'a> {
 
     fn parse_break(&mut self) -> NodeId {
         let keyword = self.expect(token!(break));
-        let target = (self.tokens.peek_kind() == Some(TokenKind::Identifier)).then(|| self.bump());
+        let target = bump!(self, TokenKind::Identifier);
         self.expect(token!(;));
         self.ast.push(Stmt::BreakStmt { keyword, target })
     }
 
     fn parse_continue(&mut self) -> NodeId {
         let keyword = self.expect(token!(continue));
-        let target = (self.tokens.peek_kind() == Some(TokenKind::Identifier)).then(|| self.bump());
+        let target = bump!(self, TokenKind::Identifier);
         self.expect(token!(;));
         self.ast.push(Stmt::ContinueStmt { keyword, target })
     }
@@ -739,11 +701,11 @@ impl<'a> Parser<'a> {
 
     fn parse_import(&mut self) -> NodeId {
         let keyword = self.expect(token!(import));
-        let path = if self.tokens.peek_kind() == Some(TokenKind::Literal(Literal::String)) {
-            vec![self.bump()]
+        let path = if peek!(self, Literal::String) {
+            vec![bump!(self)]
         } else {
             let mut path = vec![self.expect(TokenKind::Identifier)];
-            while self.bump_if(token!(.)).is_some() {
+            while bump!(self, token!(.)).is_some() {
                 path.push(self.expect(TokenKind::Identifier));
             }
             path
@@ -774,14 +736,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_using_stmt(&mut self) -> NodeId {
-        let (keyword, name, _, target, _) = expect!(
-            self,
-            token!(using),
-            TokenKind::Identifier,
-            token!(=),
-            self.parse_expr(),
-            token!(;)
-        );
+        let keyword = self.expect(token!(using));
+        let name = self.expect(TokenKind::Identifier);
+        self.expect(token!(=));
+        let target = self.parse_expr();
+        self.expect(token!(;));
+
         let decl = self.ast.push(Decl::Alias {
             keyword,
             kind: ast::AliasKind::Using,
@@ -796,42 +756,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_typed_decl_inner(&mut self, consume_semicolon: bool, is_external: bool) -> NodeId {
-        let (ty, name) = expect!(self, self.parse_type(), TokenKind::Identifier);
+        let ty = self.parse_type();
+        let name = self.expect(TokenKind::Identifier);
 
-        if self.tokens.peek_kind() == Some(token!(<))
-            || self.tokens.peek_kind() == Some(token!('('))
-        {
+        if peek_matches!(self, Some(token!(< | '('))) {
             let generics = self.parse_optional_generics();
             return self.parse_function_decl(Some(ty), name, generics);
         }
 
         let mut declarators = vec![Declarator {
             name,
-            init: expect!(
-                self,
-                if token!(=) {
-                    self.parse_expr()
-                }
-            )
-            .map(|(_, init)| init),
+            init: bump!(self, token!(=) => self.parse_expr()),
         }];
-        while self.tokens.peek_kind() == Some(token!(,)) {
-            self.bump();
+        while peek!(self, token!(,)) {
+            bump!(self);
 
-            let (name, init) = expect!(
-                self,
-                TokenKind::Identifier,
-                if token!(=) {
-                    self.parse_expr()
-                }
-            );
-            declarators.push(Declarator {
-                name,
-                init: init.map(|(_, init)| init),
-            });
+            let name = self.expect(TokenKind::Identifier);
+            let init = peek!(self, token!(=) => { bump!(self); self.parse_expr() });
+            declarators.push(Declarator { name, init });
         }
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let attributes = peek!(self, token!("[[")).then(|| self.parse_attribute_list());
         if consume_semicolon {
             self.expect(token!(;));
         }
@@ -846,23 +790,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
-        expect!(
-            self,
-            if peek token!(<) {
-                self.parse_list(
-                    token!(<),
-                    |parser| parser.expect(TokenKind::Identifier),
-                    token!(,),
-                    token!(>),
-                )
-            }
-        )
-        .map(|(_, generics, _)| generics)
-        .unwrap_or_default()
+        if peek!(self, token!(<)) {
+            let (_, generics, _) = self.parse_list(
+                token!(<),
+                |parser| parser.expect(TokenKind::Identifier),
+                token!(,),
+                token!(>),
+            );
+            generics
+        } else {
+            Vec::new()
+        }
     }
 
     fn parse_param(&mut self) -> NodeId {
-        let (ty, name) = expect!(self, self.parse_type(), TokenKind::Identifier);
+        let ty = self.parse_type();
+        let name = self.expect(TokenKind::Identifier);
 
         self.ast.push(Decl::Var {
             role: VarRole::Parameter,
@@ -885,9 +828,8 @@ impl<'a> Parser<'a> {
         generics: Vec<TokenId>,
     ) -> NodeId {
         let params = self.parse_params();
-        let is_const = self.bump_if(token!(const)).is_some();
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let is_const = bump!(self, token!(const)).is_some();
+        let attributes = peek!(self, token!("[[")).then(|| self.parse_attribute_list());
         let body = self.parse_block(None);
 
         self.ast.push(Item::FunctionDecl {
@@ -923,12 +865,12 @@ impl<'a> Parser<'a> {
     fn parse_namespace(&mut self) -> NodeId {
         let keyword = self.expect(token!(namespace));
         let mut segments = vec![self.expect(TokenKind::Identifier)];
-        while self.bump_if(token!(::)).is_some() {
+        while bump!(self, token!(::)).is_some() {
             segments.push(self.expect(TokenKind::Identifier));
         }
         let params = self.parse_optional_specialisation_params();
 
-        if self.bump_if(token!(=)).is_some() {
+        bump!(self, token!(=) => {
             let target = self.parse_expr();
             self.expect(token!(;));
             let name = *segments.last().expect("namespace has at least one segment");
@@ -938,10 +880,9 @@ impl<'a> Parser<'a> {
                 name,
                 target,
             });
-        }
+        });
 
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let attributes = peek!(self, token!("[[")).then(|| self.parse_attribute_list());
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));
@@ -956,19 +897,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
-        expect!(self, if peek token!('(') {
-            self.parse_parenthetical_list(|parser| parser.parse_specialisation_param())
-        })
-        .map(|(_, params, _)| params)
-        .unwrap_or_default()
+        peek!(self, token!('('))
+            .then(|| {
+                self.parse_parenthetical_list(|parser| parser.parse_specialisation_param())
+                    .1
+            })
+            .unwrap_or_default()
     }
 
     fn parse_specialisation_param(&mut self) -> NodeId {
-        match self.tokens.peek_kind() {
+        match peek!(self) {
             Some(token!(using)) => {
-                let keyword = self.bump();
+                let keyword = bump!(self);
                 let name = self.expect(TokenKind::Identifier);
-                let target = self.bump_if(token!(=)).map(|_| self.parse_type());
+                let target = peek!(self, token!(=) => { bump!(self); self.parse_type() });
                 self.ast.push(Decl::Alias {
                     keyword,
                     kind: ast::AliasKind::Using,
@@ -977,9 +919,9 @@ impl<'a> Parser<'a> {
                 })
             }
             Some(token!(processor)) => {
-                let keyword = self.bump();
+                let keyword = bump!(self);
                 let name = self.expect(TokenKind::Identifier);
-                let target = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                let target = peek!(self, token!(=) => { bump!(self); self.parse_expr() });
                 self.ast.push(Decl::Alias {
                     keyword,
                     kind: ast::AliasKind::Processor,
@@ -988,9 +930,9 @@ impl<'a> Parser<'a> {
                 })
             }
             Some(token!(namespace)) => {
-                let keyword = self.bump();
+                let keyword = bump!(self);
                 let name = self.expect(TokenKind::Identifier);
-                let target = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                let target = peek!(self, token!(=) => { bump!(self); self.parse_expr() });
                 self.ast.push(Decl::Alias {
                     keyword,
                     kind: ast::AliasKind::Namespace,
@@ -1001,7 +943,7 @@ impl<'a> Parser<'a> {
             _ => {
                 let ty = self.parse_type();
                 let name = self.expect(TokenKind::Identifier);
-                let init = self.bump_if(token!(=)).map(|_| self.parse_expr());
+                let init = peek!(self, token!(=) => { bump!(self); self.parse_expr() });
                 self.ast.push(Decl::Var {
                     role: VarRole::SpecialisationValue,
                     ty: Some(ty),
@@ -1019,10 +961,8 @@ impl<'a> Parser<'a> {
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
 
-        if matches!(keyword_kind, Some(token!(processor | graph)))
-            && self.tokens.peek_kind() == Some(token!(=))
-        {
-            self.bump();
+        if matches!(keyword_kind, Some(token!(processor | graph))) && peek!(self, token!(=)) {
+            bump!(self);
             let target = self.parse_expr();
             self.expect(token!(;));
             return self.ast.push(Item::ModuleAlias {
@@ -1033,8 +973,7 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let attributes = peek!(self, token!("[[")).then(|| self.parse_attribute_list());
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));
@@ -1066,9 +1005,9 @@ impl<'a> Parser<'a> {
 
     fn parse_node_group(&mut self) -> Vec<NodeId> {
         let keyword = self.expect(token!(node));
-        if self.bump_if(token!('{')).is_some() {
+        if bump!(self, token!('{')).is_some() {
             let mut nodes = Vec::new();
-            while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+            while !peek_matches!(self, Some(token!('}')) | None) {
                 nodes.push(self.parse_node_decl_entry(keyword));
             }
             self.expect(token!('}'));
@@ -1080,15 +1019,13 @@ impl<'a> Parser<'a> {
 
     fn parse_node_decl_entry(&mut self, keyword: TokenId) -> NodeId {
         let name = self.expect(TokenKind::Identifier);
-        let array_size = self.bump_if(token!('[')).map(|_| {
-            let size = if self.tokens.peek_kind() != Some(token!(']')) {
-                Some(self.parse_expr())
-            } else {
-                None
-            };
+        let array_size = if bump!(self, token!('[')).is_some() {
+            let size = peek!(self, token!(']') => self.parse_expr());
             self.expect(token!(']'));
             size
-        });
+        } else {
+            None
+        };
         self.expect(token!(=));
         let processor = self.parse_expr();
         self.expect(token!(;));
@@ -1097,7 +1034,7 @@ impl<'a> Parser<'a> {
             keyword,
             name,
             processor,
-            array_size: array_size.flatten(),
+            array_size,
         })
     }
 
@@ -1111,15 +1048,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_list(&mut self) -> Vec<NodeId> {
-        let braced = self.bump_if(token!('{')).is_some();
+        let braced = bump!(self, token!('{')).is_some();
 
         let mut connections = Vec::new();
         loop {
-            if braced && self.bump_if(token!('}')).is_some() {
+            if braced && bump!(self, token!('}')).is_some() {
                 break;
             }
 
-            if self.tokens.peek_kind() == Some(token!(if)) {
+            if peek!(self, token!(if)) {
                 connections.push(self.parse_connection_if());
             } else {
                 connections.extend(self.parse_connection_chain());
@@ -1134,18 +1071,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_if(&mut self) -> NodeId {
-        let (keyword, _, cond, _, then_branch, else_branch) = expect!(
-            self,
-            token!(if),
-            token!('('),
-            self.parse_expr(),
-            token!(')'),
-            self.parse_connection_list(),
-            if token!(else) {
-                self.parse_connection_list()
-            }
-        );
-        let else_branch = else_branch.map(|(_, else_branch)| else_branch);
+        let keyword = self.expect(token!(if));
+        self.expect(token!('('));
+        let cond = self.parse_expr();
+        self.expect(token!(')'));
+        let then_branch = self.parse_connection_list();
+        let else_branch =
+            peek!(self, token!(else) => { bump!(self); self.parse_connection_list() });
 
         self.ast.push(Graph::ConnectionIf {
             keyword,
@@ -1160,22 +1092,21 @@ impl<'a> Parser<'a> {
         let mut connections = Vec::new();
         let mut sources = self.parse_connection_endpoints();
         loop {
-            let (arrow, delay, destinations) = expect!(
-                self,
-                token!(->),
-                if token!('[') {
-                    self.parse_expr(),
-                    token!(']'),
-                    token!(->)
-                },
-                self.parse_connection_endpoints()
-            );
+            let arrow = self.expect(token!(->));
+            let delay = peek!(self, token!('[') => {
+                bump!(self);
+                let delay = self.parse_expr();
+                self.expect(token!(']'));
+                self.expect(token!(->));
+                delay
+            });
+            let destinations = self.parse_connection_endpoints();
 
             if sources.len() > 1 && destinations.len() > 1 {
                 self.error(arrow, "many-to-many connections are not supported");
             }
 
-            let is_end_of_chain = self.tokens.peek_kind() != Some(token!(->));
+            let is_end_of_chain = peek!(self, not token!(->));
             if !is_end_of_chain {
                 if destinations.len() > 1 {
                     self.error(
@@ -1196,7 +1127,7 @@ impl<'a> Parser<'a> {
                 interpolation,
                 sources,
                 arrow,
-                delay: delay.map(|(_, delay, _, _)| delay),
+                delay,
                 destinations: destinations.clone(),
             }));
 
@@ -1210,7 +1141,7 @@ impl<'a> Parser<'a> {
 
     fn parse_connection_endpoints(&mut self) -> Vec<NodeId> {
         let mut endpoints = vec![self.parse_expr()];
-        while self.bump_if(token!(,)).is_some() {
+        while bump!(self, token!(,)).is_some() {
             endpoints.push(self.parse_expr());
         }
         endpoints
@@ -1236,7 +1167,9 @@ impl<'a> Parser<'a> {
                 };
 
                 if let Some(kind) = kind {
-                    let _ = expect!(self, token!('['), TokenKind::Identifier, token!(']'));
+                    self.expect(token!('['));
+                    self.expect(TokenKind::Identifier);
+                    self.expect(token!(']'));
                     return Some(kind);
                 }
 
@@ -1250,16 +1183,16 @@ impl<'a> Parser<'a> {
         let keyword = self.expect(token!(for));
         self.expect(token!('('));
 
-        let init = (self.tokens.peek_kind() != Some(token!(;))).then(|| self.parse_for_init());
+        let init = peek!(self, not token!(;) => self.parse_for_init());
 
-        let is_bounded_range_for = self.tokens.peek_kind() == Some(token!(')'))
+        let is_bounded_range_for = peek!(self, token!(')'))
             && matches!(
                 init.map(|id| self.ast.get(id)),
                 Some(Node::Stmt(Stmt::DeclStmt { .. }))
             );
 
         if is_bounded_range_for {
-            self.bump();
+            bump!(self);
             let body = self.parse_statement();
             return self.ast.push(Stmt::LoopStmt {
                 keyword,
@@ -1270,9 +1203,9 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(token!(;));
-        let cond = (self.tokens.peek_kind() != Some(token!(;))).then(|| self.parse_expr());
+        let cond = peek!(self, not token!(;) => self.parse_expr());
         self.expect(token!(;));
-        let update = (self.tokens.peek_kind() != Some(token!(')'))).then(|| self.parse_expr());
+        let update = peek!(self, not token!(')') => self.parse_expr());
         self.expect(token!(')'));
         let body = self.parse_statement();
 
@@ -1287,7 +1220,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_for_init(&mut self) -> NodeId {
-        match self.tokens.peek_kind() {
+        match peek!(self) {
             Some(token!(const)) => self.parse_typed_decl_inner(false, false),
             Some(token!(let)) => self.parse_let_or_var_inner(token!(let), VarRole::Let, false),
             Some(token!(var)) => self.parse_let_or_var_inner(token!(var), VarRole::Var, false),
@@ -1304,29 +1237,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn at(&self, offset: usize, kind: TokenKind) -> bool {
-        self.tokens
-            .clone()
-            .nth(offset)
-            .is_some_and(|(_, token)| token.kind == kind)
-    }
-
     fn looks_like_typed_decl(&self) -> bool {
         let mut offset = 0;
-        if !self.at(offset, TokenKind::Identifier) {
+        if !peek!(self, +offset, TokenKind::Identifier) {
             return false;
         }
         offset += 1;
         loop {
-            if self.at(offset, token!('(')) {
+            if peek!(self, +offset, token!('(')) {
                 match self.skip_to_matching_paren(offset) {
                     Some(next) => offset = next,
                     None => return false,
                 }
             }
-            if self.at(offset, token!(::)) || self.at(offset, token!(.)) {
+            if peek!(self, +offset, token!(::)) || peek!(self, +offset, token!(.)) {
                 offset += 1;
-                if !self.at(offset, TokenKind::Identifier) {
+                if !peek!(self, +offset, TokenKind::Identifier) {
                     return false;
                 }
                 offset += 1;
@@ -1335,9 +1261,9 @@ impl<'a> Parser<'a> {
             }
         }
         loop {
-            let next = if self.at(offset, token!(<)) {
+            let next = if peek!(self, +offset, token!(<)) {
                 self.skip_to_matching_angle_bracket(offset)
-            } else if self.at(offset, token!('[')) {
+            } else if peek!(self, +offset, token!('[')) {
                 self.skip_to_matching_bracket(offset)
             } else {
                 break;
@@ -1347,7 +1273,7 @@ impl<'a> Parser<'a> {
                 None => return false,
             }
         }
-        self.at(offset, TokenKind::Identifier)
+        peek!(self, +offset, TokenKind::Identifier)
     }
 
     fn skip_to_matching_angle_bracket(&self, mut offset: usize) -> Option<usize> {
@@ -1404,11 +1330,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_attribute(&mut self) -> (TokenId, Option<NodeId>) {
-        let key = match self.tokens.peek_kind() {
-            Some(TokenKind::Identifier | TokenKind::Keyword(_)) => self.bump(),
+        let key = match peek!(self) {
+            Some(TokenKind::Identifier | TokenKind::Keyword(_)) => bump!(self),
             _ => self.expect(TokenKind::Identifier),
         };
-        let value = self.bump_if(token!(:)).map(|_| self.parse_expr());
+        let value = peek!(self, token!(:) => { bump!(self); self.parse_expr() });
 
         (key, value)
     }
@@ -1424,33 +1350,33 @@ impl<'a> Parser<'a> {
     }
 
     fn looks_like_hoisted_endpoint(&self) -> bool {
-        self.tokens.peek_kind() == Some(TokenKind::Identifier) && self.at(1, token!(.))
+        peek!(self, TokenKind::Identifier) && peek!(self, +1, token!(.))
     }
 
     fn parse_hoisted_endpoint(&mut self, direction: TokenId) -> NodeId {
         let child = self.expect(TokenKind::Identifier);
-        let index = self.bump_if(token!('[')).map(|_| {
+        let index = peek!(self, token!('[') => {
+            bump!(self);
             let index = self.parse_expr();
             self.expect(token!(']'));
             index
         });
         self.expect(token!(.));
 
-        let target = if self.bump_if(token!(*)).is_some() {
+        let target = if bump!(self, token!(*)).is_some() {
             HoistTarget::Wildcard { prefix: None }
         } else {
             let name = self.expect(TokenKind::Identifier);
-            if self.bump_if(token!(*)).is_some() {
+            if bump!(self, token!(*)).is_some() {
                 HoistTarget::Wildcard { prefix: Some(name) }
             } else {
                 HoistTarget::Name(name)
             }
         };
 
-        let rename = self.bump_if(TokenKind::Identifier);
+        let rename = bump!(self, TokenKind::Identifier);
 
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let attributes = peek!(self, token!("[[") => self.parse_attribute_list());
         self.expect(token!(;));
 
         let name = match target {
@@ -1474,7 +1400,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
-        let types = if self.tokens.peek_kind() == Some(token!('(')) {
+        let types = if peek!(self, token!('(')) {
             let (_, types, _) = self.parse_parenthetical_list(|parser| parser.parse_type());
             types
         } else {
@@ -1482,12 +1408,11 @@ impl<'a> Parser<'a> {
         };
 
         let mut names = vec![self.parse_endpoint_name()];
-        while self.bump_if(token!(,)).is_some() {
+        while bump!(self, token!(,)).is_some() {
             names.push(self.parse_endpoint_name());
         }
 
-        let attributes =
-            (self.tokens.peek_kind() == Some(token!("[["))).then(|| self.parse_attribute_list());
+        let attributes = peek!(self, token!("[[") => self.parse_attribute_list());
         self.expect(token!(;));
 
         names
@@ -1508,12 +1433,9 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_name(&mut self) -> (TokenId, Option<NodeId>) {
         let name = self.expect(TokenKind::Identifier);
-        let size = self.bump_if(token!('[')).map(|_| {
-            let size = if self.tokens.peek_kind() != Some(token!(']')) {
-                Some(self.parse_expr())
-            } else {
-                None
-            };
+        let size = peek!(self, token!('[') => {
+            bump!(self);
+            let size = peek!(self, not token!(']') => self.parse_expr());
             self.expect(token!(']'));
             size
         });
@@ -1522,10 +1444,10 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_group(&mut self) -> Vec<NodeId> {
         let direction = expect_matches!(self, token!(input | output));
-        if self.tokens.peek_kind() == Some(token!('{')) {
-            self.bump();
+        if peek!(self, token!('{')) {
+            bump!(self);
             let mut endpoints = Vec::new();
-            while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+            while !peek_matches!(self, Some(token!('}')) | None) {
                 endpoints.extend(self.parse_endpoint_entry(direction));
             }
             self.expect(token!('}'));
@@ -1538,15 +1460,17 @@ impl<'a> Parser<'a> {
         if self.looks_like_hoisted_endpoint() {
             return vec![self.parse_hoisted_endpoint(direction)];
         }
-        let kind = if self.tokens.peek_kind() == Some(token!(event)) {
-            self.bump()
+
+        let kind = if peek!(self, token!(event)) {
+            bump!(self)
         } else {
             expect_identifier!(self, "value" | "stream")
         };
-        if self.tokens.peek_kind() == Some(token!('{')) {
-            self.bump();
+
+        if peek_matches!(self, Some(token!('{'))) {
+            bump!(self);
             let mut endpoints = Vec::new();
-            while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
+            while !peek_matches!(self, Some(token!('}')) | None) {
                 endpoints.extend(self.parse_endpoint_member(direction, kind));
             }
             self.expect(token!('}'));
@@ -1557,18 +1481,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self, label: Option<TokenId>) -> NodeId {
-        let (brace, stmts, _) = expect!(
-            self,
-            token!('{'),
-            {
-                let mut stmts = Vec::new();
-                while !matches!(self.tokens.peek_kind(), Some(token!('}')) | None) {
-                    stmts.push(self.parse_statement());
-                }
-                stmts
-            },
-            token!('}')
-        );
+        let brace = self.expect(token!('{'));
+        let mut stmts = Vec::new();
+        while !peek_matches!(self, Some(token!('}')) | None) {
+            stmts.push(self.parse_statement());
+        }
+        self.expect(token!('}'));
 
         self.ast.push(Stmt::Block {
             brace,
@@ -1594,7 +1512,7 @@ impl<'a> Parser<'a> {
         self.expect(keyword);
 
         let mut declarators = vec![self.parse_let_declarator()];
-        while self.bump_if(token!(,)).is_some() {
+        while bump!(self, token!(,)).is_some() {
             declarators.push(self.parse_let_declarator());
         }
 
@@ -1613,7 +1531,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_let_declarator(&mut self) -> Declarator {
-        let (name, _, init) = expect!(self, TokenKind::Identifier, token!(=), self.parse_expr());
+        let name = self.expect(TokenKind::Identifier);
+        self.expect(token!(=));
+        let init = self.parse_expr();
         Declarator {
             name,
             init: Some(init),
@@ -1621,37 +1541,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if(&mut self) -> NodeId {
-        let (keyword, is_const, _, cond, _, then_branch, else_branch) = expect!(
-            self,
-            token!(if),
-            if token!(const),
-            token!('('),
-            self.parse_expr(),
-            token!(')'),
-            self.parse_statement(),
-            if token!(else) {
-                self.parse_statement()
-            }
-        );
+        let keyword = self.expect(token!(if));
+        let is_const = bump!(self, token!(const));
+        self.expect(token!('('));
+        let cond = self.parse_expr();
+        self.expect(token!(')'));
+        let then_branch = self.parse_statement();
+        let else_branch = bump!(self, token!(else) => self.parse_statement());
 
         self.ast.push(Stmt::IfStmt {
             keyword,
             is_const: is_const.is_some(),
             cond,
             then_branch,
-            else_branch: else_branch.map(|(_, else_branch)| else_branch),
+            else_branch,
         })
     }
 
     fn parse_while(&mut self, label: Option<TokenId>) -> NodeId {
-        let (keyword, _, cond, _, body) = expect!(
-            self,
-            token!(while),
-            token!('('),
-            self.parse_expr(),
-            token!(')'),
-            self.parse_statement()
-        );
+        let keyword = self.expect(token!(while));
+        self.expect(token!('('));
+        let cond = self.parse_expr();
+        self.expect(token!(')'));
+        let body = self.parse_statement();
 
         self.ast.push(Stmt::WhileStmt {
             keyword,
@@ -1662,45 +1574,40 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_loop(&mut self, label: Option<TokenId>) -> NodeId {
-        let (keyword, count, body) = expect!(
-            self,
-            token!(loop),
-            if token!('(') {
-                self.parse_expr(), token!(')')
-            },
-            self.parse_statement()
-        );
+        let keyword = self.expect(token!(loop));
+        let count = bump!(self, token!('(') => {
+            let count = self.parse_expr();
+            self.expect(token!(')'));
+            count
+        });
+        let body = self.parse_statement();
 
         self.ast.push(Stmt::LoopStmt {
             keyword,
             label,
-            count: count.map(|(_, count, _)| count),
+            count,
             body,
         })
     }
 
     fn parse_return(&mut self) -> NodeId {
-        let (keyword, value, _) = expect!(
-            self,
-            token!(return),
-            if !peek token!(;) {
-                self.parse_expr()
-            },
-            token!(;)
-        );
+        let keyword = self.expect(token!(return));
+        let value = peek!(self, not token!(;) => self.parse_expr());
+        self.expect(token!(;));
 
         self.ast.push(Stmt::ReturnStmt { keyword, value })
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
-        let (expr, _) = expect!(self, self.parse_expr(), token!(;));
+        let expr = self.parse_expr();
+        self.expect(token!(;));
         self.ast.push(Stmt::ExprStmt { expr })
     }
 
     fn parse_type(&mut self) -> NodeId {
-        let is_const = self.bump_if(token!(const)).is_some();
+        let is_const = bump!(self, token!(const)).is_some();
         let mut ty = self.parse_type_base();
-        let is_ref = self.bump_if(token!(&)).is_some();
+        let is_ref = bump!(self, token!(&)).is_some();
 
         if is_const || is_ref {
             ty = self.ast.push(Expr::TypeModifier {
@@ -1714,18 +1621,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_base(&mut self) -> NodeId {
-        let mut ty = match self.tokens.peek_kind() {
+        let mut ty = match peek!(self) {
             Some(kind) if kind.is_type_like() => self.parse_qualified_name(),
             peeked => {
                 let message = format!("expected type, found {peeked:?}");
-                let token = self.bump();
+                let token = bump!(self);
                 self.error(token, message);
                 self.ast.push(Node::Error { token })
             }
         };
 
         loop {
-            ty = match self.tokens.peek_kind() {
+            ty = match peek!(self) {
                 Some(token!('[')) => self.parse_bracketed_suffix(ty),
                 Some(token!(<)) => self.parse_vector_size_suffix(ty),
                 Some(token!(.)) => self.parse_field(ty),
@@ -1738,14 +1645,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_qualified_name(&mut self) -> NodeId {
-        let token = self.bump();
+        let token = bump!(self);
         let mut name = self.ast.push(Expr::Ident { token });
 
         loop {
-            if self.tokens.peek_kind() == Some(token!('(')) {
+            if peek!(self, token!('(')) {
                 name = self.parse_call(name);
             }
-            if self.tokens.peek_kind() == Some(token!(::)) {
+            if peek!(self, token!(::)) {
                 name = self.parse_scope_access(name);
             } else {
                 break;
@@ -1756,12 +1663,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_vector_size_suffix(&mut self, element: NodeId) -> NodeId {
-        let (angle, term, _) = expect!(
-            self,
-            token!(<),
-            self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()),
-            token!(>)
-        );
+        let angle = self.expect(token!(<));
+        let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
+        self.expect(token!(>));
 
         self.ast.push(Expr::VectorSizeSuffix {
             angle,
@@ -1775,14 +1679,13 @@ impl<'a> Parser<'a> {
         let ast_len = self.ast.len();
         let diagnostics_len = self.diagnostics.len();
 
-        let angle = self.bump();
+        let angle = bump!(self);
         let mut terms = vec![self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base())];
-        while self.bump_if(token!(,)).is_some() {
+        while bump!(self, token!(,)).is_some() {
             terms.push(self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()));
         }
 
-        let succeeded =
-            self.diagnostics.len() == diagnostics_len && self.tokens.peek_kind() == Some(token!(>));
+        let succeeded = self.diagnostics.len() == diagnostics_len && peek!(self, token!(>));
 
         if !succeeded {
             self.tokens = tokens_checkpoint;
@@ -1791,7 +1694,7 @@ impl<'a> Parser<'a> {
             return None;
         }
 
-        self.bump();
+        bump!(self);
         Some(self.ast.push(Expr::VectorSizeSuffix {
             angle,
             element,

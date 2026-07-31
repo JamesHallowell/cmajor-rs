@@ -84,10 +84,6 @@ impl<'a> NonTrivialTokenStreamIterator<'a> {
         self.clone().next()
     }
 
-    pub fn peek_after(&self, token: TokenId) -> Option<Token> {
-        self.stream().get(TokenId(token.0 + 1))
-    }
-
     pub fn peek_id(&self) -> Option<TokenId> {
         self.peek().map(|(id, _)| id)
     }
