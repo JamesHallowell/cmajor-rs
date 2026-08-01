@@ -26,7 +26,7 @@ impl TokenStream {
                 *position += token.len;
                 Some((id, token_position))
             })
-            .collect::<SecondaryArena<TokenId, u32>>();
+            .collect();
 
         Self { tokens, positions }
     }
@@ -40,13 +40,13 @@ impl TokenStream {
         self.tokens[id]
     }
 
-    pub fn position(&self, id: TokenId) -> Option<u32> {
-        self.positions.get(id).copied()
+    pub fn position(&self, id: TokenId) -> u32 {
+        self.positions[id]
     }
 
     pub fn span(&self, id: TokenId) -> Option<Range<u32>> {
         let token = self.get(id);
-        let start = self.position(id)?;
+        let start = self.position(id);
         Some(start..start + token.len)
     }
 
@@ -68,7 +68,6 @@ impl TokenStream {
 
 #[derive(Debug, Clone)]
 pub struct TokenStreamIterator<'a> {
-    tokens: &'a TokenStream,
     iter: ArenaIter<'a, TokenId, Token>,
 }
 
@@ -78,25 +77,8 @@ pub struct NonTrivialTokenStreamIterator<'a> {
 }
 
 impl<'a> TokenStreamIterator<'a> {
-    pub fn stream(&self) -> &TokenStream {
-        self.tokens
-    }
-
     pub fn ignore_trivia(self) -> NonTrivialTokenStreamIterator<'a> {
         NonTrivialTokenStreamIterator { iter: self }
-    }
-}
-
-impl<'a> NonTrivialTokenStreamIterator<'a> {
-    pub fn stream(&self) -> &TokenStream {
-        self.iter.stream()
-    }
-
-    pub fn peek(&self) -> (TokenId, Token) {
-        self.clone().next().unwrap_or_else(|| {
-            let eof = self.stream().end_of_file();
-            (eof, self.stream().get(eof))
-        })
     }
 }
 
@@ -126,7 +108,6 @@ impl<'a> IntoIterator for &'a TokenStream {
     type IntoIter = TokenStreamIterator<'a>;
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
-            tokens: self,
             iter: self.tokens.into_iter(),
         }
     }

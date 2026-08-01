@@ -4,7 +4,9 @@ use crate::{
         self, Ast, BracketTerm, Decl, Declarator, Expr, Graph, HoistTarget, HoistedPath,
         InterpolationKind, Item, Node, NodeId, Stmt, VarRole,
     },
-    lexer::{Literal, NonTrivialTokenStreamIterator, TokenId, TokenKind, TokenStream, tokenize},
+    lexer::{
+        Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
+    },
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
     skip_to_matching, token, utils,
 };
@@ -200,7 +202,8 @@ impl Infix {
 
 #[derive(Clone)]
 struct Parser<'a> {
-    tokens: NonTrivialTokenStreamIterator<'a>,
+    tokens: &'a TokenStream,
+    iter: NonTrivialTokenStreamIterator<'a>,
     source: &'a str,
     ast: Ast,
     diagnostics: Vec<Diagnostic>,
@@ -211,10 +214,10 @@ macro_rules! expect_matches {
         if matches!($parser.peek(), $expected $(if $guard)?) {
             $parser.advance()
         } else {
-            let (id, actual_kind) = $parser.tokens.peek();
+            let (id, token) = $parser.peek_verbose();
             $parser.error(
                 id,
-                format!("expected {}, found {actual_kind:?}", stringify!($expected)),
+                format!("expected {}, found {:?}", stringify!($expected), token.kind),
             );
             id
         }
@@ -224,10 +227,10 @@ macro_rules! expect_matches {
 macro_rules! expect_identifier {
     ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
         {
-            let (id, token) = $parser.tokens.peek();
+            let (id, token) = $parser.peek_verbose();
             match token.kind {
                 TokenKind::Identifier => {
-                    let text = $parser.tokens.stream().text($parser.source, id).unwrap_or_default();
+                    let text = $parser.tokens.text($parser.source, id).unwrap_or_default();
 
                     if matches!(text, $expected $(if $guard)?) {
                         $parser.advance()
@@ -322,7 +325,8 @@ macro_rules! list {
 impl<'a> Parser<'a> {
     fn new(tokens: &'a TokenStream, source: &'a str) -> Parser<'a> {
         Parser {
-            tokens: tokens.into_iter().ignore_trivia(),
+            tokens,
+            iter: tokens.into_iter().ignore_trivia(),
             source,
             ast: Ast::new(),
             diagnostics: Vec::new(),
@@ -330,11 +334,18 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> TokenKind {
-        self.tokens.peek().1.kind
+        self.peek_nth(0)
+    }
+
+    fn peek_verbose(&self) -> (TokenId, Token) {
+        self.iter.clone().next().unwrap_or_else(|| {
+            let eof = self.tokens.end_of_file();
+            (eof, self.tokens.get(eof))
+        })
     }
 
     fn peek_nth(&self, n: usize) -> TokenKind {
-        self.tokens
+        self.iter
             .clone()
             .nth(n)
             .map(|(_, token)| token.kind)
@@ -350,10 +361,7 @@ impl<'a> Parser<'a> {
     }
 
     fn text(&self, token: TokenId) -> &str {
-        self.tokens
-            .stream()
-            .text(self.source, token)
-            .unwrap_or_default()
+        self.tokens.text(self.source, token).unwrap_or_default()
     }
 
     fn at(&self, kind: impl Into<TokenKind>) -> bool {
@@ -369,10 +377,10 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> TokenId {
-        self.tokens
+        self.iter
             .next()
             .map(|(id, _)| id)
-            .unwrap_or_else(|| self.tokens.stream().end_of_file())
+            .unwrap_or_else(|| self.tokens.end_of_file())
     }
 
     fn advance_if(&mut self, token: impl Into<TokenKind>) -> Option<TokenId> {
@@ -385,11 +393,7 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let position = self
-            .tokens
-            .stream()
-            .position(token)
-            .unwrap_or(self.source.len() as u32);
+        let position = self.tokens.position(token);
 
         let (line, column) = utils::line_col(self.source, position);
         self.diagnostics.push(Diagnostic {
@@ -403,7 +407,7 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, kind: impl Into<TokenKind>) -> TokenId {
         let kind = kind.into();
         self.advance_if(kind).unwrap_or_else(|| {
-            let (id, token) = self.tokens.peek();
+            let (id, token) = self.peek_verbose();
             self.error(id, format!("expected {kind:?}, found {:?}", token.kind));
             id
         })
@@ -444,7 +448,7 @@ impl<'a> Parser<'a> {
                 self.ast.push(Expr::Ident { token })
             }
             token!('(') => {
-                let (paren, _) = self.tokens.peek();
+                let (paren, _) = self.peek_verbose();
                 let inner = list!(self, (, self.parse_expr(), ));
                 self.ast.push(Expr::Parentheses { paren, inner })
             }
@@ -533,7 +537,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
-        let (paren, _) = self.tokens.peek();
+        let (paren, _) = self.peek_verbose();
         let args = list!(self, (, self.parse_expr(), ));
         self.ast.push(Expr::Call {
             paren,
@@ -543,7 +547,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
-        let (start, _) = self.tokens.peek();
+        let (start, _) = self.peek_verbose();
         let terms = list!(self, [, self.parse_bracket_term(), ]);
 
         self.ast.push(Expr::Bracketed {
@@ -595,7 +599,7 @@ impl<'a> Parser<'a> {
 
     fn try_parse_label(&mut self) -> Option<TokenId> {
         let starts_labellable_stmt = matches!(
-            self.tokens.clone().nth(2).map(|(_, token)| token.kind),
+            self.iter.clone().nth(2).map(|(_, token)| token.kind),
             Some(token!('{') | token!(loop) | token!(for) | token!(while))
         );
         if self.at(TokenKind::Identifier) && self.peek_nth(1) == token!(:) && starts_labellable_stmt
@@ -624,7 +628,7 @@ impl<'a> Parser<'a> {
             token!(node) => {
                 let mut nodes = self.parse_node_group();
                 nodes.pop().unwrap_or_else(|| {
-                    let (token, _) = self.tokens.peek();
+                    let (token, _) = self.peek_verbose();
                     self.ast.push(Node::Error { token })
                 })
             }
@@ -637,7 +641,7 @@ impl<'a> Parser<'a> {
             token!(enum) => self.parse_enum(),
             token!(external) => self.parse_external_decl(),
             token!(processor)
-                if self.tokens.clone().nth(1).map(|(_, token)| token.kind) == Some(token!(.)) =>
+                if self.iter.clone().nth(1).map(|(_, token)| token.kind) == Some(token!(.)) =>
             {
                 self.parse_expr_stmt()
             }
@@ -645,7 +649,7 @@ impl<'a> Parser<'a> {
             token!(input | output) => {
                 let mut endpoints = self.parse_endpoint_group();
                 endpoints.pop().unwrap_or_else(|| {
-                    let (token, _) = self.tokens.peek();
+                    let (token, _) = self.peek_verbose();
                     self.ast.push(Node::Error { token })
                 })
             }
@@ -970,7 +974,7 @@ impl<'a> Parser<'a> {
 
     fn parse_container(&mut self) -> NodeId {
         let keyword = expect_matches!(self, token!(processor | graph | struct));
-        let keyword_kind = self.tokens.stream().get(keyword).kind;
+        let keyword_kind = self.tokens.get(keyword).kind;
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
 
@@ -1172,7 +1176,7 @@ impl<'a> Parser<'a> {
     fn parse_interpolation_if_present(&mut self) -> Option<InterpolationKind> {
         match self.peek_3() {
             (token!('['), TokenKind::Identifier, token!(']')) => {
-                let kind = match self.tokens.clone().nth(1).map(|(id, _)| self.text(id)) {
+                let kind = match self.iter.clone().nth(1).map(|(id, _)| self.text(id)) {
                     Some("none") => Some(InterpolationKind::None),
                     Some("latch") => Some(InterpolationKind::Latch),
                     Some("linear") => Some(InterpolationKind::Linear),
@@ -1254,15 +1258,17 @@ impl<'a> Parser<'a> {
     }
 
     fn looks_like_typed_decl(&self) -> bool {
-        let mut tokens = self.tokens.clone();
+        let mut tokens = self.iter.clone().peekable();
 
-        if tokens.peek().1.kind != TokenKind::Identifier {
+        let kind = |(_, token): &(TokenId, Token)| token.kind;
+
+        if tokens.peek().map(kind) != Some(TokenKind::Identifier) {
             return false;
         }
         tokens.next();
 
         loop {
-            if tokens.peek().1.kind == token!('(') {
+            if tokens.peek().map(kind) == Some(token!('(')) {
                 tokens = if let Ok(skipped) = skip_to_matching!(tokens, ()) {
                     skipped
                 } else {
@@ -1270,7 +1276,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if matches!(tokens.peek().1.kind, token!(:: | .)) {
+            if matches!(tokens.peek().map(kind), Some(token!(:: | .))) {
                 tokens.next();
                 if !matches!(tokens.next(), Some((_, token)) if token.kind == TokenKind::Identifier)
                 {
@@ -1282,9 +1288,9 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let skipped = match tokens.peek().1.kind {
-                token!(<) => skip_to_matching!(tokens, <>),
-                token!('[') => skip_to_matching!(tokens, []),
+            let skipped = match tokens.peek().map(kind) {
+                Some(token!(<)) => skip_to_matching!(tokens, <>),
+                Some(token!('[')) => skip_to_matching!(tokens, []),
                 _ => break,
             };
 
@@ -2270,11 +2276,11 @@ mod tests {
 
     #[test]
     fn chevron_suffix_wins_over_comparison_when_it_parses_cleanly() {
-        insta::assert_snapshot!(parse_expr("a<b>"), @r#"
+        insta::assert_snapshot!(parse_expr("a<b>"), @"
         VectorSizeSuffix
           a
           b
-        "#);
+        ");
     }
 
     #[test]
@@ -2343,14 +2349,14 @@ mod tests {
 
     #[test]
     fn type_sized_call_argument() {
-        insta::assert_snapshot!(parse_expr("Sine(float64<2>, 100.0f)"), @r#"
+        insta::assert_snapshot!(parse_expr("Sine(float64<2>, 100.0f)"), @"
         Call
           Sine
           VectorSizeSuffix
             float64
             2
           100.0f
-        "#);
+        ");
     }
 
     #[test]
@@ -2477,9 +2483,7 @@ mod tests {
 
     #[test]
     fn empty_connection_block() {
-        insta::assert_snapshot!(parse_stmt("connection {}"), @r#"
-        ConnectionDecl
-        "#);
+        insta::assert_snapshot!(parse_stmt("connection {}"), @"ConnectionDecl");
     }
 
     #[test]
@@ -2622,12 +2626,12 @@ mod tests {
     fn forward_branch_stmt() {
         insta::assert_snapshot!(
             parse_stmt("forward_branch (cond) -> (a, b);"),
-            @r#"
+            @"
         ForwardBranchStmt
           cond
           a
           b
-        "#
+        "
         );
     }
 
@@ -2655,13 +2659,13 @@ mod tests {
 
     #[test]
     fn slicing_expression() {
-        insta::assert_snapshot!(parse_expr("arr[1:3]"), @r#"
+        insta::assert_snapshot!(parse_expr("arr[1:3]"), @"
         Bracketed
           arr
           Slice
             1
             3
-        "#);
+        ");
     }
 
     #[test]
@@ -2679,24 +2683,24 @@ mod tests {
 
     #[test]
     fn hoisted_endpoint_named() {
-        insta::assert_snapshot!(parse_stmt("output child.out;"), @r#"EndpointDecl output child.out"#);
+        insta::assert_snapshot!(parse_stmt("output child.out;"), @"EndpointDecl output child.out");
     }
 
     #[test]
     fn hoisted_endpoint_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output child.*;"), @r#"EndpointDecl output child.*"#);
+        insta::assert_snapshot!(parse_stmt("output child.*;"), @"EndpointDecl output child.*");
     }
 
     #[test]
     fn hoisted_endpoint_prefixed_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @r#"EndpointDecl output g2.test*"#);
+        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @"EndpointDecl output g2.test*");
     }
 
     #[test]
     fn hoisted_endpoint_chained_through_nested_node() {
         insta::assert_snapshot!(
             parse_stmt("input q.unused.in;"),
-            @r#"EndpointDecl input q.unused.in"#
+            @"EndpointDecl input q.unused.in"
         );
     }
 
@@ -2786,7 +2790,7 @@ mod tests {
             dump("input { event int e; value float v; }", |parser| {
                 let items = parser.parse_endpoint_group();
                 parser.ast.push(Stmt::Block {
-                    brace: parser.tokens.peek().0,
+                    brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
                 })
@@ -2803,13 +2807,13 @@ mod tests {
 
     #[test]
     fn nested_subscript_splits_combined_close_bracket_token() {
-        insta::assert_snapshot!(parse_expr("a[b[c]]"), @r#"
+        insta::assert_snapshot!(parse_expr("a[b[c]]"), @"
         Bracketed
           a
           Bracketed
             b
             c
-        "#);
+        ");
     }
 
     #[test]
@@ -2872,7 +2876,7 @@ mod tests {
             dump("output stream { float32 a; int b; }", |parser| {
                 let items = parser.parse_container_items();
                 parser.ast.push(Stmt::Block {
-                    brace: parser.tokens.peek().0,
+                    brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
                 })
@@ -2893,7 +2897,7 @@ mod tests {
             dump("node b = B, c = C;", |parser| {
                 let items = parser.parse_node_group();
                 parser.ast.push(Stmt::Block {
-                    brace: parser.tokens.peek().0,
+                    brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
                 })
