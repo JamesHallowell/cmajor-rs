@@ -165,8 +165,6 @@ pub enum TokenKind {
     ColonColon,
     Comma,
     Dot,
-    DoubleBracketLeft,
-    DoubleBracketRight,
     Equal,
     EqualEqual,
     Error,

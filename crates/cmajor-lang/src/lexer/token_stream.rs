@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(tokens.current, TokenId(0));
 
         let result = skip_to_matching!(tokens, ()).expect("found a matching delimiter");
-        assert_eq!(result.current, TokenId(8));
+        assert_eq!(result.current, TokenId(9));
     }
 
     #[test]

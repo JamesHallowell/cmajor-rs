@@ -203,7 +203,6 @@ struct Parser<'a> {
     source: &'a str,
     ast: Ast,
     diagnostics: Vec<Diagnostic>,
-    split_bracket_at: Option<TokenId>,
 }
 
 macro_rules! expect_matches {
@@ -271,34 +270,54 @@ macro_rules! while_consuming {
 }
 
 macro_rules! list {
-    ($parser:ident, (,), $body:block) => {
+    ($parser:ident, (, $body:expr, )) => {
         list!(@impl $parser, token!('('), token!(,), token!(')'), $body)
     };
-    ($parser:ident, [,], $body:block) => {
+    ($parser:ident, [, $body:expr, ]) => {
         list!(@impl $parser, token!('['), token!(,), token!(']'), $body)
     };
-    ($parser:ident, {,}, $body:block) => {
+    ($parser:ident, {, $body:expr, }) => {
         list!(@impl $parser, token!('{'), token!(,), token!('}'), $body)
     };
-    ($parser:ident, <,>, $body:block) => {
+    ($parser:ident, <, $body:expr, >) => {
         list!(@impl $parser, token!(<), token!(,), token!(>), $body)
     };
-    ($parser:ident, [[,]], $body:block) => {
-        list!(@impl $parser, token!("[["), token!(,), token!("]]"), $body)
-    };
-    (@impl $parser:ident, $start:expr, $separator:expr, $stop:expr, $body:block) => {
+    ($parser:ident, [[, $body:expr, ]]) => {
         {
-            let start = $parser.expect($start);
+            $parser.expect(token!('['));
+            $parser.expect(token!('['));
+
             let mut items = vec![];
 
-            while !$parser.peek_is_stop($stop) {
+            while !matches!(
+                $parser.peek_2(),
+                Some((token!(']'), token!(']'))) | None
+            ) {
+                items.push($body);
+                if $parser.advance_if(token!(,)).is_none() {
+                    break;
+                }
+            }
+
+            $parser.expect(token!(']'));
+            $parser.expect(token!(']'));
+            items
+        }
+    };
+    (@impl $parser:ident, $start:expr, $separator:expr, $stop:pat, $body:expr) => {
+        {
+            $parser.expect($start);
+
+            let mut items = vec![];
+            until!($parser, $stop, {
                 items.push($body);
                 if $parser.advance_if($separator).is_none() {
                     break;
                 }
-            }
-            let stop = $parser.expect_stop($stop);
-            (start, items, stop)
+            });
+
+            expect_matches!($parser, $stop);
+            items
         }
     };
 }
@@ -310,12 +329,30 @@ impl<'a> Parser<'a> {
             source,
             ast: Ast::new(),
             diagnostics: Vec::new(),
-            split_bracket_at: None,
         }
     }
 
     fn peek(&self) -> Option<TokenKind> {
         self.tokens.peek_kind()
+    }
+
+    fn peek_nth(&self, n: usize) -> Option<TokenKind> {
+        self.tokens.clone().nth(n).map(|(_, token)| token.kind)
+    }
+
+    fn peek_2(&self) -> Option<(TokenKind, TokenKind)> {
+        Some((self.peek()?, self.peek_nth(1)?))
+    }
+
+    fn peek_3(&self) -> Option<(TokenKind, TokenKind, TokenKind)> {
+        Some((self.peek()?, self.peek_nth(1)?, self.peek_nth(2)?))
+    }
+
+    fn text(&self, token: TokenId) -> &str {
+        self.tokens
+            .stream()
+            .text(self.source, token)
+            .unwrap_or_default()
     }
 
     fn at(&self, kind: impl Into<TokenKind>) -> bool {
@@ -326,8 +363,8 @@ impl<'a> Parser<'a> {
         self.peek() != Some(kind.into())
     }
 
-    fn peek_nth(&self, n: usize) -> Option<TokenKind> {
-        self.tokens.clone().nth(n).map(|(_, token)| token.kind)
+    fn at_attribute_list(&self) -> bool {
+        self.peek_2() == Some((token!('['), token!('[')))
     }
 
     fn advance(&mut self) -> TokenId {
@@ -345,7 +382,11 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let position = self.tokens.stream().position(token).expect("invalid token");
+        let position = self
+            .tokens
+            .stream()
+            .position(token)
+            .unwrap_or(self.source.len() as u32);
         let (line, column) = utils::line_col(self.source, position);
         self.diagnostics.push(Diagnostic {
             token,
@@ -401,7 +442,8 @@ impl<'a> Parser<'a> {
                 self.ast.push(Expr::Ident { token })
             }
             Some(token!('(')) => {
-                let (paren, inner, _) = list!(self, (,), { self.parse_expr() });
+                let paren = self.tokens.peek_id().expect("token already peeked");
+                let inner = list!(self, (, self.parse_expr(), ));
                 self.ast.push(Expr::Parentheses { paren, inner })
             }
             Some(token) if token.is_type_like() => {
@@ -483,46 +525,9 @@ impl<'a> Parser<'a> {
         self.ast.push(Expr::ScopeAccess { name, base })
     }
 
-    fn peek_is_stop(&self, stop: TokenKind) -> bool {
-        if stop == token!(']') && self.at(token!("]]")) {
-            return true;
-        }
-        self.at(stop)
-    }
-
-    fn expect_stop(&mut self, stop: TokenKind) -> TokenId {
-        if stop == token!(']') {
-            self.expect_close_bracket()
-        } else {
-            self.expect(stop)
-        }
-    }
-
-    fn expect_close_bracket(&mut self) -> TokenId {
-        if let Some(id) = self.split_bracket_at {
-            if self.tokens.peek_id() == Some(id) {
-                self.split_bracket_at = None;
-                self.advance();
-                return id;
-            }
-        }
-
-        match self.peek() {
-            Some(token!(']')) => self.advance(),
-            Some(token!("]]")) => {
-                let id = self
-                    .tokens
-                    .peek_id()
-                    .expect("peeked \"]]\" token must exist");
-                self.split_bracket_at = Some(id);
-                id
-            }
-            _ => self.expect(token!(']')),
-        }
-    }
-
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
-        let (paren, args, _) = list!(self, (,), { self.parse_expr() });
+        let paren = self.tokens.peek_id().expect("token already peeked");
+        let args = list!(self, (, self.parse_expr(), ));
         self.ast.push(Expr::Call {
             paren,
             callee,
@@ -531,9 +536,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
-        let (start, terms, _) = list!(self, [,], {
-            self.parse_bracket_term()
-        });
+        let start = self.tokens.peek_id().expect("token already peeked");
+        let terms = list!(self, [, self.parse_bracket_term(), ]);
 
         self.ast.push(Expr::Bracketed {
             bracket: start,
@@ -546,11 +550,7 @@ impl<'a> Parser<'a> {
         let start = (!self.at(token!(:))).then(|| self.parse_expr());
 
         if self.advance_if(token!(:)).is_some() {
-            let end = if !matches!(self.peek(), Some(token!(']' | "]]" | ,))) {
-                Some(self.parse_expr())
-            } else {
-                None
-            };
+            let end = self.not_at(token!(']')).then(|| self.parse_expr());
             BracketTerm {
                 start,
                 end,
@@ -688,9 +688,7 @@ impl<'a> Parser<'a> {
         let cond = self.parse_expr();
         self.expect(token!(')'));
         self.expect(token!(->));
-        let (_, targets, _) = list!(self, (,), {
-            self.expect(TokenKind::Identifier)
-        });
+        let targets = list!(self, (, self.expect(TokenKind::Identifier), ));
         self.expect(token!(;));
         self.ast.push(Stmt::ForwardBranchStmt {
             keyword,
@@ -717,10 +715,7 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self) -> NodeId {
         let keyword = self.expect(token!(enum));
         let name = self.expect(TokenKind::Identifier);
-
-        let (_, values, _) = list!(self, {,}, {
-            self.expect(TokenKind::Identifier)
-        });
+        let values = list!(self, {, self.expect(TokenKind::Identifier), });
 
         self.ast.push(Item::EnumDecl {
             keyword,
@@ -778,7 +773,9 @@ impl<'a> Parser<'a> {
                 .then(|| self.parse_expr());
             declarators.push(Declarator { name, init });
         });
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         if consume_semicolon {
             self.expect(token!(;));
         }
@@ -794,10 +791,7 @@ impl<'a> Parser<'a> {
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
         if self.at(token!(<)) {
-            let (_, generics, _) = list!(self, <,>, {
-                self.expect(TokenKind::Identifier)
-            });
-            generics
+            list!(self, <, self.expect(TokenKind::Identifier), >)
         } else {
             Vec::new()
         }
@@ -817,8 +811,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
-        let (_, params, _) = list!(self, (,), { self.parse_param() });
-        params
+        list!(self, (, self.parse_param(), ))
     }
 
     fn parse_function_decl(
@@ -829,7 +822,9 @@ impl<'a> Parser<'a> {
     ) -> NodeId {
         let params = self.parse_params();
         let is_const = self.advance_if(token!(const)).is_some();
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         let body = self.parse_block(None);
 
         self.ast.push(Item::FunctionDecl {
@@ -882,7 +877,9 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));
@@ -897,9 +894,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
-        self.at(token!('('))
-            .then(|| list!(self, (,), { self.parse_specialisation_param() }).1)
-            .unwrap_or_default()
+        if self.at(token!('(')) {
+            list!(self, (, self.parse_specialisation_param(), ))
+        } else {
+            vec![]
+        }
     }
 
     fn parse_specialisation_param(&mut self) -> NodeId {
@@ -982,7 +981,9 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));
@@ -1019,12 +1020,18 @@ impl<'a> Parser<'a> {
 
             until!(self, token!('}'), {
                 nodes.push(self.parse_node_decl_entry(keyword));
+                self.expect(token!(;));
             });
 
             self.expect(token!('}'));
             nodes
         } else {
-            vec![self.parse_node_decl_entry(keyword)]
+            let mut nodes = vec![self.parse_node_decl_entry(keyword)];
+            while_consuming!(self, token!(,), {
+                nodes.push(self.parse_node_decl_entry(keyword));
+            });
+            self.expect(token!(;));
+            nodes
         }
     }
 
@@ -1037,7 +1044,6 @@ impl<'a> Parser<'a> {
         });
         self.expect(token!(=));
         let processor = self.parse_expr();
-        self.expect(token!(;));
 
         self.ast.push(Graph::NodeDecl {
             keyword,
@@ -1117,20 +1123,20 @@ impl<'a> Parser<'a> {
                 self.error(arrow, "many-to-many connections are not supported");
             }
 
-            let is_end_of_chain = self.not_at(token!(->));
-            if !is_end_of_chain {
+            let chain_continues = self.at(token!(->));
+            if chain_continues {
                 if destinations.len() > 1 {
                     self.error(
                         arrow,
                         "cannot chain a connection with multiple destinations",
                     );
-                } else if let Some(&dest) = destinations.first() {
-                    if matches!(self.ast.get(dest), Node::Expr(Expr::Field { .. })) {
-                        self.error(
-                            arrow,
-                            "cannot name an endpoint in the middle of a connection chain",
-                        );
-                    }
+                } else if let Some(&dest) = destinations.first()
+                    && matches!(self.ast.get(dest), Node::Expr(Expr::Field { .. }))
+                {
+                    self.error(
+                        arrow,
+                        "cannot name an endpoint in the middle of a connection chain",
+                    );
                 }
             }
 
@@ -1142,7 +1148,7 @@ impl<'a> Parser<'a> {
                 destinations: destinations.clone(),
             }));
 
-            if is_end_of_chain {
+            if !chain_continues {
                 break;
             }
             sources = destinations;
@@ -1159,15 +1165,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_interpolation_if_present(&mut self) -> Option<InterpolationKind> {
-        let mut peek = self.tokens.clone().map(|(id, token)| (id, token.kind));
-
-        match (peek.next(), peek.next(), peek.next()) {
-            (
-                Some((_, token!('['))),
-                Some((delay, TokenKind::Identifier)),
-                Some((_, token!(']'))),
-            ) => {
-                let kind = match self.tokens.stream().text(self.source, delay) {
+        match self.peek_3() {
+            Some((token!('['), TokenKind::Identifier, token!(']'))) => {
+                let kind = match self.tokens.clone().nth(1).map(|(id, _)| self.text(id)) {
                     Some("none") => Some(InterpolationKind::None),
                     Some("latch") => Some(InterpolationKind::Latch),
                     Some("linear") => Some(InterpolationKind::Linear),
@@ -1308,18 +1308,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_attribute_list(&mut self) -> Vec<(TokenId, Option<NodeId>)> {
-        let (_, attrs, _) = list!(self, [[,]], {
-            self.parse_attribute()
-        });
-        attrs
+        list!(self, [[, self.parse_attribute(), ]])
     }
 
     fn looks_like_hoisted_endpoint(&self) -> bool {
-        self.at(TokenKind::Identifier) && self.peek_nth(1) == Some(token!(.))
+        self.peek_2() == Some((TokenKind::Identifier, token!(.)))
     }
 
     fn parse_hoisted_endpoint(&mut self, direction: TokenId) -> NodeId {
-        let child = self.expect(TokenKind::Identifier);
+        let mut segments = vec![self.expect(TokenKind::Identifier)];
         let index = self.at(token!('[')).then(|| {
             self.advance();
             let index = self.parse_expr();
@@ -1327,6 +1324,11 @@ impl<'a> Parser<'a> {
             index
         });
         self.expect(token!(.));
+
+        while self.looks_like_hoisted_endpoint() {
+            segments.push(self.expect(TokenKind::Identifier));
+            self.expect(token!(.));
+        }
 
         let target = if self.advance_if(token!(*)).is_some() {
             HoistTarget::Wildcard { prefix: None }
@@ -1341,7 +1343,9 @@ impl<'a> Parser<'a> {
 
         let rename = self.advance_if(TokenKind::Identifier);
 
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         self.expect(token!(;));
 
         let name = match target {
@@ -1356,7 +1360,7 @@ impl<'a> Parser<'a> {
             name,
             size: None,
             hoisted: Some(HoistedPath {
-                segments: vec![child],
+                segments,
                 index,
                 target,
             }),
@@ -1366,8 +1370,7 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
         let types = if self.at(token!('(')) {
-            let (_, types, _) = list!(self, (,), { self.parse_type() });
-            types
+            list!(self, (, self.parse_type(), ))
         } else {
             vec![self.parse_type()]
         };
@@ -1377,7 +1380,9 @@ impl<'a> Parser<'a> {
             names.push(self.parse_endpoint_name());
         });
 
-        let attributes = self.at(token!("[[")).then(|| self.parse_attribute_list());
+        let attributes = self
+            .at_attribute_list()
+            .then(|| self.parse_attribute_list());
         self.expect(token!(;));
 
         names
@@ -1398,11 +1403,13 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_name(&mut self) -> (TokenId, Option<NodeId>) {
         let name = self.expect(TokenKind::Identifier);
-        let size = self.advance_if(token!('[')).and_then(|_| {
-            let size = self.not_at(token!(']')).then(|| self.parse_expr());
-            self.expect(token!(']'));
-            size
-        });
+        let size = (self.at(token!('[')) && !self.at_attribute_list())
+            .then(|| self.advance())
+            .and_then(|_| {
+                let size = self.not_at(token!(']')).then(|| self.parse_expr());
+                self.expect(token!(']'));
+                size
+            });
         (name, size)
     }
 
@@ -2294,6 +2301,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_error_at_end_of_input_reports_a_diagnostic_instead_of_panicking() {
+        let source = "let x = 1";
+        let tokens = tokenize(source);
+        let mut parser = Parser::new(&tokens, source);
+        parser.parse_statement();
+
+        assert_eq!(parser.diagnostics.len(), 1);
+        let diagnostic = &parser.diagnostics[0];
+        assert_eq!(
+            diagnostic.to_string(),
+            "1:10: expected Semicolon, found None"
+        );
+    }
+
+    #[test]
     fn ambiguous_chevron_at_statement_start_is_read_as_a_type_decl() {
         insta::assert_snapshot!(parse_stmt("a < b > c;"), @r#"
         VarDecl typed "c"
@@ -2668,11 +2690,48 @@ mod tests {
     }
 
     #[test]
+    fn hoisted_endpoint_chained_through_nested_node() {
+        insta::assert_snapshot!(
+            parse_stmt("input q.unused.in;"),
+            @r#"EndpointDecl input q.unused.in"#
+        );
+    }
+
+    #[test]
     fn sized_array_endpoint() {
         insta::assert_snapshot!(parse_stmt("input stream float in[10];"), @r#"
         EndpointDecl input stream "in"
           float
           10
+        "#);
+    }
+
+    #[test]
+    fn endpoint_with_attribute_list() {
+        insta::assert_snapshot!(
+            parse_stmt(r#"input event bool hpEnable [[ name: "HP Enable", init: true, boolean ]];"#),
+            @r#"
+        EndpointDecl input event "hpEnable"
+          bool
+          AttributeList
+            "name"
+              "HP Enable"
+            "init"
+              true
+            "boolean"
+        "#
+        );
+    }
+
+    #[test]
+    fn sized_array_endpoint_with_attribute_list() {
+        insta::assert_snapshot!(parse_stmt("input stream float in[10] [[ min: 0.0 ]];"), @r#"
+        EndpointDecl input stream "in"
+          float
+          10
+          AttributeList
+            "min"
+              0.0
         "#);
     }
 
@@ -2821,6 +2880,27 @@ mod tests {
             float32
           EndpointDecl output stream "b"
             int
+        "#
+        );
+    }
+
+    #[test]
+    fn comma_separated_node_decls_without_braces() {
+        insta::assert_snapshot!(
+            dump("node b = B, c = C;", |parser| {
+                let items = parser.parse_node_group();
+                parser.ast.push(Stmt::Block {
+                    brace: parser.tokens.current(),
+                    label: None,
+                    stmts: items,
+                })
+            }),
+            @r#"
+        Block
+          NodeDecl "b"
+            B
+          NodeDecl "c"
+            C
         "#
         );
     }

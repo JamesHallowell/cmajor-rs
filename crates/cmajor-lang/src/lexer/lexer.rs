@@ -1,8 +1,8 @@
 use crate::{
     lexer::{
+        TokenStream,
         cursor::Cursor,
         token::{Keyword, Literal, Token, TokenKind, Trivia},
-        TokenStream,
     },
     token,
 };
@@ -180,8 +180,8 @@ impl<'a> Lexer<'a> {
             '?' => token!(?),
             '(' => token!('('),
             ')' => token!(')'),
-            '[' => self.one_or_two('[', token!("[["), token!('[')),
-            ']' => self.one_or_two(']', token!("]]"), token!(']')),
+            '[' => token!('['),
+            ']' => token!(']'),
             '{' => token!('{'),
             '}' => token!('}'),
             _ => TokenKind::Error,
@@ -639,9 +639,11 @@ mod tests {
         assert_eq!(
             lex("[[a]]"),
             vec![
-                (TokenKind::DoubleBracketLeft, "[["),
+                (TokenKind::BracketLeft, "["),
+                (TokenKind::BracketLeft, "["),
                 (TokenKind::Identifier, "a"),
-                (TokenKind::DoubleBracketRight, "]]"),
+                (TokenKind::BracketRight, "]"),
+                (TokenKind::BracketRight, "]"),
             ]
         );
     }
