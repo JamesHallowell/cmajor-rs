@@ -598,14 +598,18 @@ impl<'a> Parser<'a> {
     }
 
     fn try_parse_label(&mut self) -> Option<TokenId> {
-        let starts_labellable_stmt = matches!(
-            self.iter.clone().nth(2).map(|(_, token)| token.kind),
-            Some(token!('{') | token!(loop) | token!(for) | token!(while))
+        let is_label = matches!(
+            self.peek_3(),
+            (
+                TokenKind::Identifier,
+                token!(:),
+                token!('{' | loop | for | while)
+            )
         );
-        if self.at(TokenKind::Identifier) && self.peek_nth(1) == token!(:) && starts_labellable_stmt
-        {
-            let label = self.advance();
-            self.advance();
+
+        if is_label {
+            let label = self.expect(TokenKind::Identifier);
+            self.expect(token!(:));
             Some(label)
         } else {
             None
