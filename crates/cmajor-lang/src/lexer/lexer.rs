@@ -13,6 +13,10 @@ pub fn tokenize(input: &str) -> TokenStream {
     while let Some(token) = lexer.next_token() {
         tokens.push(token);
     }
+    tokens.push(Token {
+        kind: token!(eof),
+        len: 0,
+    });
     TokenStream::new(tokens)
 }
 
@@ -395,8 +399,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_produces_no_tokens() {
-        assert!(tokenize("").is_empty());
+    fn empty_input_produces_a_single_end_of_file_token() {
+        let tokens = tokenize("");
+
+        assert_eq!(tokens.len(), 1);
+
+        let eof = tokens.end_of_file();
+        let eof = tokens.get(eof);
+        assert!(eof.kind.is_end_of_file());
+        assert_eq!(eof.len, 0);
     }
 
     #[test]

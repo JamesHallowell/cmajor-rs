@@ -165,6 +165,7 @@ pub enum TokenKind {
     ColonColon,
     Comma,
     Dot,
+    EndOfFile,
     Equal,
     EqualEqual,
     Error,
@@ -234,6 +235,10 @@ impl TokenKind {
             TokenKind::Keyword(keyword) => keyword.is_type(),
             _ => false,
         }
+    }
+
+    pub fn is_end_of_file(self) -> bool {
+        self == TokenKind::EndOfFile
     }
 }
 
@@ -571,6 +576,9 @@ macro_rules! token {
     };
     (while) => {
         $crate::lexer::TokenKind::Keyword($crate::lexer::Keyword::While)
+    };
+    (eof) => {
+        $crate::lexer::TokenKind::EndOfFile
     };
     (@or [$($acc:tt)+]) => {
         $crate::token!($($acc)+)
