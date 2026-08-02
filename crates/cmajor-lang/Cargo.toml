@@ -8,5 +8,6 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 
 [dev-dependencies]
-insta = { version = "1.48.0" }
+insta = { version = "1.48.0", features = ["yaml"] }
 indoc = { version = "2.0" }
+serde = { version = "1", features = ["derive"] }

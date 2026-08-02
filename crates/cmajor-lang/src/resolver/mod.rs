@@ -1,4 +1,6 @@
 mod symbol;
+#[cfg(test)]
+mod view;
 
 pub use symbol::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
 
@@ -174,8 +176,7 @@ impl<'a> Resolver<'a> {
         let symbol = self
             .table
             .declare(scope, name, SymbolKind::Namespace, node, segment);
-        let inner = self.table.child_scope(symbol, scope);
-        inner
+        self.table.child_scope(symbol, scope)
     }
 
     fn declare_member(&mut self, scope: ScopeId, id: NodeId) {
@@ -221,87 +222,80 @@ impl<'a> Resolver<'a> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::parser, indoc::indoc};
+    use {super::*, crate::parser, indoc::indoc, view::ResolutionView};
 
-    fn expect_diagnostic(program: &str) -> Diagnostic {
-        let (_, mut diagnostics) = resolve_source(program);
-        assert_eq!(diagnostics.len(), 1);
-        diagnostics.remove(0)
-    }
-
-    macro_rules! assert_error {
-        ($program:expr, @$error:literal) => {
-            insta::assert_snapshot!(expect_diagnostic($program), @$error);
-        };
-    }
-
-    fn resolve_source(source: &str) -> (SymbolTable, Vec<Diagnostic>) {
+    fn expect_resolution(source: &'_ str) -> ResolutionView<'_> {
         let parse = parser::parse(source);
         assert!(!parse.ast.has_errors(), "source failed to parse: {source}");
         let resolution = resolve(source, &parse);
-        (resolution.table, resolution.diagnostics)
+        ResolutionView::new(resolution, parse.tokens, source)
+    }
+
+    macro_rules! assert_resolution {
+        ($program:expr, @$resolution:literal) => {
+            insta::assert_yaml_snapshot!(expect_resolution($program), @$resolution);
+        };
     }
 
     #[test]
     fn declares_top_level_processor() {
-        let (table, diagnostics) = resolve_source(indoc! {"
-            processor P
-            {
-                output stream int out;
-                void main() {}
-            }
-        "});
-        assert!(diagnostics.is_empty());
-
-        let global = table.global_scope();
-        let symbols: Vec<_> = table.symbols_in(global).collect();
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].name, "P");
-        assert_eq!(symbols[0].kind, SymbolKind::Processor);
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    output stream int out;
+                    void main() {}
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: out
+                kind: Endpoint
+                location: "3:23"
+              - name: main
+                kind: Function
+                location: "4:10"
+        "#
+        );
     }
 
     #[test]
     fn resolve_symbols_in_nested_scopes() {
-        let (table, diagnostics) = resolve_source(indoc! {"
-            processor P
-            {
-                int helper() { return 42; }
-                void main() { int x = helper(); }
-            }
-        "});
-        assert!(diagnostics.is_empty());
-
-        let processor_scope = table
-            .lookup_local(table.global_scope(), "P")
-            .map(|id| table.symbol(id))
-            .and_then(|s| s.inner_scope)
-            .expect("processor P should be declared");
-
-        let symbols = table.symbols_in(processor_scope).collect::<Vec<_>>();
-        assert_eq!(symbols.len(), 2);
-
-        let helper = symbols[0];
-        assert_eq!(helper.name, "helper");
-        assert_eq!(helper.kind, SymbolKind::Function);
-
-        let main = symbols[1];
-        assert_eq!(main.name, "main");
-        assert_eq!(main.kind, SymbolKind::Function);
-        assert!(main.inner_scope.is_some());
-
-        let symbols = table
-            .symbols_in(main.inner_scope.unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(symbols.len(), 1);
-
-        let x = symbols[0];
-        assert_eq!(x.name, "x");
-        assert_eq!(x.kind, SymbolKind::Variable);
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    int helper() { return 42; }
+                    void main() { int x = helper(); }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: helper
+                kind: Function
+                location: "3:9"
+              - name: main
+                kind: Function
+                location: "4:10"
+                members:
+                  - name: x
+                    kind: Variable
+                    location: "4:23"
+        "#
+        );
     }
 
     #[test]
     fn duplicate_processor_names_are_reported() {
-        assert_error!(
+        assert_resolution!(
             indoc! {"
                 processor P
                 {
@@ -313,59 +307,99 @@ mod tests {
                     output stream int out;
                 }
             "},
-            @"6:11: redefinition of 'P' (previously declared at 1:11)"
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: out
+                kind: Endpoint
+                location: "3:23"
+          - name: P
+            kind: Processor
+            location: "6:11"
+            members:
+              - name: out
+                kind: Endpoint
+                location: "8:23"
+        diagnostics:
+          - "6:11: redefinition of 'P' (previously declared at 1:11)"
+        "#
         );
     }
 
     #[test]
     fn function_overloads_do_not_conflict() {
-        let (table, diagnostics) = resolve_source(indoc! {"
-            processor P
-            {
-                void f(int x) {}
-                void f(float x) {}
-                output stream int out;
-            }
-        "});
-        assert!(diagnostics.is_empty());
-
-        let global = table.global_scope();
-        let processor = table.symbols_in(global).next().unwrap();
-        let inner = processor.inner_scope.unwrap();
-        let functions: Vec<_> = table
-            .symbols_in(inner)
-            .filter(|s| s.kind == SymbolKind::Function)
-            .collect();
-        assert_eq!(functions.len(), 2);
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    void f(int x) {}
+                    void f(float x) {}
+                    output stream int out;
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: f
+                kind: Function
+                location: "3:10"
+              - name: f
+                kind: Function
+                location: "4:10"
+              - name: out
+                kind: Endpoint
+                location: "5:23"
+        "#
+        );
     }
 
     #[test]
     fn reopened_namespaces_share_a_scope() {
-        let (table, diagnostics) = resolve_source(indoc! {"
-            namespace n
-            {
-                processor A { output stream int out; }
-            }
+        assert_resolution!(
+            indoc! {"
+                namespace n
+                {
+                    processor A { output stream int out; }
+                }
 
-            namespace n
-            {
-                processor B { output stream int out; }
-            }
-        "});
-        assert!(diagnostics.is_empty());
-
-        let global = table.global_scope();
-        let namespaces: Vec<_> = table.symbols_in(global).collect();
-        assert_eq!(namespaces.len(), 1);
-
-        let inner = namespaces[0].inner_scope.unwrap();
-        let members: Vec<_> = table.symbols_in(inner).map(|s| s.name.as_str()).collect();
-        assert_eq!(members, vec!["A", "B"]);
+                namespace n
+                {
+                    processor B { output stream int out; }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: n
+            kind: Namespace
+            location: "1:11"
+            members:
+              - name: A
+                kind: Processor
+                location: "3:15"
+                members:
+                  - name: out
+                    kind: Endpoint
+                    location: "3:37"
+              - name: B
+                kind: Processor
+                location: "8:15"
+                members:
+                  - name: out
+                    kind: Endpoint
+                    location: "8:37"
+        "#
+        );
     }
 
     #[test]
     fn duplicate_state_variables_are_reported() {
-        assert_error!(
+        assert_resolution!(
             indoc! {"
                 processor P
                 {
@@ -375,13 +409,33 @@ mod tests {
                     void main() {}
                 }
             "},
-            @"4:9: redefinition of 'x' (previously declared at 3:9)"
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: x
+                kind: Variable
+                location: "3:9"
+              - name: x
+                kind: Variable
+                location: "4:9"
+              - name: out
+                kind: Endpoint
+                location: "5:23"
+              - name: main
+                kind: Function
+                location: "6:10"
+        diagnostics:
+          - "4:9: redefinition of 'x' (previously declared at 3:9)"
+        "#
         );
     }
 
     #[test]
     fn duplicate_node_names_in_a_graph_are_reported() {
-        assert_error!(
+        assert_resolution!(
             indoc! {"
                 processor P
                 {
@@ -395,7 +449,31 @@ mod tests {
                     output stream int out;
                 }
             "},
-            @"9:10: redefinition of 'a' (previously declared at 8:10)"
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: out
+                kind: Endpoint
+                location: "3:23"
+          - name: G
+            kind: Graph
+            location: "6:7"
+            members:
+              - name: a
+                kind: Node
+                location: "8:10"
+              - name: a
+                kind: Node
+                location: "9:10"
+              - name: out
+                kind: Endpoint
+                location: "10:23"
+        diagnostics:
+          - "9:10: redefinition of 'a' (previously declared at 8:10)"
+        "#
         );
     }
 }

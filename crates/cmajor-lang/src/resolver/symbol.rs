@@ -10,6 +10,7 @@ pub struct Scope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum SymbolKind {
     Namespace,
     Processor,
