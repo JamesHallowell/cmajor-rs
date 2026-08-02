@@ -53,6 +53,11 @@ where
         key
     }
 
+    pub fn first(&self) -> (K, &V) {
+        let key = K::from(KeyData(0));
+        (key, &self.items[0])
+    }
+
     pub fn last(&self) -> Option<(K, &V)> {
         self.items
             .last()

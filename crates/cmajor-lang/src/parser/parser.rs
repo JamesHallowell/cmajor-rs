@@ -1007,6 +1007,7 @@ impl<'a> Parser<'a> {
         let attributes = self
             .at_attribute_list()
             .then(|| self.parse_attribute_list());
+
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));

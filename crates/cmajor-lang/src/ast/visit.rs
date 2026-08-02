@@ -29,183 +29,248 @@ where
 }
 
 pub trait Visitor {
-    fn visit(&mut self, ast: &Ast, node: NodeId) {
-        walk(ast, self, node);
+    fn visit(&mut self, ast: &Ast, id: NodeId) {
+        walk(ast, self, id);
     }
 
-    fn visit_item(&mut self, ast: &Ast, item: &Item) {
-        walk_item(ast, self, item);
+    fn visit_item(&mut self, ast: &Ast, id: NodeId, item: &Item) {
+        walk_item(ast, self, id, item);
     }
 
-    fn visit_namespace_decl(&mut self, ast: &Ast, namespace_decl: &NamespaceDecl) {
+    fn visit_namespace_decl(&mut self, ast: &Ast, id: NodeId, namespace_decl: &NamespaceDecl) {
+        let _ = id;
         walk_namespace_decl(ast, self, namespace_decl);
     }
 
-    fn visit_processor_decl(&mut self, ast: &Ast, processor_decl: &ProcessorDecl) {
+    fn visit_processor_decl(&mut self, ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
+        let _ = id;
         walk_processor_decl(ast, self, processor_decl);
     }
 
-    fn visit_graph_decl(&mut self, ast: &Ast, graph_decl: &GraphDecl) {
+    fn visit_graph_decl(&mut self, ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
+        let _ = id;
         walk_graph_decl(ast, self, graph_decl);
     }
 
-    fn visit_struct_decl(&mut self, ast: &Ast, struct_decl: &StructDecl) {
+    fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
+        let _ = id;
         walk_struct_decl(ast, self, struct_decl);
     }
 
-    fn visit_enum_decl(&mut self, _ast: &Ast, _enum_decl: &EnumDecl) {}
+    fn visit_enum_decl(&mut self, _ast: &Ast, _id: NodeId, _enum_decl: &EnumDecl) {}
 
-    fn visit_function_decl(&mut self, ast: &Ast, function_decl: &FunctionDecl) {
+    fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
+        let _ = id;
         walk_function_decl(ast, self, function_decl);
     }
 
-    fn visit_import(&mut self, _ast: &Ast, _import: &Import) {}
+    fn visit_import(&mut self, _ast: &Ast, _id: NodeId, _import: &Import) {}
 
-    fn visit_module_alias(&mut self, ast: &Ast, module_alias: &ModuleAlias) {
+    fn visit_module_alias(&mut self, ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
+        let _ = id;
         walk_module_alias(ast, self, module_alias);
     }
 
-    fn visit_decl(&mut self, ast: &Ast, decl: &Decl) {
-        walk_decl(ast, self, decl);
+    fn visit_decl(&mut self, ast: &Ast, id: NodeId, decl: &Decl) {
+        walk_decl(ast, self, id, decl);
     }
 
-    fn visit_var(&mut self, ast: &Ast, var: &Var) {
+    fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
+        let _ = id;
         walk_var(ast, self, var);
     }
 
-    fn visit_alias(&mut self, ast: &Ast, alias: &Alias) {
+    fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
+        let _ = id;
         walk_alias(ast, self, alias);
     }
 
-    fn visit_graph(&mut self, ast: &Ast, graph: &Graph) {
-        walk_graph(ast, self, graph);
+    fn visit_graph(&mut self, ast: &Ast, id: NodeId, graph: &Graph) {
+        walk_graph(ast, self, id, graph);
     }
 
-    fn visit_endpoint_decl(&mut self, ast: &Ast, endpoint_decl: &EndpointDecl) {
+    fn visit_endpoint_decl(&mut self, ast: &Ast, id: NodeId, endpoint_decl: &EndpointDecl) {
+        let _ = id;
         walk_endpoint_decl(ast, self, endpoint_decl);
     }
 
-    fn visit_node_decl(&mut self, ast: &Ast, node_decl: &NodeDecl) {
+    fn visit_node_decl(&mut self, ast: &Ast, id: NodeId, node_decl: &NodeDecl) {
+        let _ = id;
         walk_node_decl(ast, self, node_decl);
     }
 
-    fn visit_connection_decl(&mut self, ast: &Ast, connection_decl: &ConnectionDecl) {
+    fn visit_connection_decl(&mut self, ast: &Ast, id: NodeId, connection_decl: &ConnectionDecl) {
+        let _ = id;
         walk_connection_decl(ast, self, connection_decl);
     }
 
-    fn visit_connection(&mut self, ast: &Ast, connection: &Connection) {
+    fn visit_connection(&mut self, ast: &Ast, id: NodeId, connection: &Connection) {
+        let _ = id;
         walk_connection(ast, self, connection);
     }
 
-    fn visit_connection_if(&mut self, ast: &Ast, connection_if: &ConnectionIf) {
+    fn visit_connection_if(&mut self, ast: &Ast, id: NodeId, connection_if: &ConnectionIf) {
+        let _ = id;
         walk_connection_if(ast, self, connection_if);
     }
 
-    fn visit_stmt(&mut self, ast: &Ast, stmt: &Stmt) {
-        walk_stmt(ast, self, stmt);
+    fn visit_stmt(&mut self, ast: &Ast, id: NodeId, stmt: &Stmt) {
+        walk_stmt(ast, self, id, stmt);
     }
 
-    fn visit_block(&mut self, ast: &Ast, block: &Block) {
+    fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
+        let _ = id;
         walk_block(ast, self, block);
     }
 
-    fn visit_expr_stmt(&mut self, ast: &Ast, expr_stmt: &ExprStmt) {
+    fn visit_expr_stmt(&mut self, ast: &Ast, id: NodeId, expr_stmt: &ExprStmt) {
+        let _ = id;
         walk_expr_stmt(ast, self, expr_stmt);
     }
 
-    fn visit_decl_stmt(&mut self, ast: &Ast, decl_stmt: &DeclStmt) {
+    fn visit_decl_stmt(&mut self, ast: &Ast, id: NodeId, decl_stmt: &DeclStmt) {
+        let _ = id;
         walk_decl_stmt(ast, self, decl_stmt);
     }
 
-    fn visit_for_stmt(&mut self, ast: &Ast, for_stmt: &ForStmt) {
+    fn visit_for_stmt(&mut self, ast: &Ast, id: NodeId, for_stmt: &ForStmt) {
+        let _ = id;
         walk_for_stmt(ast, self, for_stmt);
     }
 
-    fn visit_if_stmt(&mut self, ast: &Ast, if_stmt: &IfStmt) {
+    fn visit_if_stmt(&mut self, ast: &Ast, id: NodeId, if_stmt: &IfStmt) {
+        let _ = id;
         walk_if_stmt(ast, self, if_stmt);
     }
 
-    fn visit_while_stmt(&mut self, ast: &Ast, while_stmt: &WhileStmt) {
+    fn visit_while_stmt(&mut self, ast: &Ast, id: NodeId, while_stmt: &WhileStmt) {
+        let _ = id;
         walk_while_stmt(ast, self, while_stmt);
     }
 
-    fn visit_loop_stmt(&mut self, ast: &Ast, loop_stmt: &LoopStmt) {
+    fn visit_loop_stmt(&mut self, ast: &Ast, id: NodeId, loop_stmt: &LoopStmt) {
+        let _ = id;
         walk_loop_stmt(ast, self, loop_stmt);
     }
 
-    fn visit_return_stmt(&mut self, ast: &Ast, return_stmt: &ReturnStmt) {
+    fn visit_return_stmt(&mut self, ast: &Ast, id: NodeId, return_stmt: &ReturnStmt) {
+        let _ = id;
         walk_return_stmt(ast, self, return_stmt);
     }
 
-    fn visit_break_stmt(&mut self, _ast: &Ast, _break_stmt: &BreakStmt) {}
+    fn visit_break_stmt(&mut self, _ast: &Ast, _id: NodeId, _break_stmt: &BreakStmt) {}
 
-    fn visit_continue_stmt(&mut self, _ast: &Ast, _continue_stmt: &ContinueStmt) {}
+    fn visit_continue_stmt(&mut self, _ast: &Ast, _id: NodeId, _continue_stmt: &ContinueStmt) {}
 
-    fn visit_forward_branch_stmt(&mut self, ast: &Ast, forward_branch_stmt: &ForwardBranchStmt) {
+    fn visit_forward_branch_stmt(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        forward_branch_stmt: &ForwardBranchStmt,
+    ) {
+        let _ = id;
         walk_forward_branch_stmt(ast, self, forward_branch_stmt);
     }
 
-    fn visit_expr(&mut self, ast: &Ast, expr: &Expr) {
-        walk_expr(ast, self, expr);
+    fn visit_expr(&mut self, ast: &Ast, id: NodeId, expr: &Expr) {
+        walk_expr(ast, self, id, expr);
     }
 
-    fn visit_ident(&mut self, _ast: &Ast, _token: TokenId) {}
+    fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, _token: TokenId) {}
 
-    fn visit_parentheses(&mut self, ast: &Ast, parentheses: &Parentheses) {
+    fn visit_parentheses(&mut self, ast: &Ast, id: NodeId, parentheses: &Parentheses) {
+        let _ = id;
         walk_parentheses(ast, self, parentheses);
     }
 
-    fn visit_unary(&mut self, ast: &Ast, unary: &Unary) {
+    fn visit_unary(&mut self, ast: &Ast, id: NodeId, unary: &Unary) {
+        let _ = id;
         walk_unary(ast, self, unary);
     }
 
-    fn visit_postfix_unary(&mut self, ast: &Ast, postfix_unary: &PostfixUnary) {
+    fn visit_postfix_unary(&mut self, ast: &Ast, id: NodeId, postfix_unary: &PostfixUnary) {
+        let _ = id;
         walk_postfix_unary(ast, self, postfix_unary);
     }
 
-    fn visit_binary(&mut self, ast: &Ast, binary: &Binary) {
+    fn visit_binary(&mut self, ast: &Ast, id: NodeId, binary: &Binary) {
+        let _ = id;
         walk_binary(ast, self, binary);
     }
 
-    fn visit_assign(&mut self, ast: &Ast, assign: &Assign) {
+    fn visit_assign(&mut self, ast: &Ast, id: NodeId, assign: &Assign) {
+        let _ = id;
         walk_assign(ast, self, assign);
     }
 
-    fn visit_ternary(&mut self, ast: &Ast, ternary: &Ternary) {
+    fn visit_ternary(&mut self, ast: &Ast, id: NodeId, ternary: &Ternary) {
+        let _ = id;
         walk_ternary(ast, self, ternary);
     }
 
-    fn visit_call(&mut self, ast: &Ast, call: &Call) {
+    fn visit_call(&mut self, ast: &Ast, id: NodeId, call: &Call) {
+        let _ = id;
         walk_call(ast, self, call);
     }
 
-    fn visit_bracketed(&mut self, ast: &Ast, bracketed: &Bracketed) {
+    fn visit_bracketed(&mut self, ast: &Ast, id: NodeId, bracketed: &Bracketed) {
+        let _ = id;
         walk_bracketed(ast, self, bracketed);
     }
 
-    fn visit_field(&mut self, ast: &Ast, field: &Field) {
+    fn visit_field(&mut self, ast: &Ast, id: NodeId, field: &Field) {
+        let _ = id;
         walk_field(ast, self, field);
     }
 
-    fn visit_scope_access(&mut self, ast: &Ast, scope_access: &ScopeAccess) {
+    fn visit_scope_access(&mut self, ast: &Ast, id: NodeId, scope_access: &ScopeAccess) {
+        let _ = id;
         walk_scope_access(ast, self, scope_access);
     }
 
-    fn visit_type_modifier(&mut self, ast: &Ast, type_modifier: &TypeModifier) {
+    fn visit_type_modifier(&mut self, ast: &Ast, id: NodeId, type_modifier: &TypeModifier) {
+        let _ = id;
         walk_type_modifier(ast, self, type_modifier);
     }
 
-    fn visit_vector_size_suffix(&mut self, ast: &Ast, suffix: &VectorSizeSuffix) {
+    fn visit_vector_size_suffix(&mut self, ast: &Ast, id: NodeId, suffix: &VectorSizeSuffix) {
+        let _ = id;
         walk_vector_size_suffix(ast, self, suffix);
     }
 
-    fn visit_processor_property(&mut self, _ast: &Ast, _property: &ProcessorProperty) {}
+    fn visit_processor_property(&mut self, _ast: &Ast, _id: NodeId, _property: &ProcessorProperty) {
+    }
 
-    fn visit_attribute_list(&mut self, ast: &Ast, attribute_list: &AttributeList) {
+    fn visit_attribute_list(&mut self, ast: &Ast, id: NodeId, attribute_list: &AttributeList) {
+        let _ = id;
         walk_attribute_list(ast, self, attribute_list);
     }
 
-    fn visit_error(&mut self, _ast: &Ast, _token: TokenId) {}
+    fn visit_error(&mut self, _ast: &Ast, _id: NodeId, _token: TokenId) {}
+}
+
+pub trait ExhaustiveVisitor {
+    type Output;
+
+    fn visit_item(&mut self, ast: &Ast, item: &Item) -> Self::Output;
+    fn visit_decl(&mut self, ast: &Ast, decl: &Decl) -> Self::Output;
+    fn visit_graph(&mut self, ast: &Ast, graph: &Graph) -> Self::Output;
+    fn visit_stmt(&mut self, ast: &Ast, stmt: &Stmt) -> Self::Output;
+    fn visit_expr(&mut self, ast: &Ast, expr: &Expr) -> Self::Output;
+    fn visit_attribute_list(&mut self, ast: &Ast, attribute_list: &AttributeList) -> Self::Output;
+    fn visit_error(&mut self, ast: &Ast, token: TokenId) -> Self::Output;
+
+    fn visit(&mut self, ast: &Ast, id: NodeId) -> Self::Output {
+        match ast.get(id) {
+            Node::Item(item) => self.visit_item(ast, item),
+            Node::Decl(decl) => self.visit_decl(ast, decl),
+            Node::Graph(graph) => self.visit_graph(ast, graph),
+            Node::Stmt(stmt) => self.visit_stmt(ast, stmt),
+            Node::Expr(expr) => self.visit_expr(ast, expr),
+            Node::AttributeList(attribute_list) => self.visit_attribute_list(ast, attribute_list),
+            Node::Error { token } => self.visit_error(ast, *token),
+        }
+    }
 }
 
 pub fn walk<V>(ast: &Ast, visitor: &mut V, id: NodeId)
@@ -213,13 +278,15 @@ where
     V: Visitor + ?Sized,
 {
     match ast.get(id).clone() {
-        Node::Item(item) => visitor.visit_item(ast, &item),
-        Node::Decl(decl) => visitor.visit_decl(ast, &decl),
-        Node::Graph(graph) => visitor.visit_graph(ast, &graph),
-        Node::Stmt(stmt) => visitor.visit_stmt(ast, &stmt),
-        Node::Expr(expr) => visitor.visit_expr(ast, &expr),
-        Node::AttributeList(attribute_list) => visitor.visit_attribute_list(ast, &attribute_list),
-        Node::Error { token } => visitor.visit_error(ast, token),
+        Node::Item(item) => visitor.visit_item(ast, id, &item),
+        Node::Decl(decl) => visitor.visit_decl(ast, id, &decl),
+        Node::Graph(graph) => visitor.visit_graph(ast, id, &graph),
+        Node::Stmt(stmt) => visitor.visit_stmt(ast, id, &stmt),
+        Node::Expr(expr) => visitor.visit_expr(ast, id, &expr),
+        Node::AttributeList(attribute_list) => {
+            visitor.visit_attribute_list(ast, id, &attribute_list)
+        }
+        Node::Error { token } => visitor.visit_error(ast, id, token),
     }
 }
 
@@ -234,19 +301,23 @@ where
     }
 }
 
-pub fn walk_item<V>(ast: &Ast, visitor: &mut V, item: &Item)
+pub fn walk_item<V>(ast: &Ast, visitor: &mut V, id: NodeId, item: &Item)
 where
     V: Visitor + ?Sized,
 {
     match item {
-        Item::NamespaceDecl(namespace_decl) => visitor.visit_namespace_decl(ast, namespace_decl),
-        Item::ProcessorDecl(processor_decl) => visitor.visit_processor_decl(ast, processor_decl),
-        Item::GraphDecl(graph_decl) => visitor.visit_graph_decl(ast, graph_decl),
-        Item::StructDecl(struct_decl) => visitor.visit_struct_decl(ast, struct_decl),
-        Item::EnumDecl(enum_decl) => visitor.visit_enum_decl(ast, enum_decl),
-        Item::FunctionDecl(function_decl) => visitor.visit_function_decl(ast, function_decl),
-        Item::Import(import) => visitor.visit_import(ast, import),
-        Item::ModuleAlias(module_alias) => visitor.visit_module_alias(ast, module_alias),
+        Item::NamespaceDecl(namespace_decl) => {
+            visitor.visit_namespace_decl(ast, id, namespace_decl)
+        }
+        Item::ProcessorDecl(processor_decl) => {
+            visitor.visit_processor_decl(ast, id, processor_decl)
+        }
+        Item::GraphDecl(graph_decl) => visitor.visit_graph_decl(ast, id, graph_decl),
+        Item::StructDecl(struct_decl) => visitor.visit_struct_decl(ast, id, struct_decl),
+        Item::EnumDecl(enum_decl) => visitor.visit_enum_decl(ast, id, enum_decl),
+        Item::FunctionDecl(function_decl) => visitor.visit_function_decl(ast, id, function_decl),
+        Item::Import(import) => visitor.visit_import(ast, id, import),
+        Item::ModuleAlias(module_alias) => visitor.visit_module_alias(ast, id, module_alias),
     }
 }
 
@@ -330,13 +401,13 @@ where
     visitor.visit(ast, module_alias.target);
 }
 
-pub fn walk_decl<V>(ast: &Ast, visitor: &mut V, decl: &Decl)
+pub fn walk_decl<V>(ast: &Ast, visitor: &mut V, id: NodeId, decl: &Decl)
 where
     V: Visitor + ?Sized,
 {
     match decl {
-        Decl::Var(var) => visitor.visit_var(ast, var),
-        Decl::Alias(alias) => visitor.visit_alias(ast, alias),
+        Decl::Var(var) => visitor.visit_var(ast, id, var),
+        Decl::Alias(alias) => visitor.visit_alias(ast, id, alias),
     }
 }
 
@@ -373,18 +444,18 @@ where
     }
 }
 
-pub fn walk_graph<V>(ast: &Ast, visitor: &mut V, graph: &Graph)
+pub fn walk_graph<V>(ast: &Ast, visitor: &mut V, id: NodeId, graph: &Graph)
 where
     V: Visitor + ?Sized,
 {
     match graph {
-        Graph::EndpointDecl(endpoint_decl) => visitor.visit_endpoint_decl(ast, endpoint_decl),
-        Graph::NodeDecl(node_decl) => visitor.visit_node_decl(ast, node_decl),
+        Graph::EndpointDecl(endpoint_decl) => visitor.visit_endpoint_decl(ast, id, endpoint_decl),
+        Graph::NodeDecl(node_decl) => visitor.visit_node_decl(ast, id, node_decl),
         Graph::ConnectionDecl(connection_decl) => {
-            visitor.visit_connection_decl(ast, connection_decl)
+            visitor.visit_connection_decl(ast, id, connection_decl)
         }
-        Graph::Connection(connection) => visitor.visit_connection(ast, connection),
-        Graph::ConnectionIf(connection_if) => visitor.visit_connection_if(ast, connection_if),
+        Graph::Connection(connection) => visitor.visit_connection(ast, id, connection),
+        Graph::ConnectionIf(connection_if) => visitor.visit_connection_if(ast, id, connection_if),
     }
 }
 
@@ -459,23 +530,23 @@ where
     }
 }
 
-pub fn walk_stmt<V>(ast: &Ast, visitor: &mut V, stmt: &Stmt)
+pub fn walk_stmt<V>(ast: &Ast, visitor: &mut V, id: NodeId, stmt: &Stmt)
 where
     V: Visitor + ?Sized,
 {
     match stmt {
-        Stmt::Block(block) => visitor.visit_block(ast, block),
-        Stmt::ExprStmt(expr_stmt) => visitor.visit_expr_stmt(ast, expr_stmt),
-        Stmt::DeclStmt(decl_stmt) => visitor.visit_decl_stmt(ast, decl_stmt),
-        Stmt::ForStmt(for_stmt) => visitor.visit_for_stmt(ast, for_stmt),
-        Stmt::IfStmt(if_stmt) => visitor.visit_if_stmt(ast, if_stmt),
-        Stmt::WhileStmt(while_stmt) => visitor.visit_while_stmt(ast, while_stmt),
-        Stmt::LoopStmt(loop_stmt) => visitor.visit_loop_stmt(ast, loop_stmt),
-        Stmt::ReturnStmt(return_stmt) => visitor.visit_return_stmt(ast, return_stmt),
-        Stmt::BreakStmt(break_stmt) => visitor.visit_break_stmt(ast, break_stmt),
-        Stmt::ContinueStmt(continue_stmt) => visitor.visit_continue_stmt(ast, continue_stmt),
+        Stmt::Block(block) => visitor.visit_block(ast, id, block),
+        Stmt::ExprStmt(expr_stmt) => visitor.visit_expr_stmt(ast, id, expr_stmt),
+        Stmt::DeclStmt(decl_stmt) => visitor.visit_decl_stmt(ast, id, decl_stmt),
+        Stmt::ForStmt(for_stmt) => visitor.visit_for_stmt(ast, id, for_stmt),
+        Stmt::IfStmt(if_stmt) => visitor.visit_if_stmt(ast, id, if_stmt),
+        Stmt::WhileStmt(while_stmt) => visitor.visit_while_stmt(ast, id, while_stmt),
+        Stmt::LoopStmt(loop_stmt) => visitor.visit_loop_stmt(ast, id, loop_stmt),
+        Stmt::ReturnStmt(return_stmt) => visitor.visit_return_stmt(ast, id, return_stmt),
+        Stmt::BreakStmt(break_stmt) => visitor.visit_break_stmt(ast, id, break_stmt),
+        Stmt::ContinueStmt(continue_stmt) => visitor.visit_continue_stmt(ast, id, continue_stmt),
         Stmt::ForwardBranchStmt(forward_branch_stmt) => {
-            visitor.visit_forward_branch_stmt(ast, forward_branch_stmt)
+            visitor.visit_forward_branch_stmt(ast, id, forward_branch_stmt)
         }
     }
 }
@@ -564,26 +635,26 @@ pub fn walk_forward_branch_stmt<V>(
     visitor.visit(ast, forward_branch_stmt.cond);
 }
 
-pub fn walk_expr<V>(ast: &Ast, visitor: &mut V, expr: &Expr)
+pub fn walk_expr<V>(ast: &Ast, visitor: &mut V, id: NodeId, expr: &Expr)
 where
     V: Visitor + ?Sized,
 {
     match expr {
         Expr::Literal(_) => {}
-        &Expr::Ident(Ident { token }) => visitor.visit_ident(ast, token),
-        Expr::Parentheses(parentheses) => visitor.visit_parentheses(ast, parentheses),
-        Expr::Unary(unary) => visitor.visit_unary(ast, unary),
-        Expr::PostfixUnary(postfix_unary) => visitor.visit_postfix_unary(ast, postfix_unary),
-        Expr::Binary(binary) => visitor.visit_binary(ast, binary),
-        Expr::Assign(assign) => visitor.visit_assign(ast, assign),
-        Expr::Ternary(ternary) => visitor.visit_ternary(ast, ternary),
-        Expr::Call(call) => visitor.visit_call(ast, call),
-        Expr::Bracketed(bracketed) => visitor.visit_bracketed(ast, bracketed),
-        Expr::Field(field) => visitor.visit_field(ast, field),
-        Expr::ScopeAccess(scope_access) => visitor.visit_scope_access(ast, scope_access),
-        Expr::TypeModifier(type_modifier) => visitor.visit_type_modifier(ast, type_modifier),
-        Expr::VectorSizeSuffix(suffix) => visitor.visit_vector_size_suffix(ast, suffix),
-        Expr::ProcessorProperty(property) => visitor.visit_processor_property(ast, property),
+        &Expr::Ident(Ident { token }) => visitor.visit_ident(ast, id, token),
+        Expr::Parentheses(parentheses) => visitor.visit_parentheses(ast, id, parentheses),
+        Expr::Unary(unary) => visitor.visit_unary(ast, id, unary),
+        Expr::PostfixUnary(postfix_unary) => visitor.visit_postfix_unary(ast, id, postfix_unary),
+        Expr::Binary(binary) => visitor.visit_binary(ast, id, binary),
+        Expr::Assign(assign) => visitor.visit_assign(ast, id, assign),
+        Expr::Ternary(ternary) => visitor.visit_ternary(ast, id, ternary),
+        Expr::Call(call) => visitor.visit_call(ast, id, call),
+        Expr::Bracketed(bracketed) => visitor.visit_bracketed(ast, id, bracketed),
+        Expr::Field(field) => visitor.visit_field(ast, id, field),
+        Expr::ScopeAccess(scope_access) => visitor.visit_scope_access(ast, id, scope_access),
+        Expr::TypeModifier(type_modifier) => visitor.visit_type_modifier(ast, id, type_modifier),
+        Expr::VectorSizeSuffix(suffix) => visitor.visit_vector_size_suffix(ast, id, suffix),
+        Expr::ProcessorProperty(property) => visitor.visit_processor_property(ast, id, property),
     }
 }
 
