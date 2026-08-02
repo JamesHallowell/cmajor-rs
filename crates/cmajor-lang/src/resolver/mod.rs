@@ -6,7 +6,13 @@ pub use symbol::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
 
 use crate::{
     Diagnostic,
-    ast::{Ast, Decl, Graph, Item, Node, NodeId, Stmt},
+    ast::{
+        Alias, Assign, Ast, Binary, Block, Bracketed, Call, Connection, ConnectionDecl,
+        ConnectionIf, Decl, DeclStmt, EndpointDecl, EnumDecl, Expr, Field, FunctionDecl, Graph,
+        GraphDecl, Ident, Import, Item, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
+        Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ScopeAccess, Stmt, StructDecl,
+        Ternary, TypeModifier, Unary, Var, VectorSizeSuffix,
+    },
     lexer::{TokenId, TokenStream},
     parser::Parse,
     utils,
@@ -27,7 +33,7 @@ pub fn resolve(source: &str, parse: &Parse) -> Resolution {
     };
 
     let global = resolver.table.global_scope();
-    for &root in &parse.roots {
+    for &root in parse.ast.roots() {
         resolver.declare_item(global, root);
     }
 
@@ -95,9 +101,9 @@ impl<'a> Resolver<'a> {
         };
 
         match item {
-            Item::NamespaceDecl {
+            Item::NamespaceDecl(NamespaceDecl {
                 segments, items, ..
-            } => {
+            }) => {
                 let inner = segments.iter().fold(scope, |scope, &segment| {
                     self.declare_or_reuse_namespace(scope, segment, id)
                 });
@@ -105,35 +111,36 @@ impl<'a> Resolver<'a> {
                     self.declare_member(inner, member);
                 }
             }
-            Item::ProcessorDecl { name, items, .. } => {
+            Item::ProcessorDecl(ProcessorDecl { name, items, .. }) => {
                 self.declare_container(scope, *name, SymbolKind::Processor, id, items);
             }
-            Item::GraphDecl { name, items, .. } => {
+            Item::GraphDecl(GraphDecl { name, items, .. }) => {
                 self.declare_container(scope, *name, SymbolKind::Graph, id, items);
             }
-            Item::StructDecl { name, items, .. } => {
+            Item::StructDecl(StructDecl { name, items, .. }) => {
                 self.declare_container(scope, *name, SymbolKind::Struct, id, items);
             }
-            Item::EnumDecl { name, values, .. } => {
+            Item::EnumDecl(EnumDecl { name, values, .. }) => {
                 let symbol = self.declare(scope, *name, SymbolKind::Enum, id);
                 let inner = self.table.child_scope(symbol, scope);
                 for &value in values {
                     self.declare(inner, value, SymbolKind::EnumValue, id);
                 }
             }
-            Item::FunctionDecl { name, body, .. } => {
-                let children = if let Node::Stmt(Stmt::Block { stmts, .. }) = self.ast.get(*body) {
-                    stmts
-                } else {
-                    &vec![]
-                };
+            Item::FunctionDecl(FunctionDecl { name, body, .. }) => {
+                let children =
+                    if let Node::Stmt(Stmt::Block(Block { stmts, .. })) = self.ast.get(*body) {
+                        stmts
+                    } else {
+                        &vec![]
+                    };
 
                 self.declare_container(scope, *name, SymbolKind::Function, id, children);
             }
-            Item::ModuleAlias { name, .. } => {
+            Item::ModuleAlias(ModuleAlias { name, .. }) => {
                 self.declare(scope, *name, SymbolKind::Alias, id);
             }
-            Item::Import { .. } => {}
+            Item::Import(Import { .. }) => {}
         }
     }
 
@@ -184,19 +191,25 @@ impl<'a> Resolver<'a> {
             Node::Item(_) => self.declare_item(scope, id),
             Node::Decl(decl) => self.declare_decl(scope, id, &decl),
             Node::Graph(graph) => self.declare_graph(scope, id, &graph),
-            Node::Stmt(Stmt::DeclStmt { decl }) => self.declare_member(scope, decl),
-            Node::Stmt(_) | Node::Expr(_) | Node::Error { .. } => {}
+            Node::Stmt(Stmt::DeclStmt(DeclStmt { decl })) => self.declare_member(scope, decl),
+            Node::Stmt(_) | Node::Expr(_) | Node::AttributeList(_) | Node::Error { .. } => {}
         }
     }
 
     fn declare_decl(&mut self, scope: ScopeId, id: NodeId, decl: &Decl) {
         match decl {
-            Decl::Var { declarators, .. } => {
+            Decl::Var(Var { declarators, .. }) => {
                 for declarator in declarators {
                     self.declare(scope, declarator.name, SymbolKind::Variable, id);
+
+                    if let Some(init) = declarator.init
+                        && let Node::Expr(expr) = self.ast.get(init)
+                    {
+                        self.visit_expr(scope, expr);
+                    }
                 }
             }
-            Decl::Alias { name, .. } => {
+            Decl::Alias(Alias { name, .. }) => {
                 self.declare(scope, *name, SymbolKind::Alias, id);
             }
         }
@@ -204,18 +217,49 @@ impl<'a> Resolver<'a> {
 
     fn declare_graph(&mut self, scope: ScopeId, id: NodeId, member: &Graph) {
         match member {
-            &Graph::NodeDecl { name, .. } => {
+            &Graph::NodeDecl(NodeDecl { name, .. }) => {
                 self.declare(scope, name, SymbolKind::Node, id);
             }
-            &Graph::EndpointDecl {
+            &Graph::EndpointDecl(EndpointDecl {
                 name: Some(name), ..
-            } => {
+            }) => {
                 self.declare(scope, name, SymbolKind::Endpoint, id);
             }
-            Graph::EndpointDecl { name: None, .. }
-            | Graph::ConnectionDecl { .. }
-            | Graph::Connection { .. }
-            | Graph::ConnectionIf { .. } => {}
+            Graph::EndpointDecl(EndpointDecl { name: None, .. })
+            | Graph::ConnectionDecl(ConnectionDecl { .. })
+            | Graph::Connection(Connection { .. })
+            | Graph::ConnectionIf(ConnectionIf { .. }) => {}
+        }
+    }
+
+    fn visit_expr(&mut self, scope: ScopeId, expr: &Expr) {
+        match expr {
+            Expr::Literal(_) => {}
+            Expr::Ident(Ident { token }) => self.check_ident_defined(scope, *token),
+            Expr::Parentheses(Parentheses { .. }) => {}
+            Expr::Unary(Unary { .. }) => {}
+            Expr::PostfixUnary(PostfixUnary { .. }) => {}
+            Expr::Binary(Binary { .. }) => {}
+            Expr::Assign(Assign { .. }) => {}
+            Expr::Ternary(Ternary { .. }) => {}
+            Expr::Call(Call { .. }) => {}
+            Expr::Bracketed(Bracketed { .. }) => {}
+            Expr::Field(Field { .. }) => {}
+            Expr::ScopeAccess(ScopeAccess { .. }) => {}
+            Expr::TypeModifier(TypeModifier { .. }) => {}
+            Expr::VectorSizeSuffix(VectorSizeSuffix { .. }) => {}
+            Expr::ProcessorProperty(ProcessorProperty { .. }) => {}
+        }
+    }
+
+    fn check_ident_defined(&mut self, scope: ScopeId, ident: TokenId) {
+        let name = self
+            .tokens
+            .text(self.source, ident)
+            .expect("token should be in source");
+
+        if self.table.lookup_visible(scope, name).is_none() {
+            self.error(ident, format!("undeclared identifier '{name}'"));
         }
     }
 }
@@ -475,5 +519,35 @@ mod tests {
           - "9:10: redefinition of 'a' (previously declared at 8:10)"
         "#
         );
+    }
+
+    #[test]
+    fn undeclared_identifier() {
+        assert_resolution!(
+            indoc!{"
+                processor P
+                {
+                    void main()
+                    {
+                        int x = qty;
+                    }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+            members:
+              - name: main
+                kind: Function
+                location: "3:10"
+                members:
+                  - name: x
+                    kind: Variable
+                    location: "5:13"
+        diagnostics:
+          - "5:17: undeclared identifier 'qty'"
+        "#);
     }
 }

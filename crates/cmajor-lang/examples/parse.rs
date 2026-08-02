@@ -50,13 +50,12 @@ fn parse_file(path: &Path) -> (bool, String) {
 
     let parser::Parse {
         ast,
-        roots,
         tokens,
         diagnostics,
     } = parser::parse(&source);
 
     let mut output = format!("{} tokens, {} AST nodes\n\n", tokens.len(), ast.len());
-    for root in roots {
+    for &root in ast.roots() {
         output.push_str(&ast::dump(&ast, &tokens, &source, root));
     }
     for diagnostic in &diagnostics {

@@ -1,6 +1,6 @@
 use crate::{
     arena_key,
-    ast::{decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
+    ast::{attribute::AttributeList, decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
     lexer::TokenId,
     utils::arena::Arena,
 };
@@ -14,6 +14,7 @@ pub enum Node {
     Decl(Decl),
     Item(Item),
     Graph(Graph),
+    AttributeList(AttributeList),
     Error { token: TokenId },
 }
 
@@ -47,16 +48,25 @@ impl From<Graph> for Node {
     }
 }
 
+impl From<AttributeList> for Node {
+    fn from(attribute_list: AttributeList) -> Self {
+        Node::AttributeList(attribute_list)
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Ast {
     nodes: Arena<NodeId, Node>,
+    roots: Vec<NodeId>,
 }
 
 impl Ast {
-    pub fn new() -> Self {
-        Self {
-            nodes: Arena::default(),
-        }
+    pub fn new(nodes: Arena<NodeId, Node>, roots: Vec<NodeId>) -> Self {
+        Self { nodes, roots }
+    }
+
+    pub fn roots(&self) -> &[NodeId] {
+        &self.roots
     }
 
     pub fn push(&mut self, node: impl Into<Node>) -> NodeId {

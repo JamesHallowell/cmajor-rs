@@ -23,18 +23,24 @@ pub struct Declarator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Var {
+    pub role: VarRole,
+    pub ty: Option<NodeId>,
+    pub is_external: bool,
+    pub declarators: Vec<Declarator>,
+    pub attributes: Option<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alias {
+    pub keyword: TokenId,
+    pub kind: AliasKind,
+    pub name: TokenId,
+    pub target: Option<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
-    Var {
-        role: VarRole,
-        ty: Option<NodeId>,
-        is_external: bool,
-        declarators: Vec<Declarator>,
-        attributes: Option<Vec<(TokenId, Option<NodeId>)>>,
-    },
-    Alias {
-        keyword: TokenId,
-        kind: AliasKind,
-        name: TokenId,
-        target: Option<NodeId>,
-    },
+    Var(Var),
+    Alias(Alias),
 }

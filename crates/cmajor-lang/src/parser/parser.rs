@@ -1,19 +1,24 @@
 use crate::{
     Diagnostic,
     ast::{
-        self, Ast, BracketTerm, Decl, Declarator, Expr, Graph, HoistTarget, HoistedPath,
-        InterpolationKind, Item, Node, NodeId, Stmt, VarRole,
+        self, Alias, Assign, Ast, AttributeList, Binary, Block, BracketTerm, Bracketed, BreakStmt,
+        Call, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl, DeclStmt, Declarator,
+        EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt, ForwardBranchStmt, FunctionDecl,
+        Graph, GraphDecl, HoistTarget, HoistedPath, Ident, IfStmt, Import, InterpolationKind, Item,
+        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Parentheses, PostfixUnary,
+        ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess, Stmt, StructDecl, Ternary,
+        TypeModifier, Unary, Var, VarRole, VectorSizeSuffix, WhileStmt,
     },
     lexer::{
         Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
     },
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
-    skip_to_matching, token, utils,
+    skip_to_matching, token,
+    utils::{self, arena::Arena},
 };
 
 pub struct Parse {
     pub ast: Ast,
-    pub roots: Vec<NodeId>,
     pub tokens: TokenStream,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -21,10 +26,9 @@ pub struct Parse {
 pub fn parse(source: &str) -> Parse {
     let tokens = tokenize(source);
     let mut parser = Parser::new(&tokens, source);
-    let roots = parser.parse();
+    parser.parse();
     Parse {
-        ast: parser.ast,
-        roots,
+        ast: Ast::new(parser.ast, parser.roots),
         diagnostics: parser.diagnostics,
         tokens,
     }
@@ -205,7 +209,8 @@ struct Parser<'a> {
     tokens: &'a TokenStream,
     iter: NonTrivialTokenStreamIterator<'a>,
     source: &'a str,
-    ast: Ast,
+    ast: Arena<NodeId, Node>,
+    roots: Vec<NodeId>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -328,7 +333,8 @@ impl<'a> Parser<'a> {
             tokens,
             iter: tokens.into_iter().ignore_trivia(),
             source,
-            ast: Ast::new(),
+            ast: Arena::default(),
+            roots: vec![],
             diagnostics: Vec::new(),
         }
     }
@@ -413,12 +419,11 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub fn parse(&mut self) -> Vec<NodeId> {
-        let mut stmts = Vec::new();
+    pub fn parse(&mut self) {
         while !self.peek().is_end_of_file() {
-            stmts.push(self.parse_statement());
+            let root = self.parse_statement();
+            self.roots.push(root);
         }
-        stmts
     }
 
     fn parse_expr(&mut self) -> NodeId {
@@ -430,7 +435,7 @@ impl<'a> Parser<'a> {
             token!(! | ~ | - | ++ | --) => {
                 let op = self.advance();
                 let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
-                self.ast.push(Expr::Unary { op, operand })
+                self.ast.push(Expr::Unary(Unary { op, operand }))
             }
             TokenKind::Literal(literal) => self.parse_literal(literal),
             token!(true | false) => {
@@ -441,20 +446,22 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.advance();
                 let name = self.expect(TokenKind::Identifier);
-                self.ast.push(Expr::ProcessorProperty { name })
+                self.ast
+                    .push(Expr::ProcessorProperty(ProcessorProperty { name }))
             }
             TokenKind::Identifier | token!(processor) => {
                 let token = self.advance();
-                self.ast.push(Expr::Ident { token })
+                self.ast.push(Expr::Ident(Ident { token }))
             }
             token!('(') => {
                 let (paren, _) = self.peek_verbose();
                 let inner = list!(self, (, self.parse_expr(), ));
-                self.ast.push(Expr::Parentheses { paren, inner })
+                self.ast
+                    .push(Expr::Parentheses(Parentheses { paren, inner }))
             }
             token if token.is_type_like() => {
                 let token = self.advance();
-                self.ast.push(Expr::Ident { token })
+                self.ast.push(Expr::Ident(Ident { token }))
             }
             peeked => {
                 let message = format!("expected expression, found {peeked:?}");
@@ -476,7 +483,8 @@ impl<'a> Parser<'a> {
                 },
                 token!(++ | --) => {
                     let op = self.advance();
-                    self.ast.push(Expr::PostfixUnary { op, operand: lhs })
+                    self.ast
+                        .push(Expr::PostfixUnary(PostfixUnary { op, operand: lhs }))
                 }
                 _ => break,
             };
@@ -504,24 +512,24 @@ impl<'a> Parser<'a> {
                     let else_branch =
                         self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
 
-                    self.ast.push(Expr::Ternary {
+                    self.ast.push(Expr::Ternary(Ternary {
                         question,
                         cond: lhs,
                         then_branch,
                         else_branch,
-                    })
+                    }))
                 }
                 Infix::Binary(bin_op) => {
                     let op = self.advance();
                     let rhs = self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
                     self.ast.push(if bin_op.is_assignment() {
-                        Expr::Assign {
+                        Expr::Assign(Assign {
                             op,
                             target: lhs,
                             value: rhs,
-                        }
+                        })
                     } else {
-                        Expr::Binary { op, lhs, rhs }
+                        Expr::Binary(Binary { op, lhs, rhs })
                     })
                 }
             };
@@ -533,28 +541,28 @@ impl<'a> Parser<'a> {
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
         self.expect(token!(::));
         let name = self.expect(TokenKind::Identifier);
-        self.ast.push(Expr::ScopeAccess { name, base })
+        self.ast.push(Expr::ScopeAccess(ScopeAccess { name, base }))
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
         let (paren, _) = self.peek_verbose();
         let args = list!(self, (, self.parse_expr(), ));
-        self.ast.push(Expr::Call {
+        self.ast.push(Expr::Call(Call {
             paren,
             callee,
             args,
-        })
+        }))
     }
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
         let (start, _) = self.peek_verbose();
         let terms = list!(self, [, self.parse_bracket_term(), ]);
 
-        self.ast.push(Expr::Bracketed {
+        self.ast.push(Expr::Bracketed(Bracketed {
             bracket: start,
             base,
             terms,
-        })
+        }))
     }
 
     fn parse_bracket_term(&mut self) -> BracketTerm {
@@ -580,7 +588,7 @@ impl<'a> Parser<'a> {
         self.expect(token!(.));
         let name = self.expect(TokenKind::Identifier);
 
-        self.ast.push(Expr::Field { name, base })
+        self.ast.push(Expr::Field(Field { name, base }))
     }
 
     fn parse_literal(&mut self, literal: Literal) -> NodeId {
@@ -685,14 +693,16 @@ impl<'a> Parser<'a> {
         let keyword = self.expect(token!(break));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.ast.push(Stmt::BreakStmt { keyword, target })
+        self.ast
+            .push(Stmt::BreakStmt(BreakStmt { keyword, target }))
     }
 
     fn parse_continue(&mut self) -> NodeId {
         let keyword = self.expect(token!(continue));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.ast.push(Stmt::ContinueStmt { keyword, target })
+        self.ast
+            .push(Stmt::ContinueStmt(ContinueStmt { keyword, target }))
     }
 
     fn parse_forward_branch(&mut self) -> NodeId {
@@ -703,11 +713,11 @@ impl<'a> Parser<'a> {
         self.expect(token!(->));
         let targets = list!(self, (, self.expect(TokenKind::Identifier), ));
         self.expect(token!(;));
-        self.ast.push(Stmt::ForwardBranchStmt {
+        self.ast.push(Stmt::ForwardBranchStmt(ForwardBranchStmt {
             keyword,
             cond,
             targets,
-        })
+        }))
     }
 
     fn parse_import(&mut self) -> NodeId {
@@ -722,7 +732,7 @@ impl<'a> Parser<'a> {
             path
         };
         self.expect(token!(;));
-        self.ast.push(Item::Import { keyword, path })
+        self.ast.push(Item::Import(Import { keyword, path }))
     }
 
     fn parse_enum(&mut self) -> NodeId {
@@ -730,11 +740,11 @@ impl<'a> Parser<'a> {
         let name = self.expect(TokenKind::Identifier);
         let values = list!(self, {, self.expect(TokenKind::Identifier), });
 
-        self.ast.push(Item::EnumDecl {
+        self.ast.push(Item::EnumDecl(EnumDecl {
             keyword,
             name,
             values,
-        })
+        }))
     }
 
     fn parse_external_decl(&mut self) -> NodeId {
@@ -749,13 +759,13 @@ impl<'a> Parser<'a> {
         let target = self.parse_expr();
         self.expect(token!(;));
 
-        let decl = self.ast.push(Decl::Alias {
+        let decl = self.ast.push(Decl::Alias(Alias {
             keyword,
             kind: ast::AliasKind::Using,
             name,
             target: Some(target),
-        });
-        self.ast.push(Stmt::DeclStmt { decl })
+        }));
+        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_typed_decl(&mut self) -> NodeId {
@@ -792,14 +802,14 @@ impl<'a> Parser<'a> {
         if consume_semicolon {
             self.expect(token!(;));
         }
-        let decl = self.ast.push(Decl::Var {
+        let decl = self.ast.push(Decl::Var(Var {
             role: VarRole::Typed,
             ty: Some(ty),
             is_external,
             declarators,
             attributes,
-        });
-        self.ast.push(Stmt::DeclStmt { decl })
+        }));
+        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
@@ -814,13 +824,13 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Identifier);
 
-        self.ast.push(Decl::Var {
+        self.ast.push(Decl::Var(Var {
             role: VarRole::Parameter,
             ty: Some(ty),
             is_external: false,
             declarators: vec![Declarator { name, init: None }],
             attributes: None,
-        })
+        }))
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
@@ -840,7 +850,7 @@ impl<'a> Parser<'a> {
             .then(|| self.parse_attribute_list());
         let body = self.parse_block(None);
 
-        self.ast.push(Item::FunctionDecl {
+        self.ast.push(Item::FunctionDecl(FunctionDecl {
             ty,
             name,
             generics,
@@ -849,7 +859,7 @@ impl<'a> Parser<'a> {
             is_event_handler: false,
             attributes,
             body,
-        })
+        }))
     }
 
     fn parse_event_handler(&mut self) -> NodeId {
@@ -858,7 +868,7 @@ impl<'a> Parser<'a> {
         let params = self.parse_params();
         let body = self.parse_block(None);
 
-        self.ast.push(Item::FunctionDecl {
+        self.ast.push(Item::FunctionDecl(FunctionDecl {
             ty: None,
             name,
             generics: Vec::new(),
@@ -867,7 +877,7 @@ impl<'a> Parser<'a> {
             is_event_handler: true,
             attributes: None,
             body,
-        })
+        }))
     }
 
     fn parse_namespace(&mut self) -> NodeId {
@@ -882,12 +892,12 @@ impl<'a> Parser<'a> {
             let target = self.parse_expr();
             self.expect(token!(;));
             let name = *segments.last().expect("namespace has at least one segment");
-            return self.ast.push(Item::ModuleAlias {
+            return self.ast.push(Item::ModuleAlias(ModuleAlias {
                 keyword,
                 kind: ast::AliasKind::Namespace,
                 name,
                 target,
-            });
+            }));
         }
 
         let attributes = self
@@ -897,13 +907,13 @@ impl<'a> Parser<'a> {
         let items = self.parse_container_items();
         self.expect(token!('}'));
 
-        self.ast.push(Item::NamespaceDecl {
+        self.ast.push(Item::NamespaceDecl(NamespaceDecl {
             keyword,
             segments,
             params,
             attributes,
             items,
-        })
+        }))
     }
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
@@ -923,12 +933,12 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_type());
-                self.ast.push(Decl::Alias {
+                self.ast.push(Decl::Alias(Alias {
                     keyword,
                     kind: ast::AliasKind::Using,
                     name,
                     target,
-                })
+                }))
             }
             token!(processor) => {
                 let keyword = self.advance();
@@ -937,12 +947,12 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Alias {
+                self.ast.push(Decl::Alias(Alias {
                     keyword,
                     kind: ast::AliasKind::Processor,
                     name,
                     target,
-                })
+                }))
             }
             token!(namespace) => {
                 let keyword = self.advance();
@@ -951,12 +961,12 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Alias {
+                self.ast.push(Decl::Alias(Alias {
                     keyword,
                     kind: ast::AliasKind::Namespace,
                     name,
                     target,
-                })
+                }))
             }
             _ => {
                 let ty = self.parse_type();
@@ -965,13 +975,13 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Var {
+                self.ast.push(Decl::Var(Var {
                     role: VarRole::SpecialisationValue,
                     ty: Some(ty),
                     is_external: false,
                     declarators: vec![Declarator { name, init }],
                     attributes: None,
-                })
+                }))
             }
         }
     }
@@ -986,12 +996,12 @@ impl<'a> Parser<'a> {
             self.advance();
             let target = self.parse_expr();
             self.expect(token!(;));
-            return self.ast.push(Item::ModuleAlias {
+            return self.ast.push(Item::ModuleAlias(ModuleAlias {
                 keyword,
                 kind: ast::AliasKind::Processor,
                 name,
                 target,
-            });
+            }));
         }
 
         let attributes = self
@@ -1002,26 +1012,26 @@ impl<'a> Parser<'a> {
         self.expect(token!('}'));
 
         match keyword_kind {
-            token!(graph) => self.ast.push(Item::GraphDecl {
+            token!(graph) => self.ast.push(Item::GraphDecl(GraphDecl {
                 keyword,
                 name,
                 params,
                 attributes,
                 items,
-            }),
-            token!(struct) => self.ast.push(Item::StructDecl {
+            })),
+            token!(struct) => self.ast.push(Item::StructDecl(StructDecl {
                 keyword,
                 name,
                 attributes,
                 items,
-            }),
-            token!(processor) => self.ast.push(Item::ProcessorDecl {
+            })),
+            token!(processor) => self.ast.push(Item::ProcessorDecl(ProcessorDecl {
                 keyword,
                 name,
                 params,
                 attributes,
                 items,
-            }),
+            })),
             _ => unreachable!(),
         }
     }
@@ -1058,21 +1068,21 @@ impl<'a> Parser<'a> {
         self.expect(token!(=));
         let processor = self.parse_expr();
 
-        self.ast.push(Graph::NodeDecl {
+        self.ast.push(Graph::NodeDecl(NodeDecl {
             keyword,
             name,
             processor,
             array_size,
-        })
+        }))
     }
 
     fn parse_connection_decl(&mut self) -> NodeId {
         let keyword = self.expect(token!(connection));
         let connections = self.parse_connection_list();
-        self.ast.push(Graph::ConnectionDecl {
+        self.ast.push(Graph::ConnectionDecl(ConnectionDecl {
             keyword,
             connections,
-        })
+        }))
     }
 
     fn parse_connection_list(&mut self) -> Vec<NodeId> {
@@ -1109,12 +1119,12 @@ impl<'a> Parser<'a> {
             .is_some()
             .then(|| self.parse_connection_list());
 
-        self.ast.push(Graph::ConnectionIf {
+        self.ast.push(Graph::ConnectionIf(ConnectionIf {
             keyword,
             cond,
             then_branch,
             else_branch,
-        })
+        }))
     }
 
     fn parse_connection_chain(&mut self) -> Vec<NodeId> {
@@ -1144,7 +1154,7 @@ impl<'a> Parser<'a> {
                         "cannot chain a connection with multiple destinations",
                     );
                 } else if let Some(&dest) = destinations.first()
-                    && matches!(self.ast.get(dest), Node::Expr(Expr::Field { .. }))
+                    && matches!(self.ast[dest], Node::Expr(Expr::Field { .. }))
                 {
                     self.error(
                         arrow,
@@ -1153,13 +1163,13 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            connections.push(self.ast.push(Graph::Connection {
+            connections.push(self.ast.push(Graph::Connection(Connection {
                 interpolation,
                 sources,
                 arrow,
                 delay,
                 destinations: destinations.clone(),
-            }));
+            })));
 
             if !chain_continues {
                 break;
@@ -1211,19 +1221,19 @@ impl<'a> Parser<'a> {
 
         let is_bounded_range_for = self.at(token!(')'))
             && matches!(
-                init.map(|id| self.ast.get(id)),
-                Some(Node::Stmt(Stmt::DeclStmt { .. }))
+                init.map(|id| &self.ast[id]),
+                Some(Node::Stmt(Stmt::DeclStmt(DeclStmt { .. })))
             );
 
         if is_bounded_range_for {
             self.advance();
             let body = self.parse_statement();
-            return self.ast.push(Stmt::LoopStmt {
+            return self.ast.push(Stmt::LoopStmt(LoopStmt {
                 keyword,
                 label,
                 count: init,
                 body,
-            });
+            }));
         }
 
         self.expect(token!(;));
@@ -1233,14 +1243,14 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::ForStmt {
+        self.ast.push(Stmt::ForStmt(ForStmt {
             keyword,
             label,
             init,
             cond,
             update,
             body,
-        })
+        }))
     }
 
     fn parse_for_init(&mut self) -> NodeId {
@@ -1256,7 +1266,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expr = self.parse_expr();
-                self.ast.push(Stmt::ExprStmt { expr })
+                self.ast.push(Stmt::ExprStmt(ExprStmt { expr }))
             }
         }
     }
@@ -1322,8 +1332,9 @@ impl<'a> Parser<'a> {
         (key, value)
     }
 
-    fn parse_attribute_list(&mut self) -> Vec<(TokenId, Option<NodeId>)> {
-        list!(self, [[, self.parse_attribute(), ]])
+    fn parse_attribute_list(&mut self) -> NodeId {
+        let attributes = list!(self, [[, self.parse_attribute(), ]]);
+        self.ast.push(AttributeList { attributes })
     }
 
     fn looks_like_hoisted_endpoint(&self) -> bool {
@@ -1368,7 +1379,7 @@ impl<'a> Parser<'a> {
             HoistTarget::Wildcard { .. } => None,
         };
 
-        self.ast.push(Graph::EndpointDecl {
+        self.ast.push(Graph::EndpointDecl(EndpointDecl {
             direction,
             kind: None,
             types: Vec::new(),
@@ -1380,7 +1391,7 @@ impl<'a> Parser<'a> {
                 target,
             }),
             attributes,
-        })
+        }))
     }
 
     fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
@@ -1403,15 +1414,15 @@ impl<'a> Parser<'a> {
         names
             .into_iter()
             .map(|(name, size)| {
-                self.ast.push(Graph::EndpointDecl {
+                self.ast.push(Graph::EndpointDecl(EndpointDecl {
                     direction,
                     kind: Some(kind),
                     types: types.clone(),
                     name: Some(name),
                     size,
                     hoisted: None,
-                    attributes: attributes.clone(),
-                })
+                    attributes,
+                }))
             })
             .collect()
     }
@@ -1474,11 +1485,11 @@ impl<'a> Parser<'a> {
         });
         self.expect(token!('}'));
 
-        self.ast.push(Stmt::Block {
+        self.ast.push(Stmt::Block(Block {
             brace,
             label,
             stmts,
-        })
+        }))
     }
 
     fn parse_let(&mut self) -> NodeId {
@@ -1506,14 +1517,14 @@ impl<'a> Parser<'a> {
             self.expect(token!(;));
         }
 
-        let decl = self.ast.push(Decl::Var {
+        let decl = self.ast.push(Decl::Var(Var {
             role,
             ty: None,
             is_external: false,
             declarators,
             attributes: None,
-        });
-        self.ast.push(Stmt::DeclStmt { decl })
+        }));
+        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_let_declarator(&mut self) -> Declarator {
@@ -1538,13 +1549,13 @@ impl<'a> Parser<'a> {
             .is_some()
             .then(|| self.parse_statement());
 
-        self.ast.push(Stmt::IfStmt {
+        self.ast.push(Stmt::IfStmt(IfStmt {
             keyword,
             is_const: is_const.is_some(),
             cond,
             then_branch,
             else_branch,
-        })
+        }))
     }
 
     fn parse_while(&mut self, label: Option<TokenId>) -> NodeId {
@@ -1554,12 +1565,12 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::WhileStmt {
+        self.ast.push(Stmt::WhileStmt(WhileStmt {
             keyword,
             label,
             cond,
             body,
-        })
+        }))
     }
 
     fn parse_loop(&mut self, label: Option<TokenId>) -> NodeId {
@@ -1571,12 +1582,12 @@ impl<'a> Parser<'a> {
         });
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::LoopStmt {
+        self.ast.push(Stmt::LoopStmt(LoopStmt {
             keyword,
             label,
             count,
             body,
-        })
+        }))
     }
 
     fn parse_return(&mut self) -> NodeId {
@@ -1584,13 +1595,14 @@ impl<'a> Parser<'a> {
         let value = self.not_at(token!(;)).then(|| self.parse_expr());
         self.expect(token!(;));
 
-        self.ast.push(Stmt::ReturnStmt { keyword, value })
+        self.ast
+            .push(Stmt::ReturnStmt(ReturnStmt { keyword, value }))
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
         let expr = self.parse_expr();
         self.expect(token!(;));
-        self.ast.push(Stmt::ExprStmt { expr })
+        self.ast.push(Stmt::ExprStmt(ExprStmt { expr }))
     }
 
     fn parse_type(&mut self) -> NodeId {
@@ -1599,11 +1611,11 @@ impl<'a> Parser<'a> {
         let is_ref = self.advance_if(token!(&)).is_some();
 
         if is_const || is_ref {
-            ty = self.ast.push(Expr::TypeModifier {
+            ty = self.ast.push(Expr::TypeModifier(TypeModifier {
                 source: ty,
                 is_const,
                 is_ref,
-            });
+            }));
         }
 
         ty
@@ -1635,7 +1647,7 @@ impl<'a> Parser<'a> {
 
     fn parse_qualified_name(&mut self) -> NodeId {
         let token = self.advance();
-        let mut name = self.ast.push(Expr::Ident { token });
+        let mut name = self.ast.push(Expr::Ident(Ident { token }));
 
         loop {
             if self.at(token!('(')) {
@@ -1656,11 +1668,11 @@ impl<'a> Parser<'a> {
         let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
         self.expect(token!(>));
 
-        self.ast.push(Expr::VectorSizeSuffix {
+        self.ast.push(Expr::VectorSizeSuffix(VectorSizeSuffix {
             angle,
             element,
             terms: vec![term],
-        })
+        }))
     }
 
     fn try_parse_vector_size_suffix(&mut self, element: NodeId) -> Option<NodeId> {
@@ -1682,11 +1694,11 @@ impl<'a> Parser<'a> {
         *self = checkpoint;
 
         self.advance();
-        Some(self.ast.push(Expr::VectorSizeSuffix {
+        Some(self.ast.push(Expr::VectorSizeSuffix(VectorSizeSuffix {
             angle,
             element,
             terms,
-        }))
+        })))
     }
 }
 
@@ -1700,7 +1712,8 @@ mod tests {
         let root = parse_fn(&mut parser);
         assert_eq!(parser.diagnostics, vec![]);
 
-        ast::dump(&parser.ast, &tokens, source, root)
+        let ast = Ast::new(parser.ast, vec![root]);
+        ast::dump(&ast, &tokens, source, root)
     }
 
     fn has_diagnostics(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> bool {
@@ -2793,11 +2806,11 @@ mod tests {
         insta::assert_snapshot!(
             dump("input { event int e; value float v; }", |parser| {
                 let items = parser.parse_endpoint_group();
-                parser.ast.push(Stmt::Block {
+                parser.ast.push(Stmt::Block(Block {
                     brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
-                })
+                }))
             }),
             @r#"
         Block
@@ -2879,11 +2892,11 @@ mod tests {
         insta::assert_snapshot!(
             dump("output stream { float32 a; int b; }", |parser| {
                 let items = parser.parse_container_items();
-                parser.ast.push(Stmt::Block {
+                parser.ast.push(Stmt::Block(Block {
                     brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
-                })
+                }))
             }),
             @r#"
         Block
@@ -2900,11 +2913,11 @@ mod tests {
         insta::assert_snapshot!(
             dump("node b = B, c = C;", |parser| {
                 let items = parser.parse_node_group();
-                parser.ast.push(Stmt::Block {
+                parser.ast.push(Stmt::Block(Block {
                     brace: parser.peek_verbose().0,
                     label: None,
                     stmts: items,
-                })
+                }))
             }),
             @r#"
         Block

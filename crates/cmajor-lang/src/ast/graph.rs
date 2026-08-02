@@ -24,37 +24,52 @@ pub struct HoistedPath {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EndpointDecl {
+    pub direction: TokenId,
+    pub kind: Option<TokenId>,
+    pub types: Vec<NodeId>,
+    pub name: Option<TokenId>,
+    pub size: Option<NodeId>,
+    pub hoisted: Option<HoistedPath>,
+    pub attributes: Option<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeDecl {
+    pub keyword: TokenId,
+    pub name: TokenId,
+    pub processor: NodeId,
+    pub array_size: Option<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectionDecl {
+    pub keyword: TokenId,
+    pub connections: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Connection {
+    pub interpolation: Option<InterpolationKind>,
+    pub sources: Vec<NodeId>,
+    pub arrow: TokenId,
+    pub delay: Option<NodeId>,
+    pub destinations: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectionIf {
+    pub keyword: TokenId,
+    pub cond: NodeId,
+    pub then_branch: Vec<NodeId>,
+    pub else_branch: Option<Vec<NodeId>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Graph {
-    EndpointDecl {
-        direction: TokenId,
-        kind: Option<TokenId>,
-        types: Vec<NodeId>,
-        name: Option<TokenId>,
-        size: Option<NodeId>,
-        hoisted: Option<HoistedPath>,
-        attributes: Option<Vec<(TokenId, Option<NodeId>)>>,
-    },
-    NodeDecl {
-        keyword: TokenId,
-        name: TokenId,
-        processor: NodeId,
-        array_size: Option<NodeId>,
-    },
-    ConnectionDecl {
-        keyword: TokenId,
-        connections: Vec<NodeId>,
-    },
-    Connection {
-        interpolation: Option<InterpolationKind>,
-        sources: Vec<NodeId>,
-        arrow: TokenId,
-        delay: Option<NodeId>,
-        destinations: Vec<NodeId>,
-    },
-    ConnectionIf {
-        keyword: TokenId,
-        cond: NodeId,
-        then_branch: Vec<NodeId>,
-        else_branch: Option<Vec<NodeId>>,
-    },
+    EndpointDecl(EndpointDecl),
+    NodeDecl(NodeDecl),
+    ConnectionDecl(ConnectionDecl),
+    Connection(Connection),
+    ConnectionIf(ConnectionIf),
 }

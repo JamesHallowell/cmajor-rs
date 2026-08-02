@@ -35,68 +35,110 @@ pub struct BracketTerm {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Ident {
+    pub token: TokenId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parentheses {
+    pub paren: TokenId,
+    pub inner: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unary {
+    pub op: TokenId,
+    pub operand: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PostfixUnary {
+    pub op: TokenId,
+    pub operand: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binary {
+    pub op: TokenId,
+    pub lhs: NodeId,
+    pub rhs: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assign {
+    pub op: TokenId,
+    pub target: NodeId,
+    pub value: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ternary {
+    pub question: TokenId,
+    pub cond: NodeId,
+    pub then_branch: NodeId,
+    pub else_branch: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Call {
+    pub paren: TokenId,
+    pub callee: NodeId,
+    pub args: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bracketed {
+    pub bracket: TokenId,
+    pub base: NodeId,
+    pub terms: Vec<BracketTerm>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    pub name: TokenId,
+    pub base: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeAccess {
+    pub name: TokenId,
+    pub base: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeModifier {
+    pub source: NodeId,
+    pub is_const: bool,
+    pub is_ref: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorSizeSuffix {
+    pub angle: TokenId,
+    pub element: NodeId,
+    pub terms: Vec<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessorProperty {
+    pub name: TokenId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(Literal),
-    Ident {
-        token: TokenId,
-    },
-    Parentheses {
-        paren: TokenId,
-        inner: Vec<NodeId>,
-    },
-    Unary {
-        op: TokenId,
-        operand: NodeId,
-    },
-    PostfixUnary {
-        op: TokenId,
-        operand: NodeId,
-    },
-    Binary {
-        op: TokenId,
-        lhs: NodeId,
-        rhs: NodeId,
-    },
-    Assign {
-        op: TokenId,
-        target: NodeId,
-        value: NodeId,
-    },
-    Ternary {
-        question: TokenId,
-        cond: NodeId,
-        then_branch: NodeId,
-        else_branch: NodeId,
-    },
-    Call {
-        paren: TokenId,
-        callee: NodeId,
-        args: Vec<NodeId>,
-    },
-    Bracketed {
-        bracket: TokenId,
-        base: NodeId,
-        terms: Vec<BracketTerm>,
-    },
-    Field {
-        name: TokenId,
-        base: NodeId,
-    },
-    ScopeAccess {
-        name: TokenId,
-        base: NodeId,
-    },
-    TypeModifier {
-        source: NodeId,
-        is_const: bool,
-        is_ref: bool,
-    },
-    VectorSizeSuffix {
-        angle: TokenId,
-        element: NodeId,
-        terms: Vec<NodeId>,
-    },
-    ProcessorProperty {
-        name: TokenId,
-    },
+    Ident(Ident),
+    Parentheses(Parentheses),
+    Unary(Unary),
+    PostfixUnary(PostfixUnary),
+    Binary(Binary),
+    Assign(Assign),
+    Ternary(Ternary),
+    Call(Call),
+    Bracketed(Bracketed),
+    Field(Field),
+    ScopeAccess(ScopeAccess),
+    TypeModifier(TypeModifier),
+    VectorSizeSuffix(VectorSizeSuffix),
+    ProcessorProperty(ProcessorProperty),
 }

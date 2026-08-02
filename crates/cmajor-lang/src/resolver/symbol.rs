@@ -114,6 +114,18 @@ impl SymbolTable {
             .find(|&id| self.symbols[id].name == name)
     }
 
+    pub fn lookup_visible(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+        let mut current_scope = scope;
+        loop {
+            match self.lookup_local(current_scope, name) {
+                Some(id) => return Some(id),
+                None => {
+                    current_scope = self.parent_scope(current_scope)?;
+                }
+            }
+        }
+    }
+
     pub fn symbols_in(&self, scope: ScopeId) -> impl Iterator<Item = &Symbol> {
         self.scopes[scope]
             .symbols

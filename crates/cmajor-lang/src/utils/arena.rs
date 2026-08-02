@@ -47,9 +47,9 @@ impl<K, V> Arena<K, V>
 where
     K: From<KeyData>,
 {
-    pub fn push(&mut self, item: V) -> K {
+    pub fn push(&mut self, item: impl Into<V>) -> K {
         let key = K::from(KeyData(self.items.len() as u32));
-        self.items.push(item);
+        self.items.push(item.into());
         key
     }
 
