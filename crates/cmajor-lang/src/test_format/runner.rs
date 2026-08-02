@@ -1,6 +1,6 @@
 use {
     super::{Directive, TestFile},
-    crate::parser,
+    crate::{parser, resolver},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +48,18 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                             let detail = describe_parse_errors(&parse, &source);
                             Outcome::Fail(format!("parse error produced\n{detail}"))
                         } else {
-                            Outcome::Pass
+                            let resolution = resolver::resolve(&source, &parse);
+                            if !resolution.diagnostics.is_empty() {
+                                let detail = resolution
+                                    .diagnostics
+                                    .iter()
+                                    .map(|d| format!("  {d}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                Outcome::Fail(format!("resolution error produced\n{detail}"))
+                            } else {
+                                Outcome::Pass
+                            }
                         }
                     }
                     Directive::ExpectError { .. } => {
@@ -57,7 +68,14 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                         if parse.ast.has_errors() {
                             Outcome::Pass
                         } else {
-                            Outcome::Fail("expected a parse error but none occurred".to_string())
+                            let resolution = resolver::resolve(&source, &parse);
+                            if !resolution.diagnostics.is_empty() {
+                                Outcome::Pass
+                            } else {
+                                Outcome::Fail(
+                                    "expected an error but none occurred".to_string(),
+                                )
+                            }
                         }
                     }
                     _ => Outcome::Skipped(format!("execution of '{name}' not yet supported")),
@@ -177,7 +195,7 @@ mod tests {
             vec![TestResult {
                 name: "expectError".into(),
                 line: 1,
-                outcome: Outcome::Fail("expected a parse error but none occurred".into()),
+                outcome: Outcome::Fail("expected an error but none occurred".into()),
                 expected_error: Some("2:9: error: nope".into()),
             }]
         );

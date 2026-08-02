@@ -1,6 +1,6 @@
 use crate::{
-    lexer::TokenId,
-    utils::{Column, Line},
+    lexer::{TokenId, TokenStream},
+    utils::{self, Column, Line},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9,6 +9,24 @@ pub struct Diagnostic {
     pub line: Line,
     pub column: Column,
     pub message: String,
+}
+
+impl Diagnostic {
+    pub fn at_token(
+        source: &str,
+        token_stream: &TokenStream,
+        token: TokenId,
+        message: impl Into<String>,
+    ) -> Self {
+        let position = token_stream.position(token);
+        let (line, column) = utils::line_col(source, position);
+        Self {
+            token,
+            line,
+            column,
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for Diagnostic {
