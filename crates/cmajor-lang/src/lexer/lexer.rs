@@ -387,14 +387,7 @@ mod tests {
 
         token_stream
             .into_iter()
-            .map(|(id, token)| {
-                (
-                    token.kind,
-                    token_stream
-                        .text(input, id)
-                        .expect("failed to get text for token"),
-                )
-            })
+            .map(|(id, token)| (token.kind, token_stream.text(input, id)))
             .collect()
     }
 

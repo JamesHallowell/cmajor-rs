@@ -4,7 +4,7 @@ use {
         lexer::Token,
         utils::arena::{Arena, Iter as ArenaIter, SecondaryArena},
     },
-    std::ops::Range,
+    std::range::Range,
 };
 
 arena_key!(TokenId);
@@ -40,19 +40,19 @@ impl TokenStream {
         self.tokens[id]
     }
 
-    pub fn position(&self, id: TokenId) -> u32 {
-        self.positions[id]
-    }
-
-    pub fn span(&self, id: TokenId) -> Option<Range<u32>> {
+    pub fn span(&self, id: TokenId) -> Range<u32> {
         let token = self.get(id);
-        let start = self.position(id);
-        Some(start..start + token.len)
+        let start = self.positions[id];
+        (start..start + token.len).into()
     }
 
-    pub fn text<'src>(&self, source: &'src str, id: TokenId) -> Option<&'src str> {
-        let span = self.span(id)?;
-        Some(&source[span.start as usize..span.end as usize])
+    pub fn to_position_span(&self, span: Range<TokenId>) -> Range<u32> {
+        (self.positions[span.start]..self.positions[span.end] + self.get(span.end).len).into()
+    }
+
+    pub fn text<'src>(&self, source: &'src str, id: TokenId) -> &'src str {
+        let span = self.span(id);
+        &source[span.start as usize..span.end as usize]
     }
 
     pub fn end_of_file(&self) -> TokenId {
@@ -74,11 +74,15 @@ pub struct TokenStreamIterator<'a> {
 #[derive(Debug, Clone)]
 pub struct NonTrivialTokenStreamIterator<'a> {
     iter: TokenStreamIterator<'a>,
+    prev: Option<TokenId>,
 }
 
 impl<'a> TokenStreamIterator<'a> {
     pub fn ignore_trivia(self) -> NonTrivialTokenStreamIterator<'a> {
-        NonTrivialTokenStreamIterator { iter: self }
+        NonTrivialTokenStreamIterator {
+            iter: self,
+            prev: None,
+        }
     }
 }
 
@@ -96,10 +100,17 @@ impl<'a> Iterator for NonTrivialTokenStreamIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         for (id, &token) in &mut self.iter {
             if !token.kind.is_trivia() {
+                self.prev.replace(id);
                 return Some((id, token));
             }
         }
         None
+    }
+}
+
+impl NonTrivialTokenStreamIterator<'_> {
+    pub fn prev_peek(&self) -> Option<TokenId> {
+        self.prev
     }
 }
 

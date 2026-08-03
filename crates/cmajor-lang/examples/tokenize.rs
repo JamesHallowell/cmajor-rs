@@ -9,10 +9,8 @@ fn main() {
 
     let token_stream = tokenize(&source);
     for (id, token) in token_stream.into_iter().ignore_trivia() {
-        let span = token_stream.span(id).expect("no span found for this token");
-        let text = token_stream
-            .text(&source, id)
-            .expect("no text found for this token");
+        let span = token_stream.span(id);
+        let text = token_stream.text(&source, id);
 
         println!(
             "{:>4}..{:<4} {:<15} {:?}",

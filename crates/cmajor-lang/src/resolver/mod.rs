@@ -79,11 +79,8 @@ impl<'a> Resolver<'a> {
         ))
     }
 
-    fn name(&self, token: TokenId) -> String {
-        self.tokens
-            .text(self.source, token)
-            .expect("name token has source text")
-            .to_string()
+    fn name(&self, token: TokenId) -> &str {
+        self.tokens.text(self.source, token)
     }
 
     fn declare(
@@ -93,7 +90,7 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         node: NodeId,
     ) -> SymbolId {
-        let name = self.name(name_token);
+        let name = self.name(name_token).to_owned();
 
         if !kind.allows_duplicates()
             && let Some(existing) = self.symbols.lookup_local(scope, &name)
@@ -106,11 +103,11 @@ impl<'a> Resolver<'a> {
             );
         }
 
-        self.symbols.declare(scope, name, kind, node, name_token)
+        self.symbols.declare(scope, kind, node, name, name_token)
     }
 
     fn location(&self, token: TokenId) -> (Line, Column) {
-        utils::line_col(self.source, self.tokens.position(token))
+        utils::line_col(self.source, self.tokens.span(token).start)
     }
 
     fn declare_container(
@@ -139,7 +136,7 @@ impl<'a> Resolver<'a> {
         segment: TokenId,
         node: NodeId,
     ) -> ScopeId {
-        let name = self.name(segment);
+        let name = self.name(segment).to_owned();
 
         if let Some(existing_id) = self.symbols.lookup_local(scope, &name) {
             let existing = self.symbols.symbol(existing_id);
@@ -157,7 +154,7 @@ impl<'a> Resolver<'a> {
 
         let symbol = self
             .symbols
-            .declare(scope, name, SymbolKind::Namespace, node, segment);
+            .declare(scope, SymbolKind::Namespace, node, name, segment);
         let inner = self.symbols.new_scope(scope, keyword);
         self.namespace_scopes.insert(symbol, inner);
         inner
@@ -183,10 +180,7 @@ impl<'a> Resolver<'a> {
             return;
         }
 
-        let name = self
-            .tokens
-            .text(self.source, ident)
-            .expect("token should be in source");
+        let name = self.tokens.text(self.source, ident);
 
         if self.symbols.lookup_visible(scope, name).is_none() {
             self.error(ident, format!("undeclared identifier '{name}'"));
@@ -311,16 +305,12 @@ impl<'a> Visitor for Resolver<'a> {
                 this.visit(ast, update);
             }
 
-            match ast.get(for_stmt.body) {
-                Node::Stmt(Stmt::Block(block)) => {
-                    this.with_new_scope_at(block.brace, |this, _| block.walk(ast, this));
+            this.with_new_scope_at(ast.span(for_stmt.body).start, |this, _| {
+                match ast.get(for_stmt.body) {
+                    Node::Stmt(Stmt::Block(block)) => block.walk(ast, this),
+                    _ => this.visit(ast, for_stmt.body),
                 }
-                _ => {
-                    this.with_new_scope_at(for_stmt.keyword, |this, _| {
-                        this.visit(ast, for_stmt.body)
-                    });
-                }
-            }
+            });
         });
     }
 
@@ -838,7 +828,7 @@ mod tests {
                             location: "10:28"
                   - location: "11:9"
                     scopes:
-                      - location: "11:9"
+                      - location: "11:18"
                         symbols:
                           - name: x
                             kind: Variable
@@ -856,7 +846,7 @@ mod tests {
                         kind: Variable
                         location: "13:18"
                     scopes:
-                      - location: "13:9"
+                      - location: "13:27"
                         symbols:
                           - name: x
                             kind: Variable

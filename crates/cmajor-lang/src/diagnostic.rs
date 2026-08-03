@@ -18,8 +18,8 @@ impl Diagnostic {
         token: TokenId,
         message: impl Into<String>,
     ) -> Self {
-        let position = token_stream.position(token);
-        let (line, column) = utils::line_col(source, position);
+        let span = token_stream.span(token);
+        let (line, column) = utils::line_col(source, span.start);
         Self {
             token,
             line,

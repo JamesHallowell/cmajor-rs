@@ -1,4 +1,6 @@
-use crate::{ast::node::NodeId, lexer::TokenId};
+use crate::{arena_key, ast::node::NodeId, lexer::TokenId};
+
+arena_key!(StmtId(pub(super) NodeId));
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {

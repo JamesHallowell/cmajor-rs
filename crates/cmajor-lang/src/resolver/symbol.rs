@@ -36,8 +36,8 @@ impl SymbolKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
     pub name: String,
-    pub kind: SymbolKind,
     pub name_token: TokenId,
+    pub kind: SymbolKind,
     pub node: NodeId,
     pub scope: ScopeId,
 }
@@ -97,15 +97,15 @@ impl SymbolTable {
     pub fn declare(
         &mut self,
         scope: ScopeId,
-        name: String,
         kind: SymbolKind,
         node: NodeId,
+        name: String,
         name_token: TokenId,
     ) -> SymbolId {
         let id = self.symbols.push(Symbol {
             name,
-            kind,
             name_token,
+            kind,
             node,
             scope,
         });

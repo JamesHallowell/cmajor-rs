@@ -9,7 +9,7 @@ pub struct Arena<K, V> {
 #[macro_export]
 macro_rules! arena_key {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name($crate::utils::arena::KeyData);
 
         impl From<$crate::utils::arena::KeyData> for $name {
@@ -24,9 +24,31 @@ macro_rules! arena_key {
             }
         }
     };
+    ($name:ident($vis:vis $wrapped:ident)) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name($vis $wrapped);
+
+        impl From<$crate::utils::arena::KeyData> for $name {
+            fn from(data: $crate::utils::arena::KeyData) -> Self {
+                $name($wrapped::from(data))
+            }
+        }
+
+        impl From<$name> for $crate::utils::arena::KeyData {
+            fn from(key: $name) -> Self {
+                $crate::utils::arena::KeyData::from(key.0)
+            }
+        }
+
+        impl From<$name> for $wrapped {
+            fn from(key: $name) -> Self {
+                key.0
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct KeyData(u32);
 
 impl<K, V> Arena<K, V> {
@@ -161,6 +183,14 @@ impl<K, V> SecondaryArena<K, V>
 where
     KeyData: From<K>,
 {
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let index = KeyData::from(key).0 as usize;
         if index >= self.items.len() {

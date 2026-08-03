@@ -73,8 +73,8 @@ pub struct Assign {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ternary {
-    pub question: TokenId,
     pub cond: NodeId,
+    pub question: TokenId,
     pub then_branch: NodeId,
     pub else_branch: NodeId,
 }

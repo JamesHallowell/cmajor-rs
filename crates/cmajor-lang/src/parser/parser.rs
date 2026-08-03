@@ -1,20 +1,28 @@
-use crate::{
-    Diagnostic,
-    ast::{
-        self, Alias, Assign, Ast, AttributeList, Binary, Block, BracketTerm, Bracketed, BreakStmt,
-        Call, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl, DeclStmt, Declarator,
-        EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt, ForwardBranchStmt, FunctionDecl,
-        Graph, GraphDecl, HoistTarget, HoistedPath, Ident, IfStmt, Import, InterpolationKind, Item,
-        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Parentheses, PostfixUnary,
-        ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess, Stmt, StructDecl, Ternary,
-        TypeModifier, Unary, Var, VarRole, VectorSizeSuffix, WhileStmt,
+use {
+    crate::{
+        Diagnostic,
+        ast::{
+            self, Alias, Assign, Ast, Attribute, AttributeList, Binary, Block, BracketTerm,
+            Bracketed, BreakStmt, Call, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
+            Decl, DeclStmt, Declarator, EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt,
+            ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget, HoistedPath, Ident,
+            IfStmt, Import, InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node,
+            NodeDecl, NodeId, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty,
+            ReturnStmt, ScopeAccess, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole,
+            VectorSizeSuffix, WhileStmt,
+        },
+        lexer::{
+            Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
+            tokenize,
+        },
+        parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
+        skip_to_matching, token,
+        utils::{
+            self,
+            arena::{Arena, SecondaryArena},
+        },
     },
-    lexer::{
-        Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
-    },
-    parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
-    skip_to_matching, token,
-    utils::{self, arena::Arena},
+    std::range::Range,
 };
 
 pub struct Parse {
@@ -28,7 +36,7 @@ pub fn parse(source: &str) -> Parse {
     let mut parser = Parser::new(&tokens, source);
     parser.parse();
     Parse {
-        ast: Ast::new(parser.ast, parser.roots),
+        ast: Ast::new(parser.nodes, parser.roots, parser.spans),
         diagnostics: parser.diagnostics,
         tokens,
     }
@@ -209,8 +217,9 @@ struct Parser<'a> {
     tokens: &'a TokenStream,
     iter: NonTrivialTokenStreamIterator<'a>,
     source: &'a str,
-    ast: Arena<NodeId, Node>,
+    nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
+    spans: SecondaryArena<NodeId, Range<TokenId>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -235,7 +244,7 @@ macro_rules! expect_identifier {
             let (id, token) = $parser.peek_verbose();
             match token.kind {
                 TokenKind::Identifier => {
-                    let text = $parser.tokens.text($parser.source, id).unwrap_or_default();
+                    let text = $parser.tokens.text($parser.source, id);
 
                     if matches!(text, $expected $(if $guard)?) {
                         $parser.advance()
@@ -333,8 +342,9 @@ impl<'a> Parser<'a> {
             tokens,
             iter: tokens.into_iter().ignore_trivia(),
             source,
-            ast: Arena::default(),
+            nodes: Arena::default(),
             roots: vec![],
+            spans: SecondaryArena::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -367,7 +377,7 @@ impl<'a> Parser<'a> {
     }
 
     fn text(&self, token: TokenId) -> &str {
-        self.tokens.text(self.source, token).unwrap_or_default()
+        self.tokens.text(self.source, token)
     }
 
     fn at(&self, kind: impl Into<TokenKind>) -> bool {
@@ -399,7 +409,7 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let position = self.tokens.position(token);
+        let position = self.tokens.span(token).start;
 
         let (line, column) = utils::line_col(self.source, position);
         self.diagnostics.push(Diagnostic {
@@ -419,6 +429,19 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn add_node(&mut self, start: TokenId, node: impl Into<Node>) -> NodeId {
+        let node = self.nodes.push(node.into());
+
+        let prev = self
+            .iter
+            .prev_peek()
+            .expect(" parser should always have a previous token when adding a node");
+
+        self.spans.insert(node, (start..prev).into());
+
+        node
+    }
+
     pub fn parse(&mut self) {
         while !self.peek().is_end_of_file() {
             let root = self.parse_statement();
@@ -435,39 +458,37 @@ impl<'a> Parser<'a> {
             token!(! | ~ | - | ++ | --) => {
                 let op = self.advance();
                 let operand = self.parse_expr_with_min_binding_power(PrecedenceLevel::Unary.base());
-                self.ast.push(Expr::Unary(Unary { op, operand }))
+                self.add_node(op, Expr::Unary(Unary { op, operand }))
             }
             TokenKind::Literal(literal) => self.parse_literal(literal),
             token!(true | false) => {
                 let token = self.advance();
-                self.ast.push(Expr::Literal(ast::Literal::Bool { token }))
+                self.add_node(token, Expr::Literal(ast::Literal::Bool { token }))
             }
             token!(processor) if self.peek_nth(1) == token!(.) => {
-                self.advance();
-                self.advance();
+                let keyword = self.expect(token!(processor));
+                self.expect(token!(.));
                 let name = self.expect(TokenKind::Identifier);
-                self.ast
-                    .push(Expr::ProcessorProperty(ProcessorProperty { name }))
+                self.add_node(keyword, Expr::ProcessorProperty(ProcessorProperty { name }))
             }
             TokenKind::Identifier | token!(processor) => {
                 let token = self.advance();
-                self.ast.push(Expr::Ident(Ident { token }))
+                self.add_node(token, Expr::Ident(Ident { token }))
             }
             token!('(') => {
                 let (paren, _) = self.peek_verbose();
                 let inner = list!(self, (, self.parse_expr(), ));
-                self.ast
-                    .push(Expr::Parentheses(Parentheses { paren, inner }))
+                self.add_node(paren, Expr::Parentheses(Parentheses { paren, inner }))
             }
             token if token.is_type_like() => {
                 let token = self.advance();
-                self.ast.push(Expr::Ident(Ident { token }))
+                self.add_node(token, Expr::Ident(Ident { token }))
             }
             peeked => {
                 let message = format!("expected expression, found {peeked:?}");
                 let token = self.advance();
                 self.error(token, message);
-                self.ast.push(Node::Error { token })
+                self.add_node(token, Node::Error { token })
             }
         };
 
@@ -483,8 +504,8 @@ impl<'a> Parser<'a> {
                 },
                 token!(++ | --) => {
                     let op = self.advance();
-                    self.ast
-                        .push(Expr::PostfixUnary(PostfixUnary { op, operand: lhs }))
+                    let start = self.spans[lhs].start;
+                    self.add_node(start, Expr::PostfixUnary(PostfixUnary { op, operand: lhs }))
                 }
                 _ => break,
             };
@@ -512,25 +533,33 @@ impl<'a> Parser<'a> {
                     let else_branch =
                         self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
 
-                    self.ast.push(Expr::Ternary(Ternary {
-                        question,
-                        cond: lhs,
-                        then_branch,
-                        else_branch,
-                    }))
+                    let start = self.spans[lhs].start;
+                    self.add_node(
+                        start,
+                        Expr::Ternary(Ternary {
+                            cond: lhs,
+                            question,
+                            then_branch,
+                            else_branch,
+                        }),
+                    )
                 }
                 Infix::Binary(bin_op) => {
                     let op = self.advance();
                     let rhs = self.parse_expr_with_min_binding_power(binding_power.min_for_rhs);
-                    self.ast.push(if bin_op.is_assignment() {
-                        Expr::Assign(Assign {
-                            op,
-                            target: lhs,
-                            value: rhs,
-                        })
-                    } else {
-                        Expr::Binary(Binary { op, lhs, rhs })
-                    })
+                    let start = self.spans[lhs].start;
+                    self.add_node(
+                        start,
+                        if bin_op.is_assignment() {
+                            Expr::Assign(Assign {
+                                op,
+                                target: lhs,
+                                value: rhs,
+                            })
+                        } else {
+                            Expr::Binary(Binary { op, lhs, rhs })
+                        },
+                    )
                 }
             };
         }
@@ -541,28 +570,37 @@ impl<'a> Parser<'a> {
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
         self.expect(token!(::));
         let name = self.expect(TokenKind::Identifier);
-        self.ast.push(Expr::ScopeAccess(ScopeAccess { name, base }))
+        let start = self.spans[base].start;
+        self.add_node(start, Expr::ScopeAccess(ScopeAccess { name, base }))
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
         let (paren, _) = self.peek_verbose();
         let args = list!(self, (, self.parse_expr(), ));
-        self.ast.push(Expr::Call(Call {
-            paren,
-            callee,
-            args,
-        }))
+        let start = self.spans[callee].start;
+        self.add_node(
+            start,
+            Expr::Call(Call {
+                paren,
+                callee,
+                args,
+            }),
+        )
     }
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
-        let (start, _) = self.peek_verbose();
+        let (bracket, _) = self.peek_verbose();
         let terms = list!(self, [, self.parse_bracket_term(), ]);
 
-        self.ast.push(Expr::Bracketed(Bracketed {
-            bracket: start,
-            base,
-            terms,
-        }))
+        let start = self.spans[base].start;
+        self.add_node(
+            start,
+            Expr::Bracketed(Bracketed {
+                bracket,
+                base,
+                terms,
+            }),
+        )
     }
 
     fn parse_bracket_term(&mut self) -> BracketTerm {
@@ -588,7 +626,8 @@ impl<'a> Parser<'a> {
         self.expect(token!(.));
         let name = self.expect(TokenKind::Identifier);
 
-        self.ast.push(Expr::Field(Field { name, base }))
+        let start = self.spans[base].start;
+        self.add_node(start, Expr::Field(Field { name, base }))
     }
 
     fn parse_literal(&mut self, literal: Literal) -> NodeId {
@@ -602,7 +641,7 @@ impl<'a> Parser<'a> {
             Literal::Imaginary64 => ast::Literal::Imaginary64 { token },
             Literal::String => ast::Literal::String { token },
         };
-        self.ast.push(Expr::Literal(node))
+        self.add_node(token, Expr::Literal(node))
     }
 
     fn try_parse_label(&mut self) -> Option<TokenId> {
@@ -641,7 +680,7 @@ impl<'a> Parser<'a> {
                 let mut nodes = self.parse_node_group();
                 nodes.pop().unwrap_or_else(|| {
                     let (token, _) = self.peek_verbose();
-                    self.ast.push(Node::Error { token })
+                    self.add_node(token, Node::Error { token })
                 })
             }
             token!(connection) => self.parse_connection_decl(),
@@ -662,7 +701,7 @@ impl<'a> Parser<'a> {
                 let mut endpoints = self.parse_endpoint_group();
                 endpoints.pop().unwrap_or_else(|| {
                     let (token, _) = self.peek_verbose();
-                    self.ast.push(Node::Error { token })
+                    self.add_node(token, Node::Error { token })
                 })
             }
             token!(event) => self.parse_event_handler(),
@@ -693,16 +732,17 @@ impl<'a> Parser<'a> {
         let keyword = self.expect(token!(break));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.ast
-            .push(Stmt::BreakStmt(BreakStmt { keyword, target }))
+        self.add_node(keyword, Stmt::BreakStmt(BreakStmt { keyword, target }))
     }
 
     fn parse_continue(&mut self) -> NodeId {
         let keyword = self.expect(token!(continue));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.ast
-            .push(Stmt::ContinueStmt(ContinueStmt { keyword, target }))
+        self.add_node(
+            keyword,
+            Stmt::ContinueStmt(ContinueStmt { keyword, target }),
+        )
     }
 
     fn parse_forward_branch(&mut self) -> NodeId {
@@ -713,11 +753,14 @@ impl<'a> Parser<'a> {
         self.expect(token!(->));
         let targets = list!(self, (, self.expect(TokenKind::Identifier), ));
         self.expect(token!(;));
-        self.ast.push(Stmt::ForwardBranchStmt(ForwardBranchStmt {
+        self.add_node(
             keyword,
-            cond,
-            targets,
-        }))
+            Stmt::ForwardBranchStmt(ForwardBranchStmt {
+                keyword,
+                cond,
+                targets,
+            }),
+        )
     }
 
     fn parse_import(&mut self) -> NodeId {
@@ -732,7 +775,7 @@ impl<'a> Parser<'a> {
             path
         };
         self.expect(token!(;));
-        self.ast.push(Item::Import(Import { keyword, path }))
+        self.add_node(keyword, Item::Import(Import { keyword, path }))
     }
 
     fn parse_enum(&mut self) -> NodeId {
@@ -740,11 +783,14 @@ impl<'a> Parser<'a> {
         let name = self.expect(TokenKind::Identifier);
         let values = list!(self, {, self.expect(TokenKind::Identifier), });
 
-        self.ast.push(Item::EnumDecl(EnumDecl {
+        self.add_node(
             keyword,
-            name,
-            values,
-        }))
+            Item::EnumDecl(EnumDecl {
+                keyword,
+                name,
+                values,
+            }),
+        )
     }
 
     fn parse_external_decl(&mut self) -> NodeId {
@@ -759,13 +805,17 @@ impl<'a> Parser<'a> {
         let target = self.parse_expr();
         self.expect(token!(;));
 
-        let decl = self.ast.push(Decl::Alias(Alias {
+        let decl = self.add_node(
             keyword,
-            kind: ast::AliasKind::Using,
-            name,
-            target: Some(target),
-        }));
-        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
+            Decl::Alias(Alias {
+                keyword,
+                kind: ast::AliasKind::Using,
+                name,
+                target: Some(target),
+            }),
+        );
+        let start = self.spans[decl].start;
+        self.add_node(start, Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_typed_decl(&mut self) -> NodeId {
@@ -802,14 +852,19 @@ impl<'a> Parser<'a> {
         if consume_semicolon {
             self.expect(token!(;));
         }
-        let decl = self.ast.push(Decl::Var(Var {
-            role: VarRole::Typed,
-            ty: Some(ty),
-            is_external,
-            declarators,
-            attributes,
-        }));
-        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
+        let start = self.spans[ty].start;
+        let decl = self.add_node(
+            start,
+            Decl::Var(Var {
+                role: VarRole::Typed,
+                ty: Some(ty),
+                is_external,
+                declarators,
+                attributes,
+            }),
+        );
+        let start = self.spans[decl].start;
+        self.add_node(start, Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
@@ -824,13 +879,17 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Identifier);
 
-        self.ast.push(Decl::Var(Var {
-            role: VarRole::Parameter,
-            ty: Some(ty),
-            is_external: false,
-            declarators: vec![Declarator { name, init: None }],
-            attributes: None,
-        }))
+        let start = self.spans[ty].start;
+        self.add_node(
+            start,
+            Decl::Var(Var {
+                role: VarRole::Parameter,
+                ty: Some(ty),
+                is_external: false,
+                declarators: vec![Declarator { name, init: None }],
+                attributes: None,
+            }),
+        )
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
@@ -845,34 +904,41 @@ impl<'a> Parser<'a> {
             .then(|| self.parse_attribute_list());
         let body = self.parse_block(None);
 
-        self.ast.push(Item::FunctionDecl(FunctionDecl {
-            ty: Some(ty),
-            name,
-            generics,
-            params,
-            is_const,
-            is_event_handler: false,
-            attributes,
-            body,
-        }))
+        let start = self.spans[ty].start;
+        self.add_node(
+            start,
+            Item::FunctionDecl(FunctionDecl {
+                ty: Some(ty),
+                name,
+                generics,
+                params,
+                is_const,
+                is_event_handler: false,
+                attributes,
+                body,
+            }),
+        )
     }
 
     fn parse_event_handler(&mut self) -> NodeId {
-        self.expect(token!(event));
+        let keyword = self.expect(token!(event));
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_params();
         let body = self.parse_block(None);
 
-        self.ast.push(Item::FunctionDecl(FunctionDecl {
-            ty: None,
-            name,
-            generics: Vec::new(),
-            params,
-            is_const: false,
-            is_event_handler: true,
-            attributes: None,
-            body,
-        }))
+        self.add_node(
+            keyword,
+            Item::FunctionDecl(FunctionDecl {
+                ty: None,
+                name,
+                generics: Vec::new(),
+                params,
+                is_const: false,
+                is_event_handler: true,
+                attributes: None,
+                body,
+            }),
+        )
     }
 
     fn parse_namespace(&mut self) -> NodeId {
@@ -887,12 +953,15 @@ impl<'a> Parser<'a> {
             let target = self.parse_expr();
             self.expect(token!(;));
             let name = *segments.last().expect("namespace has at least one segment");
-            return self.ast.push(Item::ModuleAlias(ModuleAlias {
+            return self.add_node(
                 keyword,
-                kind: ast::AliasKind::Namespace,
-                name,
-                target,
-            }));
+                Item::ModuleAlias(ModuleAlias {
+                    keyword,
+                    kind: ast::AliasKind::Namespace,
+                    name,
+                    target,
+                }),
+            );
         }
 
         let attributes = self
@@ -902,13 +971,16 @@ impl<'a> Parser<'a> {
         let items = self.parse_container_items();
         self.expect(token!('}'));
 
-        self.ast.push(Item::NamespaceDecl(NamespaceDecl {
+        self.add_node(
             keyword,
-            segments,
-            params,
-            attributes,
-            items,
-        }))
+            Item::NamespaceDecl(NamespaceDecl {
+                keyword,
+                segments,
+                params,
+                attributes,
+                items,
+            }),
+        )
     }
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
@@ -928,12 +1000,15 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_type());
-                self.ast.push(Decl::Alias(Alias {
+                self.add_node(
                     keyword,
-                    kind: ast::AliasKind::Using,
-                    name,
-                    target,
-                }))
+                    Decl::Alias(Alias {
+                        keyword,
+                        kind: ast::AliasKind::Using,
+                        name,
+                        target,
+                    }),
+                )
             }
             token!(processor) => {
                 let keyword = self.advance();
@@ -942,12 +1017,15 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Alias(Alias {
+                self.add_node(
                     keyword,
-                    kind: ast::AliasKind::Processor,
-                    name,
-                    target,
-                }))
+                    Decl::Alias(Alias {
+                        keyword,
+                        kind: ast::AliasKind::Processor,
+                        name,
+                        target,
+                    }),
+                )
             }
             token!(namespace) => {
                 let keyword = self.advance();
@@ -956,12 +1034,15 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Alias(Alias {
+                self.add_node(
                     keyword,
-                    kind: ast::AliasKind::Namespace,
-                    name,
-                    target,
-                }))
+                    Decl::Alias(Alias {
+                        keyword,
+                        kind: ast::AliasKind::Namespace,
+                        name,
+                        target,
+                    }),
+                )
             }
             _ => {
                 let ty = self.parse_type();
@@ -970,13 +1051,17 @@ impl<'a> Parser<'a> {
                     .advance_if(token!(=))
                     .is_some()
                     .then(|| self.parse_expr());
-                self.ast.push(Decl::Var(Var {
-                    role: VarRole::SpecialisationValue,
-                    ty: Some(ty),
-                    is_external: false,
-                    declarators: vec![Declarator { name, init }],
-                    attributes: None,
-                }))
+                let start = self.spans[ty].start;
+                self.add_node(
+                    start,
+                    Decl::Var(Var {
+                        role: VarRole::SpecialisationValue,
+                        ty: Some(ty),
+                        is_external: false,
+                        declarators: vec![Declarator { name, init }],
+                        attributes: None,
+                    }),
+                )
             }
         }
     }
@@ -991,12 +1076,15 @@ impl<'a> Parser<'a> {
             self.advance();
             let target = self.parse_expr();
             self.expect(token!(;));
-            return self.ast.push(Item::ModuleAlias(ModuleAlias {
+            return self.add_node(
                 keyword,
-                kind: ast::AliasKind::Processor,
-                name,
-                target,
-            }));
+                Item::ModuleAlias(ModuleAlias {
+                    keyword,
+                    kind: ast::AliasKind::Processor,
+                    name,
+                    target,
+                }),
+            );
         }
 
         let attributes = self
@@ -1008,26 +1096,35 @@ impl<'a> Parser<'a> {
         self.expect(token!('}'));
 
         match keyword_kind {
-            token!(graph) => self.ast.push(Item::GraphDecl(GraphDecl {
+            token!(graph) => self.add_node(
                 keyword,
-                name,
-                params,
-                attributes,
-                items,
-            })),
-            token!(struct) => self.ast.push(Item::StructDecl(StructDecl {
+                Item::GraphDecl(GraphDecl {
+                    keyword,
+                    name,
+                    params,
+                    attributes,
+                    items,
+                }),
+            ),
+            token!(struct) => self.add_node(
                 keyword,
-                name,
-                attributes,
-                items,
-            })),
-            token!(processor) => self.ast.push(Item::ProcessorDecl(ProcessorDecl {
+                Item::StructDecl(StructDecl {
+                    keyword,
+                    name,
+                    attributes,
+                    items,
+                }),
+            ),
+            token!(processor) => self.add_node(
                 keyword,
-                name,
-                params,
-                attributes,
-                items,
-            })),
+                Item::ProcessorDecl(ProcessorDecl {
+                    keyword,
+                    name,
+                    params,
+                    attributes,
+                    items,
+                }),
+            ),
             _ => unreachable!(),
         }
     }
@@ -1064,21 +1161,27 @@ impl<'a> Parser<'a> {
         self.expect(token!(=));
         let processor = self.parse_expr();
 
-        self.ast.push(Graph::NodeDecl(NodeDecl {
+        self.add_node(
             keyword,
-            name,
-            processor,
-            array_size,
-        }))
+            Graph::NodeDecl(NodeDecl {
+                keyword,
+                name,
+                processor,
+                array_size,
+            }),
+        )
     }
 
     fn parse_connection_decl(&mut self) -> NodeId {
         let keyword = self.expect(token!(connection));
         let connections = self.parse_connection_list();
-        self.ast.push(Graph::ConnectionDecl(ConnectionDecl {
+        self.add_node(
             keyword,
-            connections,
-        }))
+            Graph::ConnectionDecl(ConnectionDecl {
+                keyword,
+                connections,
+            }),
+        )
     }
 
     fn parse_connection_list(&mut self) -> Vec<NodeId> {
@@ -1115,12 +1218,15 @@ impl<'a> Parser<'a> {
             .is_some()
             .then(|| self.parse_connection_list());
 
-        self.ast.push(Graph::ConnectionIf(ConnectionIf {
+        self.add_node(
             keyword,
-            cond,
-            then_branch,
-            else_branch,
-        }))
+            Graph::ConnectionIf(ConnectionIf {
+                keyword,
+                cond,
+                then_branch,
+                else_branch,
+            }),
+        )
     }
 
     fn parse_connection_chain(&mut self) -> Vec<NodeId> {
@@ -1150,7 +1256,7 @@ impl<'a> Parser<'a> {
                         "cannot chain a connection with multiple destinations",
                     );
                 } else if let Some(&dest) = destinations.first()
-                    && matches!(self.ast[dest], Node::Expr(Expr::Field { .. }))
+                    && matches!(self.nodes[dest], Node::Expr(Expr::Field { .. }))
                 {
                     self.error(
                         arrow,
@@ -1159,13 +1265,20 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            connections.push(self.ast.push(Graph::Connection(Connection {
-                interpolation,
-                sources,
-                arrow,
-                delay,
-                destinations: destinations.clone(),
-            })));
+            let start = self.spans[*sources
+                .first()
+                .expect("a connection chain always has at least one source")]
+            .start;
+            connections.push(self.add_node(
+                start,
+                Graph::Connection(Connection {
+                    interpolation,
+                    sources,
+                    arrow,
+                    delay,
+                    destinations: destinations.clone(),
+                }),
+            ));
 
             if !chain_continues {
                 break;
@@ -1217,19 +1330,22 @@ impl<'a> Parser<'a> {
 
         let is_bounded_range_for = self.at(token!(')'))
             && matches!(
-                init.map(|id| &self.ast[id]),
+                init.map(|id| &self.nodes[id]),
                 Some(Node::Stmt(Stmt::DeclStmt(DeclStmt { .. })))
             );
 
         if is_bounded_range_for {
             self.advance();
             let body = self.parse_statement();
-            return self.ast.push(Stmt::LoopStmt(LoopStmt {
-                keyword,
-                label,
-                count: init,
-                body,
-            }));
+            return self.add_node(
+                label.unwrap_or(keyword),
+                Stmt::LoopStmt(LoopStmt {
+                    keyword,
+                    label,
+                    count: init,
+                    body,
+                }),
+            );
         }
 
         self.expect(token!(;));
@@ -1239,14 +1355,17 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::ForStmt(ForStmt {
-            keyword,
-            label,
-            init,
-            cond,
-            update,
-            body,
-        }))
+        self.add_node(
+            label.unwrap_or(keyword),
+            Stmt::ForStmt(ForStmt {
+                keyword,
+                label,
+                init,
+                cond,
+                update,
+                body,
+            }),
+        )
     }
 
     fn parse_for_init(&mut self) -> NodeId {
@@ -1262,7 +1381,8 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let expr = self.parse_expr();
-                self.ast.push(Stmt::ExprStmt(ExprStmt { expr }))
+                let start = self.spans[expr].start;
+                self.add_node(start, Stmt::ExprStmt(ExprStmt { expr }))
             }
         }
     }
@@ -1315,7 +1435,7 @@ impl<'a> Parser<'a> {
         matches!(tokens.next(), Some((_, token)) if token.kind == TokenKind::Identifier)
     }
 
-    fn parse_attribute(&mut self) -> (TokenId, Option<NodeId>) {
+    fn parse_attribute(&mut self) -> Attribute {
         let key = match self.peek() {
             TokenKind::Identifier | TokenKind::Keyword(_) => self.advance(),
             _ => self.expect(TokenKind::Identifier),
@@ -1325,12 +1445,13 @@ impl<'a> Parser<'a> {
             .is_some()
             .then(|| self.parse_expr());
 
-        (key, value)
+        Attribute { key, value }
     }
 
     fn parse_attribute_list(&mut self) -> NodeId {
+        let (start, _) = self.peek_verbose();
         let attributes = list!(self, [[, self.parse_attribute(), ]]);
-        self.ast.push(AttributeList { attributes })
+        self.add_node(start, AttributeList { attributes })
     }
 
     fn looks_like_hoisted_endpoint(&self) -> bool {
@@ -1375,19 +1496,22 @@ impl<'a> Parser<'a> {
             HoistTarget::Wildcard { .. } => None,
         };
 
-        self.ast.push(Graph::EndpointDecl(EndpointDecl {
+        self.add_node(
             direction,
-            kind: None,
-            types: Vec::new(),
-            name,
-            size: None,
-            hoisted: Some(HoistedPath {
-                segments,
-                index,
-                target,
+            Graph::EndpointDecl(EndpointDecl {
+                direction,
+                kind: None,
+                types: Vec::new(),
+                name,
+                size: None,
+                hoisted: Some(HoistedPath {
+                    segments,
+                    index,
+                    target,
+                }),
+                attributes,
             }),
-            attributes,
-        }))
+        )
     }
 
     fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
@@ -1410,15 +1534,18 @@ impl<'a> Parser<'a> {
         names
             .into_iter()
             .map(|(name, size)| {
-                self.ast.push(Graph::EndpointDecl(EndpointDecl {
+                self.add_node(
                     direction,
-                    kind: Some(kind),
-                    types: types.clone(),
-                    name: Some(name),
-                    size,
-                    hoisted: None,
-                    attributes,
-                }))
+                    Graph::EndpointDecl(EndpointDecl {
+                        direction,
+                        kind: Some(kind),
+                        types: types.clone(),
+                        name: Some(name),
+                        size,
+                        hoisted: None,
+                        attributes,
+                    }),
+                )
             })
             .collect()
     }
@@ -1481,11 +1608,14 @@ impl<'a> Parser<'a> {
         });
         self.expect(token!('}'));
 
-        self.ast.push(Stmt::Block(Block {
-            brace,
-            label,
-            stmts,
-        }))
+        self.add_node(
+            label.unwrap_or(brace),
+            Stmt::Block(Block {
+                brace,
+                label,
+                stmts,
+            }),
+        )
     }
 
     fn parse_let(&mut self) -> NodeId {
@@ -1502,7 +1632,7 @@ impl<'a> Parser<'a> {
         role: VarRole,
         consume_semicolon: bool,
     ) -> NodeId {
-        self.expect(keyword);
+        let keyword = self.expect(keyword);
 
         let mut declarators = vec![self.parse_let_declarator()];
         while_consuming!(self, token!(,), {
@@ -1513,14 +1643,18 @@ impl<'a> Parser<'a> {
             self.expect(token!(;));
         }
 
-        let decl = self.ast.push(Decl::Var(Var {
-            role,
-            ty: None,
-            is_external: false,
-            declarators,
-            attributes: None,
-        }));
-        self.ast.push(Stmt::DeclStmt(DeclStmt { decl }))
+        let decl = self.add_node(
+            keyword,
+            Decl::Var(Var {
+                role,
+                ty: None,
+                is_external: false,
+                declarators,
+                attributes: None,
+            }),
+        );
+        let start = self.spans[decl].start;
+        self.add_node(start, Stmt::DeclStmt(DeclStmt { decl }))
     }
 
     fn parse_let_declarator(&mut self) -> Declarator {
@@ -1545,13 +1679,16 @@ impl<'a> Parser<'a> {
             .is_some()
             .then(|| self.parse_statement());
 
-        self.ast.push(Stmt::IfStmt(IfStmt {
+        self.add_node(
             keyword,
-            is_const: is_const.is_some(),
-            cond,
-            then_branch,
-            else_branch,
-        }))
+            Stmt::IfStmt(IfStmt {
+                keyword,
+                is_const: is_const.is_some(),
+                cond,
+                then_branch,
+                else_branch,
+            }),
+        )
     }
 
     fn parse_while(&mut self, label: Option<TokenId>) -> NodeId {
@@ -1561,12 +1698,15 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::WhileStmt(WhileStmt {
-            keyword,
-            label,
-            cond,
-            body,
-        }))
+        self.add_node(
+            label.unwrap_or(keyword),
+            Stmt::WhileStmt(WhileStmt {
+                keyword,
+                label,
+                cond,
+                body,
+            }),
+        )
     }
 
     fn parse_loop(&mut self, label: Option<TokenId>) -> NodeId {
@@ -1578,12 +1718,15 @@ impl<'a> Parser<'a> {
         });
         let body = self.parse_statement();
 
-        self.ast.push(Stmt::LoopStmt(LoopStmt {
-            keyword,
-            label,
-            count,
-            body,
-        }))
+        self.add_node(
+            label.unwrap_or(keyword),
+            Stmt::LoopStmt(LoopStmt {
+                keyword,
+                label,
+                count,
+                body,
+            }),
+        )
     }
 
     fn parse_return(&mut self) -> NodeId {
@@ -1591,27 +1734,31 @@ impl<'a> Parser<'a> {
         let value = self.not_at(token!(;)).then(|| self.parse_expr());
         self.expect(token!(;));
 
-        self.ast
-            .push(Stmt::ReturnStmt(ReturnStmt { keyword, value }))
+        self.add_node(keyword, Stmt::ReturnStmt(ReturnStmt { keyword, value }))
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
         let expr = self.parse_expr();
         self.expect(token!(;));
-        self.ast.push(Stmt::ExprStmt(ExprStmt { expr }))
+        let start = self.spans[expr].start;
+        self.add_node(start, Stmt::ExprStmt(ExprStmt { expr }))
     }
 
     fn parse_type(&mut self) -> NodeId {
-        let is_const = self.advance_if(token!(const)).is_some();
+        let is_const = self.advance_if(token!(const));
         let mut ty = self.parse_type_base();
         let is_ref = self.advance_if(token!(&)).is_some();
 
-        if is_const || is_ref {
-            ty = self.ast.push(Expr::TypeModifier(TypeModifier {
-                source: ty,
-                is_const,
-                is_ref,
-            }));
+        if is_const.is_some() || is_ref {
+            let start = is_const.unwrap_or_else(|| self.spans[ty].start);
+            ty = self.add_node(
+                start,
+                Expr::TypeModifier(TypeModifier {
+                    source: ty,
+                    is_const: is_const.is_some(),
+                    is_ref,
+                }),
+            );
         }
 
         ty
@@ -1624,7 +1771,7 @@ impl<'a> Parser<'a> {
                 let message = format!("expected type, found {peeked:?}");
                 let token = self.advance();
                 self.error(token, message);
-                self.ast.push(Node::Error { token })
+                self.add_node(token, Node::Error { token })
             }
         };
 
@@ -1643,7 +1790,7 @@ impl<'a> Parser<'a> {
 
     fn parse_qualified_name(&mut self) -> NodeId {
         let token = self.advance();
-        let mut name = self.ast.push(Expr::Ident(Ident { token }));
+        let mut name = self.add_node(token, Expr::Ident(Ident { token }));
 
         loop {
             if self.at(token!('(')) {
@@ -1664,11 +1811,15 @@ impl<'a> Parser<'a> {
         let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
         self.expect(token!(>));
 
-        self.ast.push(Expr::VectorSizeSuffix(VectorSizeSuffix {
-            angle,
-            element,
-            terms: vec![term],
-        }))
+        let start = self.spans[element].start;
+        self.add_node(
+            start,
+            Expr::VectorSizeSuffix(VectorSizeSuffix {
+                angle,
+                element,
+                terms: vec![term],
+            }),
+        )
     }
 
     fn try_parse_vector_size_suffix(&mut self, element: NodeId) -> Option<NodeId> {
@@ -1690,11 +1841,15 @@ impl<'a> Parser<'a> {
         *self = checkpoint;
 
         self.advance();
-        Some(self.ast.push(Expr::VectorSizeSuffix(VectorSizeSuffix {
-            angle,
-            element,
-            terms,
-        })))
+        let start = self.spans[element].start;
+        Some(self.add_node(
+            start,
+            Expr::VectorSizeSuffix(VectorSizeSuffix {
+                angle,
+                element,
+                terms,
+            }),
+        ))
     }
 }
 
@@ -1708,7 +1863,7 @@ mod tests {
         let root = parse_fn(&mut parser);
         assert_eq!(parser.diagnostics, vec![]);
 
-        let ast = Ast::new(parser.ast, vec![root]);
+        let ast = Ast::new(parser.nodes, vec![root], parser.spans);
         ast::dump(&ast, &tokens, source, root)
     }
 
@@ -1733,356 +1888,356 @@ mod tests {
 
     #[test]
     fn primitive_type() {
-        insta::assert_snapshot!(parse_type("float"), @"float");
+        insta::assert_snapshot!(parse_type("float"), @"float 0..5");
     }
 
     #[test]
     fn named_type() {
-        insta::assert_snapshot!(parse_type("MyStruct"), @"MyStruct");
+        insta::assert_snapshot!(parse_type("MyStruct"), @"MyStruct 0..8");
     }
 
     #[test]
     fn qualified_type_name() {
         insta::assert_snapshot!(parse_type("std::midi::Message"), @r#"
-        ScopeAccess "Message"
-          ScopeAccess "midi"
-            std
+        ScopeAccess "Message" 0..18
+          ScopeAccess "midi" 0..9
+            std 0..3
         "#);
     }
 
     #[test]
     fn array_type() {
         insta::assert_snapshot!(parse_type("int[3]"), @"
-        Bracketed
-          int
-          3
+        Bracketed 0..6
+          int 0..3
+          3 4..5
         ");
     }
 
     #[test]
     fn slice_type_has_no_size() {
         insta::assert_snapshot!(parse_type("int[]"), @"
-        Bracketed
-          int
+        Bracketed 0..5
+          int 0..3
         ");
     }
 
     #[test]
     fn vector_type() {
         insta::assert_snapshot!(parse_type("int<4>"), @"
-        VectorSizeSuffix
-          int
-          4
+        VectorSizeSuffix 0..6
+          int 0..3
+          4 4..5
         ");
     }
 
     #[test]
     fn clamp() {
         insta::assert_snapshot!(parse_type("clamp<10>"), @"
-        VectorSizeSuffix
-          clamp
-          10
+        VectorSizeSuffix 0..9
+          clamp 0..5
+          10 6..8
         ");
     }
 
     #[test]
     fn wrap() {
         insta::assert_snapshot!(parse_type("wrap<4>"), @"
-        VectorSizeSuffix
-          wrap
-          4
+        VectorSizeSuffix 0..7
+          wrap 0..4
+          4 5..6
         ");
     }
 
     #[test]
     fn angle_bracket_close_is_not_a_comparison() {
         insta::assert_snapshot!(parse_type("wrap<1 + 2>"), @r#"
-        VectorSizeSuffix
-          wrap
-          Binary "+"
-            1
-            2
+        VectorSizeSuffix 0..11
+          wrap 0..4
+          Binary "+" 5..10
+            1 5..6
+            2 9..10
         "#);
     }
 
     #[test]
     fn postfix_type_modifiers_apply_left_to_right() {
         insta::assert_snapshot!(parse_type("int<4>[2]"), @"
-        Bracketed
-          VectorSizeSuffix
-            int
-            4
-          2
+        Bracketed 0..9
+          VectorSizeSuffix 0..6
+            int 0..3
+            4 4..5
+          2 7..8
         ");
     }
 
     #[test]
     fn const_type() {
         insta::assert_snapshot!(parse_type("const int"), @"
-        TypeModifier const
-          int
+        TypeModifier const 0..9
+          int 6..9
         ");
     }
 
     #[test]
     fn const_array_type() {
         insta::assert_snapshot!(parse_type("const int[]"), @"
-        TypeModifier const
-          Bracketed
-            int
+        TypeModifier const 0..11
+          Bracketed 6..11
+            int 6..9
         ");
     }
 
     #[test]
     fn type_cast() {
         insta::assert_snapshot!(parse_expr("float (2.5)"), @"
-        Call
-          float
-          2.5
+        Call 0..11
+          float 0..5
+          2.5 7..10
         ");
     }
 
     #[test]
     fn null_literal() {
-        insta::assert_snapshot!(parse_expr("()"), @"Parentheses");
+        insta::assert_snapshot!(parse_expr("()"), @"Parentheses 0..2");
     }
 
     #[test]
     fn aggregate_literal() {
         insta::assert_snapshot!(parse_expr("((1, 2), (3, 4))"), @"
-        Parentheses
-          Parentheses
-            1
-            2
-          Parentheses
-            3
-            4
+        Parentheses 0..16
+          Parentheses 1..7
+            1 2..3
+            2 5..6
+          Parentheses 9..15
+            3 10..11
+            4 13..14
         ");
     }
 
     #[test]
     fn precedence_of_arithmetic() {
         insta::assert_snapshot!(parse_expr("1 + 2 * 3"), @r#"
-        Binary "+"
-          1
-          Binary "*"
-            2
-            3
+        Binary "+" 0..9
+          1 0..1
+          Binary "*" 4..9
+            2 4..5
+            3 8..9
         "#);
     }
 
     #[test]
     fn power_is_right_associative() {
         insta::assert_snapshot!(parse_expr("2 ** 3 ** 4"), @r#"
-        Binary "**"
-          2
-          Binary "**"
-            3
-            4
+        Binary "**" 0..11
+          2 0..1
+          Binary "**" 5..11
+            3 5..6
+            4 10..11
         "#);
     }
 
     #[test]
     fn subtraction_is_left_associative() {
         insta::assert_snapshot!(parse_expr("1 - 2 - 3"), @r#"
-        Binary "-"
-          Binary "-"
-            1
-            2
-          3
+        Binary "-" 0..9
+          Binary "-" 0..5
+            1 0..1
+            2 4..5
+          3 8..9
         "#);
     }
 
     #[test]
     fn assignment_is_right_associative() {
         insta::assert_snapshot!(parse_expr("a = b = c"), @r#"
-        Assign "="
-          a
-          Assign "="
-            b
-            c
+        Assign "=" 0..9
+          a 0..1
+          Assign "=" 4..9
+            b 4..5
+            c 8..9
         "#);
     }
 
     #[test]
     fn output_write_operator() {
         insta::assert_snapshot!(parse_expr("out <- in * gain"), @r#"
-        Assign "<-"
-          out
-          Binary "*"
-            in
-            gain
+        Assign "<-" 0..16
+          out 0..3
+          Binary "*" 7..16
+            in 7..9
+            gain 12..16
         "#);
     }
 
     #[test]
     fn ternary_nests_to_the_right() {
         insta::assert_snapshot!(parse_expr("a ? b : c ? d : e"), @"
-        Ternary
-          a
-          b
-          Ternary
-            c
-            d
-            e
+        Ternary 0..17
+          a 0..1
+          b 4..5
+          Ternary 8..17
+            c 8..9
+            d 12..13
+            e 16..17
         ");
     }
 
     #[test]
     fn ternary_binds_looser_than_logical_or() {
         insta::assert_snapshot!(parse_expr("a || b ? c : d"), @r#"
-        Ternary
-          Binary "||"
-            a
-            b
-          c
-          d
+        Ternary 0..14
+          Binary "||" 0..6
+            a 0..1
+            b 5..6
+          c 9..10
+          d 13..14
         "#);
     }
 
     #[test]
     fn unary_and_parens() {
         insta::assert_snapshot!(parse_expr("-(1 + 2)"), @r#"
-        Unary "-"
-          Parentheses
-            Binary "+"
-              1
-              2
+        Unary "-" 0..8
+          Parentheses 1..8
+            Binary "+" 2..7
+              1 2..3
+              2 6..7
         "#);
     }
 
     #[test]
     fn prefix_increment() {
         insta::assert_snapshot!(parse_expr("++x"), @r#"
-        Unary "++"
-          x
+        Unary "++" 0..3
+          x 2..3
         "#);
     }
 
     #[test]
     fn postfix_increment() {
         insta::assert_snapshot!(parse_expr("x++"), @r#"
-        PostfixUnary "++"
-          x
+        PostfixUnary "++" 0..3
+          x 0..1
         "#);
     }
 
     #[test]
     fn call_with_args() {
         insta::assert_snapshot!(parse_expr("foo(1, 2 + 3)"), @r#"
-        Call
-          foo
-          1
-          Binary "+"
-            2
-            3
+        Call 0..13
+          foo 0..3
+          1 4..5
+          Binary "+" 7..12
+            2 7..8
+            3 11..12
         "#);
     }
 
     #[test]
     fn call_with_no_args() {
         insta::assert_snapshot!(parse_expr("advance()"), @"
-        Call
-          advance
+        Call 0..9
+          advance 0..7
         ");
     }
 
     #[test]
     fn empty_index() {
         insta::assert_snapshot!(parse_expr("x[]"), @"
-        Bracketed
-          x
+        Bracketed 0..3
+          x 0..1
         ");
     }
 
     #[test]
     fn index_and_field_postfix() {
         insta::assert_snapshot!(parse_expr("x.left[3]"), @r#"
-        Bracketed
-          Field "left"
-            x
-          3
+        Bracketed 0..9
+          Field "left" 0..6
+            x 0..1
+          3 7..8
         "#);
     }
 
     #[test]
     fn let_statement() {
         insta::assert_snapshot!(parse_stmt("let x = 1;"), @r#"
-        VarDecl let "x"
-          1
+        VarDecl let "x" 0..10
+          1 8..9
         "#);
     }
 
     #[test]
     fn var_with_init_statement() {
         insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
-        VarDecl var "y"
-          3
+        VarDecl var "y" 0..10
+          3 8..9
         "#);
     }
 
     #[test]
     fn var_multiple_declarators() {
         insta::assert_snapshot!(parse_stmt("var a = 1, b = 2;"), @r#"
-        VarDecl var "a, b"
-          1
-          2
+        VarDecl var "a, b" 0..17
+          1 8..9
+          2 15..16
         "#);
     }
 
     #[test]
     fn typed_var_decl_statements() {
         insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
-        VarDecl typed "w"
-          VectorSizeSuffix
-            wrap
-            5
+        VarDecl typed "w" 0..10
+          VectorSizeSuffix 0..7
+            wrap 0..4
+            5 5..6
         "#);
     }
 
     #[test]
     fn const_var_decl_statement() {
         insta::assert_snapshot!(parse_stmt("const int x = 1;"), @r#"
-        VarDecl typed "x"
-          TypeModifier const
-            int
-          1
+        VarDecl typed "x" 0..16
+          TypeModifier const 0..9
+            int 6..9
+          1 14..15
         "#);
     }
 
     #[test]
     fn if_else_statement() {
         insta::assert_snapshot!(parse_stmt("if (a) { b; } else { c; }"), @"
-        IfStmt
-          a
-          Block
-            ExprStmt
-              b
-          Block
-            ExprStmt
-              c
+        IfStmt 0..25
+          a 4..5
+          Block 7..13
+            ExprStmt 9..11
+              b 9..10
+          Block 19..25
+            ExprStmt 21..23
+              c 21..22
         ");
     }
 
     #[test]
     fn if_without_else() {
         insta::assert_snapshot!(parse_stmt("if (a) { b; }"), @"
-        IfStmt
-          a
-          Block
-            ExprStmt
-              b
+        IfStmt 0..13
+          a 4..5
+          Block 7..13
+            ExprStmt 9..11
+              b 9..10
         ");
     }
 
     #[test]
     fn if_const_statement() {
         insta::assert_snapshot!(parse_stmt("if const (a) { b; }"), @"
-        IfStmt const
-          a
-          Block
-            ExprStmt
-              b
+        IfStmt const 0..19
+          a 10..11
+          Block 13..19
+            ExprStmt 15..17
+              b 15..16
         ");
     }
 
@@ -2091,99 +2246,99 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "while (n > 0) { n = n - 1; } loop (4) { advance(); }"
         ), @r#"
-        WhileStmt
-          Binary ">"
-            n
-            0
-          Block
-            ExprStmt
-              Assign "="
-                n
-                Binary "-"
-                  n
-                  1
+        WhileStmt 0..28
+          Binary ">" 7..12
+            n 7..8
+            0 11..12
+          Block 14..28
+            ExprStmt 16..26
+              Assign "=" 16..25
+                n 16..17
+                Binary "-" 20..25
+                  n 20..21
+                  1 24..25
         "#);
     }
 
     #[test]
     fn unbounded_loop_has_no_count() {
         insta::assert_snapshot!(parse_stmt("loop { advance(); }"), @"
-        LoopStmt
-          Block
-            ExprStmt
-              Call
-                advance
+        LoopStmt 0..19
+          Block 5..19
+            ExprStmt 7..17
+              Call 7..16
+                advance 7..14
         ");
     }
 
     #[test]
     fn return_with_and_without_value() {
-        insta::assert_snapshot!(parse_stmt("return; return x + 1;"), @"ReturnStmt");
+        insta::assert_snapshot!(parse_stmt("return; return x + 1;"), @"ReturnStmt 0..7");
     }
 
     #[test]
     fn break_and_continue() {
         insta::assert_snapshot!(parse_stmt("loop { break; continue; }"), @"
-        LoopStmt
-          Block
-            BreakStmt
-            ContinueStmt
+        LoopStmt 0..25
+          Block 5..25
+            BreakStmt 7..13
+            ContinueStmt 14..23
         ");
     }
 
     #[test]
     fn function() {
         insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"), @r#"
-        FunctionDecl "add"
-          int
-          VarDecl param "a"
-            int
-          VarDecl param "b"
-            int
-          Block
-            ReturnStmt
-              Binary "+"
-                a
-                b
+        FunctionDecl "add" 0..39
+          int 0..3
+          VarDecl param "a" 8..13
+            int 8..11
+          VarDecl param "b" 15..20
+            int 15..18
+          Block 22..39
+            ReturnStmt 24..37
+              Binary "+" 31..36
+                a 31..32
+                b 35..36
         "#);
     }
 
     #[test]
     fn function_with_const_params() {
         insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"), @r#"
-        FunctionDecl "f"
-          void
-          VarDecl param "a"
-            TypeModifier const ref
-              int
-          VarDecl param "b"
-            TypeModifier const ref
-              Bracketed
-                float32
-                10
-          Block
+        FunctionDecl "f" 0..46
+          void 0..4
+          VarDecl param "a" 7..19
+            TypeModifier const ref 7..17
+              int 13..16
+          VarDecl param "b" 21..41
+            TypeModifier const ref 21..39
+              Bracketed 27..38
+                float32 27..34
+                10 35..37
+          Block 43..46
         "#);
     }
 
     #[test]
     fn const_member_function() {
         insta::assert_snapshot!(parse_stmt("void f() const { }"), @r#"
-        FunctionDecl "f" const
-          void
-          Block
+        FunctionDecl "f" const 0..18
+          void 0..4
+          Block 15..18
         "#);
     }
 
     #[test]
     fn loop_with_unbraced_body() {
         insta::assert_snapshot!(parse_stmt("void main() { loop advance(); }"), @r#"
-        FunctionDecl "main"
-          void
-          Block
-            LoopStmt
-              ExprStmt
-                Call
-                  advance
+        FunctionDecl "main" 0..31
+          void 0..4
+          Block 12..31
+            LoopStmt 14..29
+              ExprStmt 19..29
+                Call 19..28
+                  advance 19..26
         "#);
     }
 
@@ -2192,11 +2347,11 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "processor SquareWave (int length) { output stream int out; }"
         ), @r#"
-        ProcessorDecl "SquareWave"
-          VarDecl specialisation "length"
-            int
-          EndpointDecl output stream "out"
-            int
+        ProcessorDecl "SquareWave" 0..60
+          VarDecl specialisation "length" 22..32
+            int 22..25
+          EndpointDecl output stream "out" 36..58
+            int 50..53
         "#);
     }
 
@@ -2205,12 +2360,12 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "processor Gain (int channelCount = 2) { output stream int out; }"
         ), @r#"
-        ProcessorDecl "Gain"
-          VarDecl specialisation "channelCount"
-            int
-            2
-          EndpointDecl output stream "out"
-            int
+        ProcessorDecl "Gain" 0..64
+          VarDecl specialisation "channelCount" 16..36
+            int 16..19
+            2 35..36
+          EndpointDecl output stream "out" 40..62
+            int 54..57
         "#);
     }
 
@@ -2219,10 +2374,10 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "processor Source (using DataType) { output stream int out; }"
         ), @r#"
-        ProcessorDecl "Source"
-          Alias using "DataType"
-          EndpointDecl output stream "out"
-            int
+        ProcessorDecl "Source" 0..60
+          Alias using "DataType" 18..32
+          EndpointDecl output stream "out" 36..58
+            int 50..53
         "#);
     }
 
@@ -2231,11 +2386,11 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "processor P (using T = float32) { output stream int out; }"
         ), @r#"
-        ProcessorDecl "P"
-          Alias using "T"
-            float32
-          EndpointDecl output stream "out"
-            int
+        ProcessorDecl "P" 0..58
+          Alias using "T" 13..30
+            float32 23..30
+          EndpointDecl output stream "out" 34..56
+            int 48..51
         "#);
     }
 
@@ -2244,21 +2399,21 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "graph Wrapper (processor Parameterised, int x) { output stream int out; }"
         ), @r#"
-        GraphDecl "Wrapper"
-          Alias processor "Parameterised"
-          VarDecl specialisation "x"
-            int
-          EndpointDecl output stream "out"
-            int
+        GraphDecl "Wrapper" 0..73
+          Alias processor "Parameterised" 15..38
+          VarDecl specialisation "x" 40..45
+            int 40..43
+          EndpointDecl output stream "out" 49..71
+            int 63..66
         "#);
     }
 
     #[test]
     fn namespace_with_specialisation_params() {
         insta::assert_snapshot!(parse_stmt("namespace n (processor p, namespace ns) {}"), @r#"
-        NamespaceDecl "n"
-          Alias processor "p"
-          Alias namespace "ns"
+        NamespaceDecl "n" 0..42
+          Alias processor "p" 13..24
+          Alias namespace "ns" 26..38
         "#);
     }
 
@@ -2267,53 +2422,53 @@ mod tests {
         insta::assert_snapshot!(parse_stmt(
             "processor P (using T, int length = 4) { output stream int out; }"
         ), @r#"
-        ProcessorDecl "P"
-          Alias using "T"
-          VarDecl specialisation "length"
-            int
-            4
-          EndpointDecl output stream "out"
-            int
+        ProcessorDecl "P" 0..64
+          Alias using "T" 13..20
+          VarDecl specialisation "length" 22..36
+            int 22..25
+            4 35..36
+          EndpointDecl output stream "out" 40..62
+            int 54..57
         "#);
     }
 
     #[test]
     fn processor_latency_assignment_is_not_a_container_decl() {
         insta::assert_snapshot!(parse_stmt("processor.latency = length;"), @r#"
-        ExprStmt
-          Assign "="
-            ProcessorProperty "latency"
-            length
+        ExprStmt 0..27
+          Assign "=" 0..26
+            ProcessorProperty "latency" 0..17
+            length 20..26
         "#);
     }
 
     #[test]
     fn chevron_suffix_wins_over_comparison_when_it_parses_cleanly() {
         insta::assert_snapshot!(parse_expr("a<b>"), @"
-        VectorSizeSuffix
-          a
-          b
+        VectorSizeSuffix 0..4
+          a 0..1
+          b 2..3
         ");
     }
 
     #[test]
     fn bare_less_than_comparison_without_a_following_greater_than() {
         insta::assert_snapshot!(parse_expr("a < b"), @r#"
-        Binary "<"
-          a
-          b
+        Binary "<" 0..5
+          a 0..1
+          b 4..5
         "#);
     }
 
     #[test]
     fn comparison_chain_requires_parens() {
         insta::assert_snapshot!(parse_expr("(a < b) > c"), @r#"
-        Binary ">"
-          Parentheses
-            Binary "<"
-              a
-              b
-          c
+        Binary ">" 0..11
+          Parentheses 0..7
+            Binary "<" 1..6
+              a 1..2
+              b 5..6
+          c 10..11
         "#);
     }
 
@@ -2340,163 +2495,163 @@ mod tests {
     #[test]
     fn ambiguous_chevron_at_statement_start_is_read_as_a_type_decl() {
         insta::assert_snapshot!(parse_stmt("a < b > c;"), @r#"
-        VarDecl typed "c"
-          VectorSizeSuffix
-            a
-            b
+        VarDecl typed "c" 0..10
+          VectorSizeSuffix 0..7
+            a 0..1
+            b 4..5
         "#);
     }
 
     #[test]
     fn short_circuit_comparison_is_unaffected_by_chevron_backtracking() {
         insta::assert_snapshot!(parse_expr("a < b && b < c"), @r#"
-        Binary "&&"
-          Binary "<"
-            a
-            b
-          Binary "<"
-            b
-            c
+        Binary "&&" 0..14
+          Binary "<" 0..5
+            a 0..1
+            b 4..5
+          Binary "<" 9..14
+            b 9..10
+            c 13..14
         "#);
     }
 
     #[test]
     fn type_sized_call_argument() {
         insta::assert_snapshot!(parse_expr("Sine(float64<2>, 100.0f)"), @"
-        Call
-          Sine
-          VectorSizeSuffix
-            float64
-            2
-          100.0f
+        Call 0..24
+          Sine 0..4
+          VectorSizeSuffix 5..15
+            float64 5..12
+            2 13..14
+          100.0f 17..23
         ");
     }
 
     #[test]
     fn connection() {
         insta::assert_snapshot!(parse_stmt("connection node1.out -> node2.in;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..33
+          Connection 11..32
             Sources
-              Field "out"
-                node1
+              Field "out" 11..20
+                node1 11..16
             Destinations
-              Field "in"
-                node2
+              Field "in" 24..32
+                node2 24..29
         "#);
     }
 
     #[test]
     fn connection_to_single_input() {
         insta::assert_snapshot!(parse_stmt("connection node1.out -> node2;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..30
+          Connection 11..29
             Sources
-              Field "out"
-                node1
+              Field "out" 11..20
+                node1 11..16
             Destinations
-              node2
+              node2 24..29
         "#);
     }
 
     #[test]
     fn connections_in_a_chain() {
         insta::assert_snapshot!(parse_stmt("connection node1.out -> node2 -> node3;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..39
+          Connection 11..29
             Sources
-              Field "out"
-                node1
+              Field "out" 11..20
+                node1 11..16
             Destinations
-              node2
-          Connection
+              node2 24..29
+          Connection 24..38
             Sources
-              node2
+              node2 24..29
             Destinations
-              node3
+              node3 33..38
         "#);
     }
 
     #[test]
     fn connection_to_multiple_destinations() {
         insta::assert_snapshot!(parse_stmt("connection node1.out -> node2, node3;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..37
+          Connection 11..36
             Sources
-              Field "out"
-                node1
+              Field "out" 11..20
+                node1 11..16
             Destinations
-              node2
-              node3
+              node2 24..29
+              node3 31..36
         "#);
     }
 
     #[test]
     fn connection_to_multiple_sources() {
         insta::assert_snapshot!(parse_stmt("connection node1.out, node2.out -> node3;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..41
+          Connection 11..40
             Sources
-              Field "out"
-                node1
-              Field "out"
-                node2
+              Field "out" 11..20
+                node1 11..16
+              Field "out" 22..31
+                node2 22..27
             Destinations
-              node3
+              node3 35..40
         "#);
     }
 
     #[test]
     fn connection_with_delay() {
         insta::assert_snapshot!(parse_stmt("connection node1.out -> [100] -> node2;"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..39
+          Connection 11..38
             Sources
-              Field "out"
-                node1
+              Field "out" 11..20
+                node1 11..16
             Delay
-              100
+              100 25..28
             Destinations
-              node2
+              node2 33..38
         "#);
     }
 
     #[test]
     fn connection_with_interpolation() {
         insta::assert_snapshot!(parse_stmt("connection [linear] node1.out -> node2;"), @r#"
-        ConnectionDecl
-          Connection [linear]
+        ConnectionDecl 0..39
+          Connection [linear] 20..38
             Sources
-              Field "out"
-                node1
+              Field "out" 20..29
+                node1 20..25
             Destinations
-              node2
+              node2 33..38
         "#);
     }
 
     #[test]
     fn connection_block() {
         insta::assert_snapshot!(parse_stmt("connection  { node1.out -> node2, node3; node2.out -> node4; }"), @r#"
-        ConnectionDecl
-          Connection
+        ConnectionDecl 0..62
+          Connection 14..39
             Sources
-              Field "out"
-                node1
+              Field "out" 14..23
+                node1 14..19
             Destinations
-              node2
-              node3
-          Connection
+              node2 27..32
+              node3 34..39
+          Connection 41..59
             Sources
-              Field "out"
-                node2
+              Field "out" 41..50
+                node2 41..46
             Destinations
-              node4
+              node4 54..59
         "#);
     }
 
     #[test]
     fn empty_connection_block() {
-        insta::assert_snapshot!(parse_stmt("connection {}"), @"ConnectionDecl");
+        insta::assert_snapshot!(parse_stmt("connection {}"), @"ConnectionDecl 0..13");
     }
 
     #[test]
@@ -2504,26 +2659,26 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("connection { if (useDistortionFirst) in -> distortion -> out; else in -> out; }"),
             @"
-        ConnectionDecl
-          ConnectionIf
-            useDistortionFirst
+        ConnectionDecl 0..79
+          ConnectionIf 13..77
+            useDistortionFirst 17..35
             Then
-              Connection
+              Connection 37..53
                 Sources
-                  in
+                  in 37..39
                 Destinations
-                  distortion
-              Connection
+                  distortion 43..53
+              Connection 43..60
                 Sources
-                  distortion
+                  distortion 43..53
                 Destinations
-                  out
+                  out 57..60
             Else
-              Connection
+              Connection 67..76
                 Sources
-                  in
+                  in 67..69
                 Destinations
-                  out
+                  out 73..76
         "
         );
     }
@@ -2531,91 +2686,91 @@ mod tests {
     #[test]
     fn infinite_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (;;) { advance(); }"), @"
-        ForStmt
-          Block
-            ExprStmt
-              Call
-                advance
+        ForStmt 0..23
+          Block 9..23
+            ExprStmt 11..21
+              Call 11..20
+                advance 11..18
         ");
     }
 
     #[test]
     fn classic_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
-        ForStmt
-          VarDecl typed "i"
-            int
-            0
-          Binary "<"
-            i
-            10
-          Unary "++"
-            i
-          Block
-            ExprStmt
-              Call
-                advance
+        ForStmt 0..43
+          VarDecl typed "i" 5..14
+            int 5..8
+            0 13..14
+          Binary "<" 16..22
+            i 16..17
+            10 20..22
+          Unary "++" 24..27
+            i 26..27
+          Block 29..43
+            ExprStmt 31..41
+              Call 31..40
+                advance 31..38
         "#);
     }
 
     #[test]
     fn bounded_range_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (wrap<4> i) { advance(); }"), @r#"
-        LoopStmt
-          VarDecl typed "i"
-            VectorSizeSuffix
-              wrap
-              4
-          Block
-            ExprStmt
-              Call
-                advance
+        LoopStmt 0..30
+          VarDecl typed "i" 5..14
+            VectorSizeSuffix 5..12
+              wrap 5..9
+              4 10..11
+          Block 16..30
+            ExprStmt 18..28
+              Call 18..27
+                advance 18..25
         "#);
     }
 
     #[test]
     fn labelled_bounded_range_for_loop() {
         insta::assert_snapshot!(parse_stmt("outer: for (wrap<4> i) { advance(); }"), @r#"
-        LoopStmt "outer"
-          VarDecl typed "i"
-            VectorSizeSuffix
-              wrap
-              4
-          Block
-            ExprStmt
-              Call
-                advance
+        LoopStmt "outer" 0..37
+          VarDecl typed "i" 12..21
+            VectorSizeSuffix 12..19
+              wrap 12..16
+              4 17..18
+          Block 23..37
+            ExprStmt 25..35
+              Call 25..34
+                advance 25..32
         "#);
     }
 
     #[test]
     fn enum_decl() {
-        insta::assert_snapshot!(parse_stmt("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C}"#);
+        insta::assert_snapshot!(parse_stmt("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C} 0..21"#);
     }
 
     #[test]
     fn import_dotted_path() {
-        insta::assert_snapshot!(parse_stmt("import std.audio;"), @r#"Import "std.audio""#);
+        insta::assert_snapshot!(parse_stmt("import std.audio;"), @r#"Import "std.audio" 0..17"#);
     }
 
     #[test]
     fn import_string_path() {
-        insta::assert_snapshot!(parse_stmt(r#"import "foo.cmajor";"#), @r#"Import "\"foo.cmajor\"""#);
+        insta::assert_snapshot!(parse_stmt(r#"import "foo.cmajor";"#), @r#"Import "\"foo.cmajor\"" 0..20"#);
     }
 
     #[test]
     fn external_var_decl() {
         insta::assert_snapshot!(parse_stmt("external float64 one;"), @r#"
-        VarDecl external typed "one"
-          float64
+        VarDecl external typed "one" 9..21
+          float64 9..16
         "#);
     }
 
     #[test]
     fn using_type_alias_statement() {
         insta::assert_snapshot!(parse_stmt("using T = int;"), @r#"
-        Alias using "T"
-          int
+        Alias using "T" 0..14
+          int 10..13
         "#);
     }
 
@@ -2624,13 +2779,13 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt(r#"static_assert(x > 0, "must be positive");"#),
             @r#"
-        ExprStmt
-          Call
-            static_assert
-            Binary ">"
-              x
-              0
-            "must be positive"
+        ExprStmt 0..41
+          Call 0..40
+            static_assert 0..13
+            Binary ">" 14..19
+              x 14..15
+              0 18..19
+            "must be positive" 21..39
         "#
         );
     }
@@ -2640,8 +2795,8 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("forward_branch (cond) -> (a, b);"),
             @"
-        ForwardBranchStmt
-          cond
+        ForwardBranchStmt 0..32
+          cond 16..20
           a
           b
         "
@@ -2653,9 +2808,9 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("outer: loop { break outer; }"),
             @r#"
-        LoopStmt "outer"
-          Block
-            BreakStmt "outer"
+        LoopStmt "outer" 0..28
+          Block 12..28
+            BreakStmt "outer" 14..26
         "#
         );
     }
@@ -2663,21 +2818,21 @@ mod tests {
     #[test]
     fn multi_dimensional_array_type() {
         insta::assert_snapshot!(parse_type("float32[1, 2]"), @"
-        Bracketed
-          float32
-          1
-          2
+        Bracketed 0..13
+          float32 0..7
+          1 8..9
+          2 11..12
         ");
     }
 
     #[test]
     fn slicing_expression() {
         insta::assert_snapshot!(parse_expr("arr[1:3]"), @"
-        Bracketed
-          arr
+        Bracketed 0..8
+          arr 0..3
           Slice
-            1
-            3
+            1 4..5
+            3 6..7
         ");
     }
 
@@ -2686,43 +2841,43 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("processor Foo = Bar(4);"),
             @r#"
-        ModuleAlias processor "Foo"
-          Call
-            Bar
-            4
+        ModuleAlias processor "Foo" 0..23
+          Call 16..22
+            Bar 16..19
+            4 20..21
         "#
         );
     }
 
     #[test]
     fn hoisted_endpoint_named() {
-        insta::assert_snapshot!(parse_stmt("output child.out;"), @"EndpointDecl output child.out");
+        insta::assert_snapshot!(parse_stmt("output child.out;"), @"EndpointDecl output child.out 0..17");
     }
 
     #[test]
     fn hoisted_endpoint_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output child.*;"), @"EndpointDecl output child.*");
+        insta::assert_snapshot!(parse_stmt("output child.*;"), @"EndpointDecl output child.* 0..15");
     }
 
     #[test]
     fn hoisted_endpoint_prefixed_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @"EndpointDecl output g2.test*");
+        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @"EndpointDecl output g2.test* 0..16");
     }
 
     #[test]
     fn hoisted_endpoint_chained_through_nested_node() {
         insta::assert_snapshot!(
             parse_stmt("input q.unused.in;"),
-            @"EndpointDecl input q.unused.in"
+            @"EndpointDecl input q.unused.in 0..18"
         );
     }
 
     #[test]
     fn sized_array_endpoint() {
         insta::assert_snapshot!(parse_stmt("input stream float in[10];"), @r#"
-        EndpointDecl input stream "in"
-          float
-          10
+        EndpointDecl input stream "in" 0..26
+          float 13..18
+          10 22..24
         "#);
     }
 
@@ -2731,13 +2886,13 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt(r#"input event bool hpEnable [[ name: "HP Enable", init: true, boolean ]];"#),
             @r#"
-        EndpointDecl input event "hpEnable"
-          bool
-          AttributeList
+        EndpointDecl input event "hpEnable" 0..71
+          bool 12..16
+          AttributeList 26..70
             "name"
-              "HP Enable"
+              "HP Enable" 35..46
             "init"
-              true
+              true 54..58
             "boolean"
         "#
         );
@@ -2746,31 +2901,31 @@ mod tests {
     #[test]
     fn sized_array_endpoint_with_attribute_list() {
         insta::assert_snapshot!(parse_stmt("input stream float in[10] [[ min: 0.0 ]];"), @r#"
-        EndpointDecl input stream "in"
-          float
-          10
-          AttributeList
+        EndpointDecl input stream "in" 0..41
+          float 13..18
+          10 22..24
+          AttributeList 26..40
             "min"
-              0.0
+              0.0 34..37
         "#);
     }
 
     #[test]
     fn multi_type_event_endpoint() {
         insta::assert_snapshot!(parse_stmt("input event (int, float) e;"), @r#"
-        EndpointDecl input event "e"
-          int
-          float
+        EndpointDecl input event "e" 0..27
+          int 13..16
+          float 18..23
         "#);
     }
 
     #[test]
     fn hoisted_endpoint_with_attributes() {
         insta::assert_snapshot!(parse_stmt("input filter.frequency [[ mid: 1000 ]];"), @r#"
-        EndpointDecl input filter.frequency
-          AttributeList
+        EndpointDecl input filter.frequency 0..39
+          AttributeList 23..38
             "mid"
-              1000
+              1000 31..35
         "#);
     }
 
@@ -2779,10 +2934,10 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("input modulator.frequencyIn modulationFrequency [[ min: 1.0 ]];"),
             @r#"
-        EndpointDecl input modulator.frequencyIn
-          AttributeList
+        EndpointDecl input modulator.frequencyIn 0..63
+          AttributeList 48..62
             "min"
-              1.0
+              1.0 56..59
         "#
         );
     }
@@ -2790,10 +2945,10 @@ mod tests {
     #[test]
     fn qualified_type_name_with_call_segment() {
         insta::assert_snapshot!(parse_type("Initialized(InitCode)::ADSR"), @r#"
-        ScopeAccess "ADSR"
-          Call
-            Initialized
-            InitCode
+        ScopeAccess "ADSR" 0..27
+          Call 0..21
+            Initialized 0..11
+            InitCode 12..20
         "#);
     }
 
@@ -2802,18 +2957,23 @@ mod tests {
         insta::assert_snapshot!(
             dump("input { event int e; value float v; }", |parser| {
                 let items = parser.parse_endpoint_group();
-                parser.ast.push(Stmt::Block(Block {
-                    brace: parser.peek_verbose().0,
-                    label: None,
-                    stmts: items,
-                }))
+                let brace = parser.peek_verbose().0;
+                let start = parser.spans[*items.first().expect("test has at least one item")].start;
+                parser.add_node(
+                    start,
+                    Stmt::Block(Block {
+                        brace,
+                        label: None,
+                        stmts: items,
+                    }),
+                )
             }),
             @r#"
-        Block
-          EndpointDecl input event "e"
-            int
-          EndpointDecl input value "v"
-            float
+        Block 0..37
+          EndpointDecl input event "e" 0..20
+            int 14..17
+          EndpointDecl input value "v" 0..35
+            float 27..32
         "#
         );
     }
@@ -2821,49 +2981,49 @@ mod tests {
     #[test]
     fn nested_subscript_splits_combined_close_bracket_token() {
         insta::assert_snapshot!(parse_expr("a[b[c]]"), @"
-        Bracketed
-          a
-          Bracketed
-            b
-            c
+        Bracketed 0..7
+          a 0..1
+          Bracketed 2..6
+            b 2..3
+            c 4..5
         ");
     }
 
     #[test]
     fn three_clause_for_loop_with_var_init() {
         insta::assert_snapshot!(parse_stmt("for (var i = 0; i < 10; ++i) {}"), @r#"
-        ForStmt
-          VarDecl var "i"
-            0
-          Binary "<"
-            i
-            10
-          Unary "++"
-            i
-          Block
+        ForStmt 0..31
+          VarDecl var "i" 5..14
+            0 13..14
+          Binary "<" 16..22
+            i 16..17
+            10 20..22
+          Unary "++" 24..27
+            i 26..27
+          Block 29..31
         "#);
     }
 
     #[test]
     fn three_clause_for_loop_with_let_init() {
         insta::assert_snapshot!(parse_stmt("for (let i = 0; i < 10; ++i) {}"), @r#"
-        ForStmt
-          VarDecl let "i"
-            0
-          Binary "<"
-            i
-            10
-          Unary "++"
-            i
-          Block
+        ForStmt 0..31
+          VarDecl let "i" 5..14
+            0 13..14
+          Binary "<" 16..22
+            i 16..17
+            10 20..22
+          Unary "++" 24..27
+            i 26..27
+          Block 29..31
         "#);
     }
 
     #[test]
     fn dotted_member_access_in_type_position() {
         insta::assert_snapshot!(parse_type("ArrayType.elementType"), @r#"
-        Field "elementType"
-          ArrayType
+        Field "elementType" 0..21
+          ArrayType 0..9
         "#);
     }
 
@@ -2872,13 +3032,13 @@ mod tests {
         insta::assert_snapshot!(
             parse_stmt("using ComplexType = FloatArray.elementType.isFloat32 ? complex32 : complex64;"),
             @r#"
-        Alias using "ComplexType"
-          Ternary
-            Field "isFloat32"
-              Field "elementType"
-                FloatArray
-            complex32
-            complex64
+        Alias using "ComplexType" 0..77
+          Ternary 20..76
+            Field "isFloat32" 20..52
+              Field "elementType" 20..42
+                FloatArray 20..30
+            complex32 55..64
+            complex64 67..76
         "#
         );
     }
@@ -2888,18 +3048,23 @@ mod tests {
         insta::assert_snapshot!(
             dump("output stream { float32 a; int b; }", |parser| {
                 let items = parser.parse_container_items();
-                parser.ast.push(Stmt::Block(Block {
-                    brace: parser.peek_verbose().0,
-                    label: None,
-                    stmts: items,
-                }))
+                let brace = parser.peek_verbose().0;
+                let start = parser.spans[*items.first().expect("test has at least one item")].start;
+                parser.add_node(
+                    start,
+                    Stmt::Block(Block {
+                        brace,
+                        label: None,
+                        stmts: items,
+                    }),
+                )
             }),
             @r#"
-        Block
-          EndpointDecl output stream "a"
-            float32
-          EndpointDecl output stream "b"
-            int
+        Block 0..35
+          EndpointDecl output stream "a" 0..26
+            float32 16..23
+          EndpointDecl output stream "b" 0..33
+            int 27..30
         "#
         );
     }
@@ -2909,18 +3074,23 @@ mod tests {
         insta::assert_snapshot!(
             dump("node b = B, c = C;", |parser| {
                 let items = parser.parse_node_group();
-                parser.ast.push(Stmt::Block(Block {
-                    brace: parser.peek_verbose().0,
-                    label: None,
-                    stmts: items,
-                }))
+                let brace = parser.peek_verbose().0;
+                let start = parser.spans[*items.first().expect("test has at least one item")].start;
+                parser.add_node(
+                    start,
+                    Stmt::Block(Block {
+                        brace,
+                        label: None,
+                        stmts: items,
+                    }),
+                )
             }),
             @r#"
-        Block
-          NodeDecl "b"
-            B
-          NodeDecl "c"
-            C
+        Block 0..18
+          NodeDecl "b" 0..10
+            B 9..10
+          NodeDecl "c" 0..17
+            C 16..17
         "#
         );
     }

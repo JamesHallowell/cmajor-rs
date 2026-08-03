@@ -84,9 +84,7 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                                 );
                                 Outcome::Pass
                             } else {
-                                Outcome::Fail(
-                                    "expected an error but none occurred".to_string(),
-                                )
+                                Outcome::Fail("expected an error but none occurred".to_string())
                             }
                         }
                     }
@@ -111,9 +109,7 @@ fn describe_parse_errors(parse: &parser::Parse, source: &str) -> String {
         .error_tokens()
         .into_iter()
         .map(|token| {
-            let Some(span) = parse.tokens.span(token) else {
-                return "  <error token out of range>".to_string();
-            };
+            let span = parse.tokens.span(token);
             let start = span.start as usize;
             let (line, col) = line_col(source, start);
             let line_text = source.lines().nth(line - 1).unwrap_or("");

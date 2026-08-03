@@ -10,7 +10,7 @@ mod stmt;
 pub mod visit;
 
 pub use {
-    attribute::AttributeList,
+    attribute::{Attribute, AttributeList},
     decl::{Alias, AliasKind, Decl, Declarator, Var, VarRole},
     dump::dump,
     expr::{
@@ -23,8 +23,8 @@ pub use {
         InterpolationKind, NodeDecl,
     },
     item::{
-        EnumDecl, FunctionDecl, GraphDecl, Import, Item, ModuleAlias, NamespaceDecl,
-        ProcessorDecl, StructDecl,
+        EnumDecl, FunctionDecl, GraphDecl, Import, Item, ModuleAlias, NamespaceDecl, ProcessorDecl,
+        StructDecl,
     },
     node::{Ast, Node, NodeId},
     stmt::{

@@ -1,8 +1,18 @@
-use crate::{
-    arena_key,
-    ast::{attribute::AttributeList, decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
-    lexer::TokenId,
-    utils::arena::Arena,
+use {
+    crate::{
+        arena_key,
+        ast::{
+            attribute::AttributeList,
+            decl::Decl,
+            expr::Expr,
+            graph::Graph,
+            item::Item,
+            stmt::{Stmt, StmtId},
+        },
+        lexer::TokenId,
+        utils::arena::{Arena, SecondaryArena},
+    },
+    std::range::Range,
 };
 
 arena_key!(NodeId);
@@ -58,11 +68,25 @@ impl From<AttributeList> for Node {
 pub struct Ast {
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
+    spans: SecondaryArena<NodeId, Range<TokenId>>,
 }
 
 impl Ast {
-    pub fn new(nodes: Arena<NodeId, Node>, roots: Vec<NodeId>) -> Self {
-        Self { nodes, roots }
+    pub fn new(
+        nodes: Arena<NodeId, Node>,
+        roots: Vec<NodeId>,
+        spans: SecondaryArena<NodeId, Range<TokenId>>,
+    ) -> Self {
+        let ast = Self {
+            nodes,
+            roots,
+            spans,
+        };
+
+        #[cfg(test)]
+        assert_spans_contain_children(&ast);
+
+        ast
     }
 
     pub fn roots(&self) -> &[NodeId] {
@@ -75,6 +99,10 @@ impl Ast {
 
     pub fn get(&self, id: NodeId) -> &Node {
         &self.nodes[id]
+    }
+
+    pub fn span(&self, id: NodeId) -> Range<TokenId> {
+        self.spans[id]
     }
 
     pub fn len(&self) -> usize {
@@ -101,4 +129,63 @@ impl Ast {
             .copied()
             .collect()
     }
+
+    pub fn as_stmt(&self, node: NodeId) -> Option<StmtId> {
+        if let Node::Stmt(_) = &self.nodes[node] {
+            Some(StmtId(node))
+        } else {
+            None
+        }
+    }
+}
+
+impl std::ops::Index<NodeId> for Ast {
+    type Output = Node;
+
+    fn index(&self, id: NodeId) -> &Self::Output {
+        &self.nodes[id]
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn assert_spans_contain_children(ast: &Ast) {
+    use crate::ast::visit::{Visitor, Walk, walk};
+
+    struct SpanChecker {
+        ancestors: Vec<NodeId>,
+        violations: Vec<String>,
+    }
+
+    impl Visitor for SpanChecker {
+        fn visit(&mut self, ast: &Ast, id: NodeId) {
+            let span = ast.span(id);
+
+            if let Some(&parent) = self.ancestors.last() {
+                let parent_span = ast.span(parent);
+                if span.start < parent_span.start || span.end > parent_span.end {
+                    self.violations.push(format!(
+                        "{id:?} span {span:?} is not contained by parent {parent:?} span {parent_span:?}"
+                    ));
+                }
+            }
+
+            self.ancestors.push(id);
+            walk(ast, self, id);
+            self.ancestors.pop();
+        }
+    }
+
+    let mut checker = SpanChecker {
+        ancestors: Vec::new(),
+        violations: Vec::new(),
+    };
+    for &root in ast.roots() {
+        checker.visit(ast, root);
+    }
+
+    assert!(
+        checker.violations.is_empty(),
+        "span containment violated:\n{}",
+        checker.violations.join("\n")
+    );
 }

@@ -30,11 +30,17 @@ pub fn dump(ast: &Ast, tokens: &TokenStream, source: &str, root: NodeId) -> Stri
         tokens,
         source,
     };
-    let root_node = dumper.visit(ast, root);
+    let mut root_node = dumper.visit(ast, root);
+    append_span(&mut root_node, ast, tokens, root);
 
     let mut out = String::new();
     render(&root_node, 0, &mut out);
     out
+}
+
+fn append_span(node: &mut DumpNode, ast: &Ast, tokens: &TokenStream, id: NodeId) {
+    let span = tokens.to_position_span(ast.span(id));
+    let _ = write!(node.label, " {}..{}", span.start, span.end);
 }
 
 struct DumpNode {
@@ -69,14 +75,14 @@ struct Dumper<'a> {
 
 impl<'a> Dumper<'a> {
     fn text(&self, token: &TokenId) -> &'a str {
-        self.tokens
-            .text(self.source, *token)
-            .expect("token is valid")
+        self.tokens.text(self.source, *token)
     }
 
     fn child(&mut self, id: NodeId) -> DumpNode {
         let ast = self.ast;
-        self.visit(ast, id)
+        let mut node = self.visit(ast, id);
+        append_span(&mut node, ast, self.tokens, id);
+        node
     }
 
     fn bracket_term(&mut self, term: &BracketTerm) -> DumpNode {
@@ -392,7 +398,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let expr = self.child(*expr);
                 node("ExprStmt".to_string(), vec![expr])
             }
-            Stmt::DeclStmt(DeclStmt { decl }) => self.child(*decl),
+            Stmt::DeclStmt(DeclStmt { decl }) => self.visit(self.ast, *decl),
             Stmt::ForStmt(ForStmt {
                 init,
                 cond,
@@ -557,10 +563,10 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         let children = list
             .attributes
             .iter()
-            .map(|(key, value)| {
-                let key_text = self.text(key);
-                match value {
-                    Some(id) => node(format!("{key_text:?}"), vec![self.child(*id)]),
+            .map(|attribute| {
+                let key_text = self.text(&attribute.key);
+                match attribute.value {
+                    Some(id) => node(format!("{key_text:?}"), vec![self.child(id)]),
                     None => leaf(format!("{key_text:?}")),
                 }
             })

@@ -285,13 +285,13 @@ where
     V: Visitor + ?Sized,
 {
     match ast.get(id) {
-        Node::Item(item) => visitor.visit_item(ast, id, &item),
-        Node::Decl(decl) => visitor.visit_decl(ast, id, &decl),
-        Node::Graph(graph) => visitor.visit_graph(ast, id, &graph),
-        Node::Stmt(stmt) => visitor.visit_stmt(ast, id, &stmt),
-        Node::Expr(expr) => visitor.visit_expr(ast, id, &expr),
+        Node::Item(item) => visitor.visit_item(ast, id, item),
+        Node::Decl(decl) => visitor.visit_decl(ast, id, decl),
+        Node::Graph(graph) => visitor.visit_graph(ast, id, graph),
+        Node::Stmt(stmt) => visitor.visit_stmt(ast, id, stmt),
+        Node::Expr(expr) => visitor.visit_expr(ast, id, expr),
         Node::AttributeList(attribute_list) => {
-            visitor.visit_attribute_list(ast, id, &attribute_list)
+            visitor.visit_attribute_list(ast, id, attribute_list)
         }
         Node::Error { token } => visitor.visit_error(ast, id, *token),
     }
@@ -391,9 +391,9 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for (_, value) in &self.attributes {
-            if let Some(value) = value {
-                visitor.visit(ast, *value);
+        for attribute in &self.attributes {
+            if let Some(value) = attribute.value {
+                visitor.visit(ast, value);
             }
         }
     }
