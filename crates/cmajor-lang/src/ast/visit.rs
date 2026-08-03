@@ -19,17 +19,13 @@ use crate::{
     lexer::TokenId,
 };
 
-pub fn visit_ast<V>(ast: &Ast, visitor: &mut V)
-where
-    V: Visitor + ?Sized,
-{
-    for &root in ast.roots() {
-        visitor.visit(ast, root);
-    }
-}
-
 pub trait Visitor {
     fn visit(&mut self, ast: &Ast, id: NodeId) {
+        walk(ast, self, id);
+    }
+
+    fn visit_root(&mut self, ast: &Ast, id: NodeId) {
+        assert!(ast.roots().contains(&id));
         walk(ast, self, id);
     }
 

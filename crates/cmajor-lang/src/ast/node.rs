@@ -8,6 +8,7 @@ use {
             graph::Graph,
             item::Item,
             stmt::{Stmt, StmtId},
+            visit::Visitor,
         },
         lexer::TokenId,
         utils::arena::{Arena, SecondaryArena},
@@ -137,6 +138,15 @@ impl Ast {
             None
         }
     }
+
+    pub fn visit<V>(&self, visitor: &mut V)
+    where
+        V: Visitor + ?Sized,
+    {
+        for &root in self.roots() {
+            visitor.visit_root(self, root);
+        }
+    }
 }
 
 impl std::ops::Index<NodeId> for Ast {
@@ -149,11 +159,27 @@ impl std::ops::Index<NodeId> for Ast {
 
 #[cfg(test)]
 pub(crate) fn assert_spans_contain_children(ast: &Ast) {
-    use crate::ast::visit::{Visitor, Walk, walk};
+    use crate::ast::visit::{Visitor, walk};
 
+    struct Violation {
+        node: (NodeId, Range<TokenId>),
+        parent: (NodeId, Range<TokenId>),
+    }
+
+    #[derive(Default)]
     struct SpanChecker {
         ancestors: Vec<NodeId>,
-        violations: Vec<String>,
+        violations: Vec<Violation>,
+    }
+
+    impl std::fmt::Debug for Violation {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(
+                f,
+                "{:?} span {:?} is not contained within parent {:?} span {:?}",
+                self.node.0, self.node.1, self.parent.0, self.parent.1
+            )
+        }
     }
 
     impl Visitor for SpanChecker {
@@ -162,10 +188,12 @@ pub(crate) fn assert_spans_contain_children(ast: &Ast) {
 
             if let Some(&parent) = self.ancestors.last() {
                 let parent_span = ast.span(parent);
+
                 if span.start < parent_span.start || span.end > parent_span.end {
-                    self.violations.push(format!(
-                        "{id:?} span {span:?} is not contained by parent {parent:?} span {parent_span:?}"
-                    ));
+                    self.violations.push(Violation {
+                        node: (id, span),
+                        parent: (parent, parent_span),
+                    });
                 }
             }
 
@@ -175,17 +203,12 @@ pub(crate) fn assert_spans_contain_children(ast: &Ast) {
         }
     }
 
-    let mut checker = SpanChecker {
-        ancestors: Vec::new(),
-        violations: Vec::new(),
-    };
-    for &root in ast.roots() {
-        checker.visit(ast, root);
-    }
+    let mut checker = SpanChecker::default();
+    ast.visit(&mut checker);
 
     assert!(
         checker.violations.is_empty(),
-        "span containment violated:\n{}",
-        checker.violations.join("\n")
+        "span containment violated:\n{:#?}",
+        checker.violations
     );
 }

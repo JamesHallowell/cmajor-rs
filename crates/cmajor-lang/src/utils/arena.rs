@@ -48,8 +48,14 @@ macro_rules! arena_key {
     };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct KeyData(u32);
+
+impl std::fmt::Debug for KeyData {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 impl<K, V> Arena<K, V> {
     pub fn len(&self) -> usize {

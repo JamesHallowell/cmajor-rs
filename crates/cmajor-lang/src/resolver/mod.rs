@@ -29,10 +29,7 @@ pub struct Resolution {
 pub fn resolve(source: &str, parse: &Parse) -> Resolution {
     let mut resolver = Resolver::new(source, &parse.tokens, &parse.ast);
 
-    for &root in parse.ast.roots() {
-        resolver.current_scope = resolver.symbols.global_scope();
-        resolver.visit(&parse.ast, root);
-    }
+    parse.ast.visit(&mut resolver);
 
     Resolution {
         symbols: resolver.symbols,
@@ -189,6 +186,11 @@ impl<'a> Resolver<'a> {
 }
 
 impl<'a> Visitor for Resolver<'a> {
+    fn visit_root(&mut self, ast: &Ast, id: NodeId) {
+        self.current_scope = self.symbols.global_scope();
+        self.visit(ast, id);
+    }
+
     fn visit_namespace_decl(&mut self, ast: &Ast, id: NodeId, namespace_decl: &NamespaceDecl) {
         let scope = self.scope();
         let inner = namespace_decl
