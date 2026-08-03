@@ -39,36 +39,36 @@ pub trait Visitor {
 
     fn visit_namespace_decl(&mut self, ast: &Ast, id: NodeId, namespace_decl: &NamespaceDecl) {
         let _ = id;
-        walk_namespace_decl(ast, self, namespace_decl);
+        namespace_decl.walk(ast, self);
     }
 
     fn visit_processor_decl(&mut self, ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
         let _ = id;
-        walk_processor_decl(ast, self, processor_decl);
+        processor_decl.walk(ast, self);
     }
 
     fn visit_graph_decl(&mut self, ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
         let _ = id;
-        walk_graph_decl(ast, self, graph_decl);
+        graph_decl.walk(ast, self);
     }
 
     fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
         let _ = id;
-        walk_struct_decl(ast, self, struct_decl);
+        struct_decl.walk(ast, self);
     }
 
     fn visit_enum_decl(&mut self, _ast: &Ast, _id: NodeId, _enum_decl: &EnumDecl) {}
 
     fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
         let _ = id;
-        walk_function_decl(ast, self, function_decl);
+        function_decl.walk(ast, self);
     }
 
     fn visit_import(&mut self, _ast: &Ast, _id: NodeId, _import: &Import) {}
 
     fn visit_module_alias(&mut self, ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
         let _ = id;
-        walk_module_alias(ast, self, module_alias);
+        module_alias.walk(ast, self);
     }
 
     fn visit_decl(&mut self, ast: &Ast, id: NodeId, decl: &Decl) {
@@ -77,12 +77,12 @@ pub trait Visitor {
 
     fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
         let _ = id;
-        walk_var(ast, self, var);
+        var.walk(ast, self);
     }
 
     fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
         let _ = id;
-        walk_alias(ast, self, alias);
+        alias.walk(ast, self);
     }
 
     fn visit_graph(&mut self, ast: &Ast, id: NodeId, graph: &Graph) {
@@ -91,27 +91,27 @@ pub trait Visitor {
 
     fn visit_endpoint_decl(&mut self, ast: &Ast, id: NodeId, endpoint_decl: &EndpointDecl) {
         let _ = id;
-        walk_endpoint_decl(ast, self, endpoint_decl);
+        endpoint_decl.walk(ast, self);
     }
 
     fn visit_node_decl(&mut self, ast: &Ast, id: NodeId, node_decl: &NodeDecl) {
         let _ = id;
-        walk_node_decl(ast, self, node_decl);
+        node_decl.walk(ast, self);
     }
 
     fn visit_connection_decl(&mut self, ast: &Ast, id: NodeId, connection_decl: &ConnectionDecl) {
         let _ = id;
-        walk_connection_decl(ast, self, connection_decl);
+        connection_decl.walk(ast, self);
     }
 
     fn visit_connection(&mut self, ast: &Ast, id: NodeId, connection: &Connection) {
         let _ = id;
-        walk_connection(ast, self, connection);
+        connection.walk(ast, self);
     }
 
     fn visit_connection_if(&mut self, ast: &Ast, id: NodeId, connection_if: &ConnectionIf) {
         let _ = id;
-        walk_connection_if(ast, self, connection_if);
+        connection_if.walk(ast, self);
     }
 
     fn visit_stmt(&mut self, ast: &Ast, id: NodeId, stmt: &Stmt) {
@@ -120,42 +120,42 @@ pub trait Visitor {
 
     fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
         let _ = id;
-        walk_block(ast, self, block);
+        block.walk(ast, self);
     }
 
     fn visit_expr_stmt(&mut self, ast: &Ast, id: NodeId, expr_stmt: &ExprStmt) {
         let _ = id;
-        walk_expr_stmt(ast, self, expr_stmt);
+        expr_stmt.walk(ast, self);
     }
 
     fn visit_decl_stmt(&mut self, ast: &Ast, id: NodeId, decl_stmt: &DeclStmt) {
         let _ = id;
-        walk_decl_stmt(ast, self, decl_stmt);
+        decl_stmt.walk(ast, self);
     }
 
     fn visit_for_stmt(&mut self, ast: &Ast, id: NodeId, for_stmt: &ForStmt) {
         let _ = id;
-        walk_for_stmt(ast, self, for_stmt);
+        for_stmt.walk(ast, self);
     }
 
     fn visit_if_stmt(&mut self, ast: &Ast, id: NodeId, if_stmt: &IfStmt) {
         let _ = id;
-        walk_if_stmt(ast, self, if_stmt);
+        if_stmt.walk(ast, self);
     }
 
     fn visit_while_stmt(&mut self, ast: &Ast, id: NodeId, while_stmt: &WhileStmt) {
         let _ = id;
-        walk_while_stmt(ast, self, while_stmt);
+        while_stmt.walk(ast, self);
     }
 
     fn visit_loop_stmt(&mut self, ast: &Ast, id: NodeId, loop_stmt: &LoopStmt) {
         let _ = id;
-        walk_loop_stmt(ast, self, loop_stmt);
+        loop_stmt.walk(ast, self);
     }
 
     fn visit_return_stmt(&mut self, ast: &Ast, id: NodeId, return_stmt: &ReturnStmt) {
         let _ = id;
-        walk_return_stmt(ast, self, return_stmt);
+        return_stmt.walk(ast, self);
     }
 
     fn visit_break_stmt(&mut self, _ast: &Ast, _id: NodeId, _break_stmt: &BreakStmt) {}
@@ -169,7 +169,7 @@ pub trait Visitor {
         forward_branch_stmt: &ForwardBranchStmt,
     ) {
         let _ = id;
-        walk_forward_branch_stmt(ast, self, forward_branch_stmt);
+        forward_branch_stmt.walk(ast, self);
     }
 
     fn visit_expr(&mut self, ast: &Ast, id: NodeId, expr: &Expr) {
@@ -180,62 +180,62 @@ pub trait Visitor {
 
     fn visit_parentheses(&mut self, ast: &Ast, id: NodeId, parentheses: &Parentheses) {
         let _ = id;
-        walk_parentheses(ast, self, parentheses);
+        parentheses.walk(ast, self);
     }
 
     fn visit_unary(&mut self, ast: &Ast, id: NodeId, unary: &Unary) {
         let _ = id;
-        walk_unary(ast, self, unary);
+        unary.walk(ast, self);
     }
 
     fn visit_postfix_unary(&mut self, ast: &Ast, id: NodeId, postfix_unary: &PostfixUnary) {
         let _ = id;
-        walk_postfix_unary(ast, self, postfix_unary);
+        postfix_unary.walk(ast, self);
     }
 
     fn visit_binary(&mut self, ast: &Ast, id: NodeId, binary: &Binary) {
         let _ = id;
-        walk_binary(ast, self, binary);
+        binary.walk(ast, self);
     }
 
     fn visit_assign(&mut self, ast: &Ast, id: NodeId, assign: &Assign) {
         let _ = id;
-        walk_assign(ast, self, assign);
+        assign.walk(ast, self);
     }
 
     fn visit_ternary(&mut self, ast: &Ast, id: NodeId, ternary: &Ternary) {
         let _ = id;
-        walk_ternary(ast, self, ternary);
+        ternary.walk(ast, self);
     }
 
     fn visit_call(&mut self, ast: &Ast, id: NodeId, call: &Call) {
         let _ = id;
-        walk_call(ast, self, call);
+        call.walk(ast, self);
     }
 
     fn visit_bracketed(&mut self, ast: &Ast, id: NodeId, bracketed: &Bracketed) {
         let _ = id;
-        walk_bracketed(ast, self, bracketed);
+        bracketed.walk(ast, self);
     }
 
     fn visit_field(&mut self, ast: &Ast, id: NodeId, field: &Field) {
         let _ = id;
-        walk_field(ast, self, field);
+        field.walk(ast, self);
     }
 
     fn visit_scope_access(&mut self, ast: &Ast, id: NodeId, scope_access: &ScopeAccess) {
         let _ = id;
-        walk_scope_access(ast, self, scope_access);
+        scope_access.walk(ast, self);
     }
 
     fn visit_type_modifier(&mut self, ast: &Ast, id: NodeId, type_modifier: &TypeModifier) {
         let _ = id;
-        walk_type_modifier(ast, self, type_modifier);
+        type_modifier.walk(ast, self);
     }
 
     fn visit_vector_size_suffix(&mut self, ast: &Ast, id: NodeId, suffix: &VectorSizeSuffix) {
         let _ = id;
-        walk_vector_size_suffix(ast, self, suffix);
+        suffix.walk(ast, self);
     }
 
     fn visit_processor_property(&mut self, _ast: &Ast, _id: NodeId, _property: &ProcessorProperty) {
@@ -243,7 +243,7 @@ pub trait Visitor {
 
     fn visit_attribute_list(&mut self, ast: &Ast, id: NodeId, attribute_list: &AttributeList) {
         let _ = id;
-        walk_attribute_list(ast, self, attribute_list);
+        attribute_list.walk(ast, self);
     }
 
     fn visit_error(&mut self, _ast: &Ast, _id: NodeId, _token: TokenId) {}
@@ -273,11 +273,18 @@ pub trait ExhaustiveVisitor {
     }
 }
 
+pub trait Walk<V>
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V);
+}
+
 pub fn walk<V>(ast: &Ast, visitor: &mut V, id: NodeId)
 where
     V: Visitor + ?Sized,
 {
-    match ast.get(id).clone() {
+    match ast.get(id) {
         Node::Item(item) => visitor.visit_item(ast, id, &item),
         Node::Decl(decl) => visitor.visit_decl(ast, id, &decl),
         Node::Graph(graph) => visitor.visit_graph(ast, id, &graph),
@@ -286,18 +293,7 @@ where
         Node::AttributeList(attribute_list) => {
             visitor.visit_attribute_list(ast, id, &attribute_list)
         }
-        Node::Error { token } => visitor.visit_error(ast, id, token),
-    }
-}
-
-pub fn walk_attribute_list<V>(ast: &Ast, visitor: &mut V, attribute_list: &AttributeList)
-where
-    V: Visitor + ?Sized,
-{
-    for (_, value) in &attribute_list.attributes {
-        if let Some(value) = value {
-            visitor.visit(ast, *value);
-        }
+        Node::Error { token } => visitor.visit_error(ast, id, *token),
     }
 }
 
@@ -321,86 +317,6 @@ where
     }
 }
 
-pub fn walk_namespace_decl<V>(ast: &Ast, visitor: &mut V, namespace_decl: &NamespaceDecl)
-where
-    V: Visitor + ?Sized,
-{
-    for &param in &namespace_decl.params {
-        visitor.visit(ast, param);
-    }
-    if let Some(attributes) = namespace_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-    for &member in &namespace_decl.items {
-        visitor.visit(ast, member);
-    }
-}
-
-pub fn walk_processor_decl<V>(ast: &Ast, visitor: &mut V, processor_decl: &ProcessorDecl)
-where
-    V: Visitor + ?Sized,
-{
-    for &param in &processor_decl.params {
-        visitor.visit(ast, param);
-    }
-    if let Some(attributes) = processor_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-    for &member in &processor_decl.items {
-        visitor.visit(ast, member);
-    }
-}
-
-pub fn walk_graph_decl<V>(ast: &Ast, visitor: &mut V, graph_decl: &GraphDecl)
-where
-    V: Visitor + ?Sized,
-{
-    for &param in &graph_decl.params {
-        visitor.visit(ast, param);
-    }
-    if let Some(attributes) = graph_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-    for &member in &graph_decl.items {
-        visitor.visit(ast, member);
-    }
-}
-
-pub fn walk_struct_decl<V>(ast: &Ast, visitor: &mut V, struct_decl: &StructDecl)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(attributes) = struct_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-    for &member in &struct_decl.items {
-        visitor.visit(ast, member);
-    }
-}
-
-pub fn walk_function_decl<V>(ast: &Ast, visitor: &mut V, function_decl: &FunctionDecl)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(ty) = function_decl.ty {
-        visitor.visit(ast, ty);
-    }
-    for &param in &function_decl.params {
-        visitor.visit(ast, param);
-    }
-    if let Some(attributes) = function_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-    visitor.visit(ast, function_decl.body);
-}
-
-pub fn walk_module_alias<V>(ast: &Ast, visitor: &mut V, module_alias: &ModuleAlias)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, module_alias.target);
-}
-
 pub fn walk_decl<V>(ast: &Ast, visitor: &mut V, id: NodeId, decl: &Decl)
 where
     V: Visitor + ?Sized,
@@ -408,39 +324,6 @@ where
     match decl {
         Decl::Var(var) => visitor.visit_var(ast, id, var),
         Decl::Alias(alias) => visitor.visit_alias(ast, id, alias),
-    }
-}
-
-pub fn walk_alias<V>(ast: &Ast, visitor: &mut V, alias: &Alias)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(target) = alias.target {
-        visitor.visit(ast, target);
-    }
-}
-
-pub fn walk_var<V>(ast: &Ast, visitor: &mut V, var: &Var)
-where
-    V: Visitor + ?Sized,
-{
-    let Var {
-        ty,
-        declarators,
-        attributes,
-        ..
-    } = var;
-
-    if let Some(ty) = ty {
-        visitor.visit(ast, *ty);
-    }
-    for declarator in declarators {
-        if let Some(init) = declarator.init {
-            visitor.visit(ast, init);
-        }
-    }
-    if let Some(attributes) = attributes {
-        visitor.visit(ast, *attributes);
     }
 }
 
@@ -456,77 +339,6 @@ where
         }
         Graph::Connection(connection) => visitor.visit_connection(ast, id, connection),
         Graph::ConnectionIf(connection_if) => visitor.visit_connection_if(ast, id, connection_if),
-    }
-}
-
-pub fn walk_endpoint_decl<V>(ast: &Ast, visitor: &mut V, endpoint_decl: &EndpointDecl)
-where
-    V: Visitor + ?Sized,
-{
-    for &ty in &endpoint_decl.types {
-        visitor.visit(ast, ty);
-    }
-    if let Some(size) = endpoint_decl.size {
-        visitor.visit(ast, size);
-    }
-    if let Some(index) = endpoint_decl
-        .hoisted
-        .as_ref()
-        .and_then(|hoisted| hoisted.index)
-    {
-        visitor.visit(ast, index);
-    }
-    if let Some(attributes) = endpoint_decl.attributes {
-        visitor.visit(ast, attributes);
-    }
-}
-
-pub fn walk_node_decl<V>(ast: &Ast, visitor: &mut V, node_decl: &NodeDecl)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, node_decl.processor);
-    if let Some(array_size) = node_decl.array_size {
-        visitor.visit(ast, array_size);
-    }
-}
-
-pub fn walk_connection_decl<V>(ast: &Ast, visitor: &mut V, connection_decl: &ConnectionDecl)
-where
-    V: Visitor + ?Sized,
-{
-    for &connection in &connection_decl.connections {
-        visitor.visit(ast, connection);
-    }
-}
-
-pub fn walk_connection<V>(ast: &Ast, visitor: &mut V, connection: &Connection)
-where
-    V: Visitor + ?Sized,
-{
-    for &source in &connection.sources {
-        visitor.visit(ast, source);
-    }
-    if let Some(delay) = connection.delay {
-        visitor.visit(ast, delay);
-    }
-    for &destination in &connection.destinations {
-        visitor.visit(ast, destination);
-    }
-}
-
-pub fn walk_connection_if<V>(ast: &Ast, visitor: &mut V, connection_if: &ConnectionIf)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, connection_if.cond);
-    for &then_branch in &connection_if.then_branch {
-        visitor.visit(ast, then_branch);
-    }
-    if let Some(else_branch) = &connection_if.else_branch {
-        for &else_branch in else_branch {
-            visitor.visit(ast, else_branch);
-        }
     }
 }
 
@@ -549,90 +361,6 @@ where
             visitor.visit_forward_branch_stmt(ast, id, forward_branch_stmt)
         }
     }
-}
-
-pub fn walk_block<V>(ast: &Ast, visitor: &mut V, block: &Block)
-where
-    V: Visitor + ?Sized,
-{
-    for &stmt in &block.stmts {
-        visitor.visit(ast, stmt);
-    }
-}
-
-pub fn walk_expr_stmt<V>(ast: &Ast, visitor: &mut V, expr_stmt: &ExprStmt)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, expr_stmt.expr);
-}
-
-pub fn walk_decl_stmt<V>(ast: &Ast, visitor: &mut V, decl_stmt: &DeclStmt)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, decl_stmt.decl);
-}
-
-pub fn walk_for_stmt<V>(ast: &Ast, visitor: &mut V, for_stmt: &ForStmt)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(cond) = for_stmt.cond {
-        visitor.visit(ast, cond);
-    }
-    if let Some(update) = for_stmt.update {
-        visitor.visit(ast, update);
-    }
-    visitor.visit(ast, for_stmt.body);
-}
-
-pub fn walk_if_stmt<V>(ast: &Ast, visitor: &mut V, if_stmt: &IfStmt)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, if_stmt.cond);
-    visitor.visit(ast, if_stmt.then_branch);
-    if let Some(else_branch) = if_stmt.else_branch {
-        visitor.visit(ast, else_branch);
-    }
-}
-
-pub fn walk_while_stmt<V>(ast: &Ast, visitor: &mut V, while_stmt: &WhileStmt)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, while_stmt.cond);
-    visitor.visit(ast, while_stmt.body);
-}
-
-pub fn walk_loop_stmt<V>(ast: &Ast, visitor: &mut V, loop_stmt: &LoopStmt)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(count) = loop_stmt.count {
-        visitor.visit(ast, count);
-    }
-    visitor.visit(ast, loop_stmt.body);
-}
-
-pub fn walk_return_stmt<V>(ast: &Ast, visitor: &mut V, return_stmt: &ReturnStmt)
-where
-    V: Visitor + ?Sized,
-{
-    if let Some(value) = return_stmt.value {
-        visitor.visit(ast, value);
-    }
-}
-
-pub fn walk_forward_branch_stmt<V>(
-    ast: &Ast,
-    visitor: &mut V,
-    forward_branch_stmt: &ForwardBranchStmt,
-) where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, forward_branch_stmt.cond);
 }
 
 pub fn walk_expr<V>(ast: &Ast, visitor: &mut V, id: NodeId, expr: &Expr)
@@ -658,106 +386,448 @@ where
     }
 }
 
-pub fn walk_parentheses<V>(ast: &Ast, visitor: &mut V, parentheses: &Parentheses)
+impl<V> Walk<V> for AttributeList
 where
     V: Visitor + ?Sized,
 {
-    for &expr in &parentheses.inner {
-        visitor.visit(ast, expr);
-    }
-}
-
-pub fn walk_unary<V>(ast: &Ast, visitor: &mut V, unary: &Unary)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, unary.operand);
-}
-
-pub fn walk_postfix_unary<V>(ast: &Ast, visitor: &mut V, postfix_unary: &PostfixUnary)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, postfix_unary.operand);
-}
-
-pub fn walk_binary<V>(ast: &Ast, visitor: &mut V, binary: &Binary)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, binary.lhs);
-    visitor.visit(ast, binary.rhs);
-}
-
-pub fn walk_assign<V>(ast: &Ast, visitor: &mut V, assign: &Assign)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, assign.target);
-    visitor.visit(ast, assign.value);
-}
-
-pub fn walk_ternary<V>(ast: &Ast, visitor: &mut V, ternary: &Ternary)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, ternary.cond);
-    visitor.visit(ast, ternary.then_branch);
-    visitor.visit(ast, ternary.else_branch);
-}
-
-pub fn walk_call<V>(ast: &Ast, visitor: &mut V, call: &Call)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, call.callee);
-    for &arg in &call.args {
-        visitor.visit(ast, arg);
-    }
-}
-
-pub fn walk_bracketed<V>(ast: &Ast, visitor: &mut V, bracketed: &Bracketed)
-where
-    V: Visitor + ?Sized,
-{
-    visitor.visit(ast, bracketed.base);
-    for term in &bracketed.terms {
-        if let Some(start) = term.start {
-            visitor.visit(ast, start);
-        }
-        if let Some(end) = term.end {
-            visitor.visit(ast, end);
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for (_, value) in &self.attributes {
+            if let Some(value) = value {
+                visitor.visit(ast, *value);
+            }
         }
     }
 }
 
-pub fn walk_field<V>(ast: &Ast, visitor: &mut V, field: &Field)
+impl<V> Walk<V> for NamespaceDecl
 where
     V: Visitor + ?Sized,
 {
-    visitor.visit(ast, field.base);
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &param in &self.params {
+            visitor.visit(ast, param);
+        }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        for &member in &self.items {
+            visitor.visit(ast, member);
+        }
+    }
 }
 
-pub fn walk_scope_access<V>(ast: &Ast, visitor: &mut V, scope_access: &ScopeAccess)
+impl<V> Walk<V> for ProcessorDecl
 where
     V: Visitor + ?Sized,
 {
-    visitor.visit(ast, scope_access.base);
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &param in &self.params {
+            visitor.visit(ast, param);
+        }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        for &member in &self.items {
+            visitor.visit(ast, member);
+        }
+    }
 }
 
-pub fn walk_type_modifier<V>(ast: &Ast, visitor: &mut V, type_modifier: &TypeModifier)
+impl<V> Walk<V> for GraphDecl
 where
     V: Visitor + ?Sized,
 {
-    visitor.visit(ast, type_modifier.source);
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &param in &self.params {
+            visitor.visit(ast, param);
+        }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        for &member in &self.items {
+            visitor.visit(ast, member);
+        }
+    }
 }
 
-pub fn walk_vector_size_suffix<V>(ast: &Ast, visitor: &mut V, suffix: &VectorSizeSuffix)
+impl<V> Walk<V> for StructDecl
 where
     V: Visitor + ?Sized,
 {
-    visitor.visit(ast, suffix.element);
-    for &term in &suffix.terms {
-        visitor.visit(ast, term);
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        for &member in &self.items {
+            visitor.visit(ast, member);
+        }
+    }
+}
+
+impl<V> Walk<V> for FunctionDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(ty) = self.ty {
+            visitor.visit(ast, ty);
+        }
+        for &param in &self.params {
+            visitor.visit(ast, param);
+        }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        visitor.visit(ast, self.body);
+    }
+}
+
+impl<V> Walk<V> for ModuleAlias
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.target);
+    }
+}
+
+impl<V> Walk<V> for Alias
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(target) = self.target {
+            visitor.visit(ast, target);
+        }
+    }
+}
+
+impl<V> Walk<V> for Var
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        let Var {
+            ty,
+            declarators,
+            attributes,
+            ..
+        } = self;
+
+        if let Some(ty) = ty {
+            visitor.visit(ast, *ty);
+        }
+        for declarator in declarators {
+            if let Some(init) = declarator.init {
+                visitor.visit(ast, init);
+            }
+        }
+        if let Some(attributes) = attributes {
+            visitor.visit(ast, *attributes);
+        }
+    }
+}
+
+impl<V> Walk<V> for EndpointDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &ty in &self.types {
+            visitor.visit(ast, ty);
+        }
+        if let Some(size) = self.size {
+            visitor.visit(ast, size);
+        }
+        if let Some(index) = self.hoisted.as_ref().and_then(|hoisted| hoisted.index) {
+            visitor.visit(ast, index);
+        }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+    }
+}
+
+impl<V> Walk<V> for NodeDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.processor);
+        if let Some(array_size) = self.array_size {
+            visitor.visit(ast, array_size);
+        }
+    }
+}
+
+impl<V> Walk<V> for ConnectionDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &connection in &self.connections {
+            visitor.visit(ast, connection);
+        }
+    }
+}
+
+impl<V> Walk<V> for Connection
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &source in &self.sources {
+            visitor.visit(ast, source);
+        }
+        if let Some(delay) = self.delay {
+            visitor.visit(ast, delay);
+        }
+        for &destination in &self.destinations {
+            visitor.visit(ast, destination);
+        }
+    }
+}
+
+impl<V> Walk<V> for ConnectionIf
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+        for &then_branch in &self.then_branch {
+            visitor.visit(ast, then_branch);
+        }
+        if let Some(else_branch) = &self.else_branch {
+            for &else_branch in else_branch {
+                visitor.visit(ast, else_branch);
+            }
+        }
+    }
+}
+
+impl<V> Walk<V> for Block
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &stmt in &self.stmts {
+            visitor.visit(ast, stmt);
+        }
+    }
+}
+
+impl<V> Walk<V> for ExprStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.expr);
+    }
+}
+
+impl<V> Walk<V> for DeclStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.decl);
+    }
+}
+
+impl<V> Walk<V> for ForStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(cond) = self.cond {
+            visitor.visit(ast, cond);
+        }
+        if let Some(update) = self.update {
+            visitor.visit(ast, update);
+        }
+        visitor.visit(ast, self.body);
+    }
+}
+
+impl<V> Walk<V> for IfStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+        visitor.visit(ast, self.then_branch);
+        if let Some(else_branch) = self.else_branch {
+            visitor.visit(ast, else_branch);
+        }
+    }
+}
+
+impl<V> Walk<V> for WhileStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+        visitor.visit(ast, self.body);
+    }
+}
+
+impl<V> Walk<V> for LoopStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(count) = self.count {
+            visitor.visit(ast, count);
+        }
+        visitor.visit(ast, self.body);
+    }
+}
+
+impl<V> Walk<V> for ReturnStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(value) = self.value {
+            visitor.visit(ast, value);
+        }
+    }
+}
+
+impl<V> Walk<V> for ForwardBranchStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+    }
+}
+
+impl<V> Walk<V> for Parentheses
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &expr in &self.inner {
+            visitor.visit(ast, expr);
+        }
+    }
+}
+
+impl<V> Walk<V> for Unary
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.operand);
+    }
+}
+
+impl<V> Walk<V> for PostfixUnary
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.operand);
+    }
+}
+
+impl<V> Walk<V> for Binary
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.lhs);
+        visitor.visit(ast, self.rhs);
+    }
+}
+
+impl<V> Walk<V> for Assign
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.target);
+        visitor.visit(ast, self.value);
+    }
+}
+
+impl<V> Walk<V> for Ternary
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+        visitor.visit(ast, self.then_branch);
+        visitor.visit(ast, self.else_branch);
+    }
+}
+
+impl<V> Walk<V> for Call
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.callee);
+        for &arg in &self.args {
+            visitor.visit(ast, arg);
+        }
+    }
+}
+
+impl<V> Walk<V> for Bracketed
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.base);
+        for term in &self.terms {
+            if let Some(start) = term.start {
+                visitor.visit(ast, start);
+            }
+            if let Some(end) = term.end {
+                visitor.visit(ast, end);
+            }
+        }
+    }
+}
+
+impl<V> Walk<V> for Field
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.base);
+    }
+}
+
+impl<V> Walk<V> for ScopeAccess
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.base);
+    }
+}
+
+impl<V> Walk<V> for TypeModifier
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.source);
+    }
+}
+
+impl<V> Walk<V> for VectorSizeSuffix
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.element);
+        for &term in &self.terms {
+            visitor.visit(ast, term);
+        }
     }
 }

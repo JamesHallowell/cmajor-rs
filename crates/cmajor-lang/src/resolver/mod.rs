@@ -11,10 +11,12 @@ pub use {
 use crate::{
     Diagnostic,
     ast::{
-        Alias, Ast, Block, EndpointDecl, EnumDecl, FunctionDecl, GraphDecl, ModuleAlias,
-        NamespaceDecl, NodeDecl, NodeId, ProcessorDecl, StructDecl, Var, visit::Visitor,
+        Alias, Ast, Block, EndpointDecl, EnumDecl, ForStmt, FunctionDecl, GraphDecl, IfStmt,
+        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, ProcessorDecl, Stmt,
+        StructDecl, Var, WhileStmt,
+        visit::{Visitor, Walk},
     },
-    lexer::{TokenId, TokenStream},
+    lexer::{TokenId, TokenKind, TokenStream},
     parser::Parse,
     utils::{self, Column, Line, arena::SparseSecondaryArena},
 };
@@ -45,7 +47,6 @@ struct Resolver<'a> {
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     current_scope: ScopeId,
-    pending_owner: Option<SymbolId>,
     namespace_scopes: SparseSecondaryArena<SymbolId, ScopeId>,
 }
 
@@ -61,7 +62,6 @@ impl<'a> Resolver<'a> {
             symbols,
             diagnostics: Vec::new(),
             current_scope: global_scope,
-            pending_owner: None,
             namespace_scopes: SparseSecondaryArena::default(),
         }
     }
@@ -115,21 +115,21 @@ impl<'a> Resolver<'a> {
 
     fn declare_container(
         &mut self,
-        scope: ScopeId,
         keyword: TokenId,
         name: TokenId,
         kind: SymbolKind,
         id: NodeId,
         items: &[NodeId],
     ) {
-        let _symbol = self.declare(scope, name, kind, id);
-        let inner = self.symbols.new_scope(scope, keyword);
+        let _symbol = self.declare(self.scope(), name, kind, id);
 
-        let ast = self.ast;
-        for &member in items {
-            self.current_scope = inner;
-            self.visit(ast, member);
-        }
+        self.with_new_scope_at(keyword, |this, inner| {
+            let ast = this.ast;
+            for &member in items {
+                this.current_scope = inner;
+                this.visit(ast, member);
+            }
+        });
     }
 
     fn declare_or_reuse_namespace(
@@ -163,7 +163,26 @@ impl<'a> Resolver<'a> {
         inner
     }
 
+    fn with_new_scope_at<R>(
+        &mut self,
+        anchor: TokenId,
+        f: impl FnOnce(&mut Self, ScopeId) -> R,
+    ) -> R {
+        let parent = self.scope();
+        let inner = self.symbols.new_scope(parent, anchor);
+        self.current_scope = inner;
+        let result = f(self, inner);
+        self.current_scope = parent;
+        result
+    }
+
     fn check_ident_defined(&mut self, scope: ScopeId, ident: TokenId) {
+        if let TokenKind::Keyword(keyword) = self.tokens.get(ident).kind
+            && keyword.is_type()
+        {
+            return;
+        }
+
         let name = self
             .tokens
             .text(self.source, ident)
@@ -192,7 +211,6 @@ impl<'a> Visitor for Resolver<'a> {
 
     fn visit_processor_decl(&mut self, _ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
         self.declare_container(
-            self.scope(),
             processor_decl.keyword,
             processor_decl.name,
             SymbolKind::Processor,
@@ -203,7 +221,6 @@ impl<'a> Visitor for Resolver<'a> {
 
     fn visit_graph_decl(&mut self, _ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
         self.declare_container(
-            self.scope(),
             graph_decl.keyword,
             graph_decl.name,
             SymbolKind::Graph,
@@ -214,7 +231,6 @@ impl<'a> Visitor for Resolver<'a> {
 
     fn visit_struct_decl(&mut self, _ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
         self.declare_container(
-            self.scope(),
             struct_decl.keyword,
             struct_decl.name,
             SymbolKind::Struct,
@@ -233,16 +249,24 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
-        let symbol = self.declare(self.scope(), function_decl.name, SymbolKind::Function, id);
-        self.pending_owner = Some(symbol);
+        self.declare(self.scope(), function_decl.name, SymbolKind::Function, id);
 
-        self.current_scope = self.symbols.new_scope(self.scope(), function_decl.name);
+        self.with_new_scope_at(function_decl.name, |this, _| {
+            if let Some(ty) = function_decl.ty {
+                this.visit(ast, ty);
+            }
+            for &param in &function_decl.params {
+                this.visit(ast, param);
+            }
+            if let Some(attributes) = function_decl.attributes {
+                this.visit(ast, attributes);
+            }
 
-        for &param in &function_decl.params {
-            self.visit(ast, param);
-        }
-
-        self.visit(ast, function_decl.body);
+            let Node::Stmt(Stmt::Block(body)) = ast.get(function_decl.body) else {
+                unreachable!("function body is always a block")
+            };
+            body.walk(ast, this);
+        });
     }
 
     fn visit_module_alias(&mut self, _ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
@@ -252,11 +276,9 @@ impl<'a> Visitor for Resolver<'a> {
     fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
         for declarator in &var.declarators {
             self.declare(self.scope(), declarator.name, SymbolKind::Variable, id);
-
-            if let Some(init) = declarator.init {
-                self.visit(ast, init);
-            }
         }
+
+        var.walk(ast, self);
     }
 
     fn visit_alias(&mut self, _ast: &Ast, id: NodeId, alias: &Alias) {
@@ -274,16 +296,44 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_block(&mut self, ast: &Ast, _id: NodeId, block: &Block) {
-        let parent = self.scope();
-        let inner = match self.pending_owner.take() {
-            Some(_) => self.current_scope,
-            None => self.symbols.new_scope(parent, block.brace),
-        };
-        self.current_scope = inner;
+        self.with_new_scope_at(block.brace, |this, _| block.walk(ast, this));
+    }
 
-        for &stmt in &block.stmts {
-            self.visit(ast, stmt);
-        }
+    fn visit_for_stmt(&mut self, ast: &Ast, _id: NodeId, for_stmt: &ForStmt) {
+        self.with_new_scope_at(for_stmt.keyword, |this, _| {
+            if let Some(init) = for_stmt.init {
+                this.visit(ast, init);
+            }
+            if let Some(cond) = for_stmt.cond {
+                this.visit(ast, cond);
+            }
+            if let Some(update) = for_stmt.update {
+                this.visit(ast, update);
+            }
+
+            match ast.get(for_stmt.body) {
+                Node::Stmt(Stmt::Block(block)) => {
+                    this.with_new_scope_at(block.brace, |this, _| block.walk(ast, this));
+                }
+                _ => {
+                    this.with_new_scope_at(for_stmt.keyword, |this, _| {
+                        this.visit(ast, for_stmt.body)
+                    });
+                }
+            }
+        });
+    }
+
+    fn visit_if_stmt(&mut self, ast: &Ast, _id: NodeId, if_stmt: &IfStmt) {
+        self.with_new_scope_at(if_stmt.keyword, |this, _| if_stmt.walk(ast, this));
+    }
+
+    fn visit_while_stmt(&mut self, ast: &Ast, _id: NodeId, while_stmt: &WhileStmt) {
+        self.with_new_scope_at(while_stmt.keyword, |this, _| while_stmt.walk(ast, this));
+    }
+
+    fn visit_loop_stmt(&mut self, ast: &Ast, _id: NodeId, loop_stmt: &LoopStmt) {
+        self.with_new_scope_at(loop_stmt.keyword, |this, _| loop_stmt.walk(ast, this));
     }
 
     fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, token: TokenId) {
@@ -451,6 +501,45 @@ mod tests {
                   - name: x
                     kind: Variable
                     location: "4:18"
+        "#
+        );
+    }
+
+    #[test]
+    fn local_shadowing_a_parameter_is_reported() {
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    void f(bool a) { let a = false; }
+                    output stream int out;
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: f
+                kind: Function
+                location: "3:10"
+              - name: out
+                kind: Endpoint
+                location: "4:23"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: a
+                    kind: Variable
+                    location: "3:17"
+                  - name: a
+                    kind: Variable
+                    location: "3:26"
+        diagnostics:
+          - "3:26: redefinition of 'a' (previously declared at 3:17)"
         "#
         );
     }
@@ -669,6 +758,120 @@ mod tests {
                   - name: x
                     kind: Variable
                     location: "12:13"
+        "#);
+    }
+
+    #[test]
+    fn control_flow_introduces_new_scopes() {
+        assert_resolution!(
+            indoc!{"
+                namespace test
+                {
+                    void f() {
+                        int x = 0;
+                        if (true) { int x = 1; }
+                        if (false) int x = 2;
+                        loop { int x = 3; }
+                        loop int x = 4;
+                        while (true) int x = 5;
+                        while (true) { int x = 5; }
+                        for (;;) int x = 6;
+                        for (;;) { int x = 7; }
+                        for (int x = 8;;) int x = 9;
+                        for (int x = 10;;) { int x = 11; }
+                    }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: test
+            kind: Namespace
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: f
+                kind: Function
+                location: "3:10"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "4:13"
+                scopes:
+                  - location: "5:9"
+                    scopes:
+                      - location: "5:19"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "5:25"
+                  - location: "6:9"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "6:24"
+                  - location: "7:9"
+                    scopes:
+                      - location: "7:14"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "7:20"
+                  - location: "8:9"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "8:18"
+                  - location: "9:9"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "9:26"
+                  - location: "10:9"
+                    scopes:
+                      - location: "10:22"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "10:28"
+                  - location: "11:9"
+                    scopes:
+                      - location: "11:9"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "11:22"
+                  - location: "12:9"
+                    scopes:
+                      - location: "12:18"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "12:24"
+                  - location: "13:9"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "13:18"
+                    scopes:
+                      - location: "13:9"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "13:31"
+                  - location: "14:9"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "14:18"
+                    scopes:
+                      - location: "14:28"
+                        symbols:
+                          - name: x
+                            kind: Variable
+                            location: "14:34"
         "#);
     }
 }
