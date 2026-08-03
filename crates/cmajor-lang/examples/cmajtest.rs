@@ -54,6 +54,10 @@ fn main() {
                     );
                     if let Some(expected) = &result.expected_error {
                         println!("      {DIM}expected: {expected}{RESET}");
+                        println!(
+                            "      {DIM}actual:   {}{RESET}",
+                            result.actual_error.as_deref().unwrap_or("<none>")
+                        );
                     }
                 }
                 Outcome::Fail(reason) => {
@@ -64,6 +68,10 @@ fn main() {
                     );
                     if let Some(expected) = &result.expected_error {
                         println!("      {DIM}expected: {expected}{RESET}");
+                        println!(
+                            "      {DIM}actual:   {}{RESET}",
+                            result.actual_error.as_deref().unwrap_or("<none>")
+                        );
                     }
                 }
                 Outcome::Skipped(reason) => {

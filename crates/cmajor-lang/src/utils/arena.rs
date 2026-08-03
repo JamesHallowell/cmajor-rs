@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData};
 
 #[derive(Debug, Clone)]
 pub struct Arena<K, V> {
@@ -201,6 +201,73 @@ where
 }
 
 impl<K, V> FromIterator<(K, V)> for SecondaryArena<K, V>
+where
+    KeyData: From<K>,
+{
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut arena = Self::default();
+        for (k, v) in iter {
+            arena.insert(k, v);
+        }
+        arena
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SparseSecondaryArena<K, V> {
+    items: HashMap<KeyData, V>,
+    _marker: PhantomData<K>,
+}
+
+impl<K, V> Default for SparseSecondaryArena<K, V> {
+    fn default() -> Self {
+        Self {
+            items: HashMap::default(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<K, V> SparseSecondaryArena<K, V>
+where
+    KeyData: From<K>,
+{
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.items.insert(KeyData::from(key), value)
+    }
+
+    pub fn get(&self, key: K) -> Option<&V> {
+        self.items.get(&KeyData::from(key))
+    }
+
+    pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
+        self.items.get_mut(&KeyData::from(key))
+    }
+}
+
+impl<K, V> std::ops::Index<K> for SparseSecondaryArena<K, V>
+where
+    KeyData: From<K>,
+{
+    type Output = V;
+
+    fn index(&self, key: K) -> &Self::Output {
+        self.get(key)
+            .expect("no value in SparseSecondaryArena for this key")
+    }
+}
+
+impl<K, V> std::ops::IndexMut<K> for SparseSecondaryArena<K, V>
+where
+    KeyData: From<K>,
+{
+    fn index_mut(&mut self, key: K) -> &mut Self::Output {
+        self.get_mut(key)
+            .expect("no value in SparseSecondaryArena for this key")
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for SparseSecondaryArena<K, V>
 where
     KeyData: From<K>,
 {

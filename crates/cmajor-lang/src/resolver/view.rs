@@ -1,10 +1,7 @@
-use {
-    crate::{
-        lexer::TokenStream,
-        resolver::{Resolution, ScopeId, SymbolKind},
-        utils,
-    },
-    std::collections::HashSet,
+use crate::{
+    lexer::TokenStream,
+    resolver::{Resolution, ScopeId, SymbolKind},
+    utils,
 };
 
 pub struct ResolutionView<'a> {
@@ -22,60 +19,46 @@ impl<'a> ResolutionView<'a> {
         }
     }
 
-    fn entries(&self, scope: ScopeId) -> Vec<SymbolEntry> {
-        let table = &self.resolution.symbols;
-
-        let mut entries: Vec<SymbolEntry> = table
-            .symbols_in(scope)
-            .map(|symbol| {
-                let position = self.tokens.position(symbol.name_token);
-                let (line, column) = utils::line_col(self.source, position);
-
-                SymbolEntry {
-                    name: symbol.name.clone(),
-                    kind: symbol.kind,
-                    location: format!("{line}:{column}"),
-                    members: symbol
-                        .inner_scope
-                        .map(|scope| self.entries(scope))
-                        .unwrap_or_default(),
-                }
-            })
-            .collect();
-
-        let owned: HashSet<ScopeId> = table
-            .symbols_in(scope)
-            .filter_map(|s| s.inner_scope)
-            .collect();
-        for child in table.child_scopes(scope) {
-            if !owned.contains(&child) {
-                entries.extend(self.entries(child));
-            }
-        }
-
-        entries
+    fn location(&self, position: u32) -> String {
+        let (line, column) = utils::line_col(self.source, position);
+        format!("{line}:{column}")
     }
 
-    fn scopes(&self) -> Vec<ScopeEntry> {
+    fn scope_entry(&self, scope: ScopeId) -> ScopeEntry {
         let table = &self.resolution.symbols;
 
-        let mut scopes: Vec<(u32, ScopeEntry)> = table
-            .scopes()
-            .filter_map(|scope| {
-                let start = table.scope(scope).start()?;
-                let position = self.tokens.position(start);
-                let (line, column) = utils::line_col(self.source, position);
-                Some((
-                    position,
-                    ScopeEntry {
-                        location: format!("{line}:{column}"),
-                    },
-                ))
+        let location = table
+            .scope(scope)
+            .start()
+            .map(|start| self.location(self.tokens.position(start)));
+
+        let symbols = table
+            .symbols_in(scope)
+            .map(|symbol| SymbolEntry {
+                name: symbol.name.clone(),
+                kind: symbol.kind,
+                location: self.location(self.tokens.position(symbol.name_token)),
             })
             .collect();
-        scopes.sort_by_key(|(position, _)| *position);
 
-        scopes.into_iter().map(|(_, entry)| entry).collect()
+        let mut children: Vec<(u32, ScopeEntry)> = table
+            .child_scopes(scope)
+            .map(|child| {
+                let position = table
+                    .scope(child)
+                    .start()
+                    .map(|start| self.tokens.position(start))
+                    .unwrap_or(0);
+                (position, self.scope_entry(child))
+            })
+            .collect();
+        children.sort_by_key(|(position, _)| *position);
+
+        ScopeEntry {
+            location,
+            symbols,
+            scopes: children.into_iter().map(|(_, entry)| entry).collect(),
+        }
     }
 }
 
@@ -83,15 +66,14 @@ impl serde::Serialize for ResolutionView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         #[derive(serde::Serialize)]
         struct View {
-            symbols: Vec<SymbolEntry>,
-            scopes: Vec<ScopeEntry>,
+            #[serde(flatten)]
+            scope: ScopeEntry,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             diagnostics: Vec<String>,
         }
 
         View {
-            symbols: self.entries(self.resolution.symbols.global_scope()),
-            scopes: self.scopes(),
+            scope: self.scope_entry(self.resolution.symbols.global_scope()),
             diagnostics: self
                 .resolution
                 .diagnostics
@@ -104,15 +86,18 @@ impl serde::Serialize for ResolutionView<'_> {
 }
 
 #[derive(serde::Serialize)]
-struct SymbolEntry {
-    name: String,
-    kind: SymbolKind,
-    location: String,
+struct ScopeEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    members: Vec<SymbolEntry>,
+    symbols: Vec<SymbolEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<ScopeEntry>,
 }
 
 #[derive(serde::Serialize)]
-struct ScopeEntry {
+struct SymbolEntry {
+    name: String,
+    kind: SymbolKind,
     location: String,
 }

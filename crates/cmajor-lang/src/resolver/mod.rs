@@ -1,8 +1,12 @@
+mod scope;
 mod symbol;
 #[cfg(test)]
 mod view;
 
-pub use symbol::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
+pub use {
+    scope::{Scope, ScopeId},
+    symbol::{Symbol, SymbolId, SymbolKind, SymbolTable},
+};
 
 use crate::{
     Diagnostic,
@@ -12,7 +16,7 @@ use crate::{
     },
     lexer::{TokenId, TokenStream},
     parser::Parse,
-    utils,
+    utils::{self, Column, Line, arena::SparseSecondaryArena},
 };
 
 pub struct Resolution {
@@ -21,21 +25,10 @@ pub struct Resolution {
 }
 
 pub fn resolve(source: &str, parse: &Parse) -> Resolution {
-    let symbols = SymbolTable::new();
-    let global_scope = symbols.global_scope();
-
-    let mut resolver = Resolver {
-        ast: &parse.ast,
-        tokens: &parse.tokens,
-        source,
-        symbols,
-        diagnostics: Vec::new(),
-        current_scope: global_scope,
-        pending_owner: None,
-    };
+    let mut resolver = Resolver::new(source, &parse.tokens, &parse.ast);
 
     for &root in parse.ast.roots() {
-        resolver.current_scope = global_scope;
+        resolver.current_scope = resolver.symbols.global_scope();
         resolver.visit(&parse.ast, root);
     }
 
@@ -53,9 +46,26 @@ struct Resolver<'a> {
     diagnostics: Vec<Diagnostic>,
     current_scope: ScopeId,
     pending_owner: Option<SymbolId>,
+    namespace_scopes: SparseSecondaryArena<SymbolId, ScopeId>,
 }
 
 impl<'a> Resolver<'a> {
+    pub fn new(source: &'a str, tokens: &'a TokenStream, ast: &'a Ast) -> Self {
+        let symbols = SymbolTable::new();
+        let global_scope = symbols.global_scope();
+
+        Resolver {
+            ast,
+            tokens,
+            source,
+            symbols,
+            diagnostics: Vec::new(),
+            current_scope: global_scope,
+            pending_owner: None,
+            namespace_scopes: SparseSecondaryArena::default(),
+        }
+    }
+
     fn scope(&self) -> ScopeId {
         self.current_scope
     }
@@ -99,7 +109,7 @@ impl<'a> Resolver<'a> {
         self.symbols.declare(scope, name, kind, node, name_token)
     }
 
-    fn location(&self, token: TokenId) -> (utils::Line, utils::Column) {
+    fn location(&self, token: TokenId) -> (Line, Column) {
         utils::line_col(self.source, self.tokens.position(token))
     }
 
@@ -112,8 +122,9 @@ impl<'a> Resolver<'a> {
         id: NodeId,
         items: &[NodeId],
     ) {
-        let symbol = self.declare(scope, name, kind, id);
-        let inner = self.symbols.child_scope(symbol, scope, keyword);
+        let _symbol = self.declare(scope, name, kind, id);
+        let inner = self.symbols.new_scope(scope, keyword);
+
         let ast = self.ast;
         for &member in items {
             self.current_scope = inner;
@@ -130,11 +141,12 @@ impl<'a> Resolver<'a> {
     ) -> ScopeId {
         let name = self.name(segment);
 
-        if let Some(existing) = self.symbols.lookup_local(scope, &name) {
-            let existing = self.symbols.symbol(existing);
+        if let Some(existing_id) = self.symbols.lookup_local(scope, &name) {
+            let existing = self.symbols.symbol(existing_id);
             if existing.kind == SymbolKind::Namespace {
-                return existing
-                    .inner_scope
+                return *self
+                    .namespace_scopes
+                    .get(existing_id)
                     .expect("namespace symbol always has an inner scope");
             }
             self.error(
@@ -146,7 +158,9 @@ impl<'a> Resolver<'a> {
         let symbol = self
             .symbols
             .declare(scope, name, SymbolKind::Namespace, node, segment);
-        self.symbols.child_scope(symbol, scope, keyword)
+        let inner = self.symbols.new_scope(scope, keyword);
+        self.namespace_scopes.insert(symbol, inner);
+        inner
     }
 
     fn check_ident_defined(&mut self, scope: ScopeId, ident: TokenId) {
@@ -211,8 +225,8 @@ impl<'a> Visitor for Resolver<'a> {
 
     fn visit_enum_decl(&mut self, _ast: &Ast, id: NodeId, enum_decl: &EnumDecl) {
         let scope = self.scope();
-        let symbol = self.declare(scope, enum_decl.name, SymbolKind::Enum, id);
-        let inner = self.symbols.child_scope(symbol, scope, enum_decl.keyword);
+        let _symbol = self.declare(scope, enum_decl.name, SymbolKind::Enum, id);
+        let inner = self.symbols.new_scope(scope, enum_decl.keyword);
         for &value in &enum_decl.values {
             self.declare(inner, value, SymbolKind::EnumValue, id);
         }
@@ -221,6 +235,13 @@ impl<'a> Visitor for Resolver<'a> {
     fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
         let symbol = self.declare(self.scope(), function_decl.name, SymbolKind::Function, id);
         self.pending_owner = Some(symbol);
+
+        self.current_scope = self.symbols.new_scope(self.scope(), function_decl.name);
+
+        for &param in &function_decl.params {
+            self.visit(ast, param);
+        }
+
         self.visit(ast, function_decl.body);
     }
 
@@ -255,7 +276,7 @@ impl<'a> Visitor for Resolver<'a> {
     fn visit_block(&mut self, ast: &Ast, _id: NodeId, block: &Block) {
         let parent = self.scope();
         let inner = match self.pending_owner.take() {
-            Some(symbol) => self.symbols.child_scope(symbol, parent, block.brace),
+            Some(_) => self.current_scope,
             None => self.symbols.new_scope(parent, block.brace),
         };
         self.current_scope = inner;
@@ -302,16 +323,17 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: out
                 kind: Endpoint
                 location: "3:23"
               - name: main
                 kind: Function
                 location: "4:10"
-        scopes:
-          - location: "1:1"
-          - location: "4:17"
+            scopes:
+              - location: "4:10"
         "#
         );
     }
@@ -331,21 +353,22 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: helper
                 kind: Function
                 location: "3:9"
               - name: main
                 kind: Function
                 location: "4:10"
-                members:
+            scopes:
+              - location: "3:9"
+              - location: "4:10"
+                symbols:
                   - name: x
                     kind: Variable
                     location: "4:23"
-        scopes:
-          - location: "1:1"
-          - location: "3:18"
-          - location: "4:17"
         "#
         );
     }
@@ -369,20 +392,20 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
-              - name: out
-                kind: Endpoint
-                location: "3:23"
           - name: P
             kind: Processor
             location: "6:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: out
+                kind: Endpoint
+                location: "3:23"
+          - location: "6:1"
+            symbols:
               - name: out
                 kind: Endpoint
                 location: "8:23"
-        scopes:
-          - location: "1:1"
-          - location: "6:1"
         diagnostics:
           - "6:11: redefinition of 'P' (previously declared at 1:11)"
         "#
@@ -405,7 +428,9 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: f
                 kind: Function
                 location: "3:10"
@@ -415,10 +440,17 @@ mod tests {
               - name: out
                 kind: Endpoint
                 location: "5:23"
-        scopes:
-          - location: "1:1"
-          - location: "3:19"
-          - location: "4:21"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:16"
+              - location: "4:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "4:18"
         "#
         );
     }
@@ -442,25 +474,26 @@ mod tests {
           - name: n
             kind: Namespace
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: A
                 kind: Processor
                 location: "3:15"
-                members:
-                  - name: out
-                    kind: Endpoint
-                    location: "3:37"
               - name: B
                 kind: Processor
                 location: "8:15"
-                members:
+            scopes:
+              - location: "3:5"
+                symbols:
+                  - name: out
+                    kind: Endpoint
+                    location: "3:37"
+              - location: "8:5"
+                symbols:
                   - name: out
                     kind: Endpoint
                     location: "8:37"
-        scopes:
-          - location: "1:1"
-          - location: "3:5"
-          - location: "8:5"
         "#
         );
     }
@@ -482,7 +515,9 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: x
                 kind: Variable
                 location: "3:9"
@@ -495,9 +530,8 @@ mod tests {
               - name: main
                 kind: Function
                 location: "6:10"
-        scopes:
-          - location: "1:1"
-          - location: "6:17"
+            scopes:
+              - location: "6:10"
         diagnostics:
           - "4:9: redefinition of 'x' (previously declared at 3:9)"
         "#
@@ -525,14 +559,17 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
-              - name: out
-                kind: Endpoint
-                location: "3:23"
           - name: G
             kind: Graph
             location: "6:7"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: out
+                kind: Endpoint
+                location: "3:23"
+          - location: "6:1"
+            symbols:
               - name: a
                 kind: Node
                 location: "8:10"
@@ -542,9 +579,6 @@ mod tests {
               - name: out
                 kind: Endpoint
                 location: "10:23"
-        scopes:
-          - location: "1:1"
-          - location: "6:1"
         diagnostics:
           - "9:10: redefinition of 'a' (previously declared at 8:10)"
         "#
@@ -568,19 +602,73 @@ mod tests {
           - name: P
             kind: Processor
             location: "1:11"
-            members:
+        scopes:
+          - location: "1:1"
+            symbols:
               - name: main
                 kind: Function
                 location: "3:10"
-                members:
+            scopes:
+              - location: "3:10"
+                symbols:
                   - name: x
                     kind: Variable
                     location: "5:13"
-        scopes:
-          - location: "1:1"
-          - location: "4:5"
         diagnostics:
           - "5:17: undeclared identifier 'qty'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_namespace() {
+        assert_resolution!(
+            indoc!{"
+                namespace Utils
+                {
+                    int square (int x)
+                    {
+                        return x * x;
+                    }
+                }
+                processor P
+                {
+                    void main()
+                    {
+                        int x = Utils::square (4);
+                    }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: Utils
+            kind: Namespace
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "8:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: square
+                kind: Function
+                location: "3:9"
+            scopes:
+              - location: "3:9"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:21"
+          - location: "8:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "10:10"
+            scopes:
+              - location: "10:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "12:13"
         "#);
     }
 }

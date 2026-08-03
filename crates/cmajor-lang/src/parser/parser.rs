@@ -778,7 +778,7 @@ impl<'a> Parser<'a> {
 
         if matches!(self.peek(), token!(< | '(')) {
             let generics = self.parse_optional_generics();
-            return self.parse_function_decl(Some(ty), name, generics);
+            return self.parse_function_decl(ty, name, generics);
         }
 
         let mut declarators = vec![Declarator {
@@ -837,12 +837,7 @@ impl<'a> Parser<'a> {
         list!(self, (, self.parse_param(), ))
     }
 
-    fn parse_function_decl(
-        &mut self,
-        ty: Option<NodeId>,
-        name: TokenId,
-        generics: Vec<TokenId>,
-    ) -> NodeId {
+    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
         let params = self.parse_params();
         let is_const = self.advance_if(token!(const)).is_some();
         let attributes = self
@@ -851,7 +846,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_block(None);
 
         self.ast.push(Item::FunctionDecl(FunctionDecl {
-            ty,
+            ty: Some(ty),
             name,
             generics,
             params,

@@ -16,6 +16,7 @@ pub struct TestResult {
     pub line: usize,
     pub outcome: Outcome,
     pub expected_error: Option<String>,
+    pub actual_error: Option<String>,
 }
 
 pub fn run(file: &TestFile) -> Vec<TestResult> {
@@ -36,6 +37,8 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                 Directive::ExpectError { .. } => section.directive.expected_error_message(),
                 _ => None,
             };
+
+            let mut actual_error = None;
 
             let outcome = if section.disabled {
                 Outcome::Skipped("disabled".to_string())
@@ -66,10 +69,19 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                         let source = format!("{global_code}\n{}", section.body);
                         let parse = parser::parse(&source);
                         if parse.ast.has_errors() {
+                            actual_error = Some(describe_parse_errors(&parse, &source));
                             Outcome::Pass
                         } else {
                             let resolution = resolver::resolve(&source, &parse);
                             if !resolution.diagnostics.is_empty() {
+                                actual_error = Some(
+                                    resolution
+                                        .diagnostics
+                                        .iter()
+                                        .map(|d| d.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
+                                );
                                 Outcome::Pass
                             } else {
                                 Outcome::Fail(
@@ -87,6 +99,7 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                 line: section.line,
                 outcome,
                 expected_error,
+                actual_error,
             }
         })
         .collect()
@@ -150,6 +163,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: None,
+                actual_error: None,
             }]
         );
     }
@@ -167,6 +181,7 @@ mod tests {
                     "parse error produced\n  3:9: at \"{\" in \"void f( { }\"".into()
                 ),
                 expected_error: None,
+                actual_error: None,
             }]
         );
     }
@@ -182,6 +197,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: Some("2:9: error: nope".into()),
+                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"".into()),
             }]
         );
     }
@@ -197,6 +213,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Fail("expected an error but none occurred".into()),
                 expected_error: Some("2:9: error: nope".into()),
+                actual_error: None,
             }]
         );
     }
@@ -212,6 +229,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Skipped("disabled".into()),
                 expected_error: None,
+                actual_error: None,
             }]
         );
     }
@@ -229,6 +247,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Skipped("execution of 'testConsole' not yet supported".into()),
                 expected_error: None,
+                actual_error: None,
             }]
         );
     }
