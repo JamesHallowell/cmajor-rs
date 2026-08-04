@@ -1,4 +1,7 @@
-use crate::{ast::node::NodeId, lexer::TokenId};
+use crate::{
+    ast::{child::ChildList, node::NodeId},
+    lexer::TokenId,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -28,10 +31,9 @@ impl Literal {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct BracketTerm {
+pub struct Slice {
     pub start: Option<NodeId>,
     pub end: Option<NodeId>,
-    pub is_range: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +43,7 @@ pub struct Ident {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parentheses {
-    pub paren: TokenId,
-    pub inner: Vec<NodeId>,
+    pub inner: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +91,7 @@ pub struct Call {
 pub struct Bracketed {
     pub bracket: TokenId,
     pub base: NodeId,
-    pub terms: Vec<BracketTerm>,
+    pub terms: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,6 +137,7 @@ pub enum Expr {
     Ternary(Ternary),
     Call(Call),
     Bracketed(Bracketed),
+    Slice(Slice),
     Field(Field),
     ScopeAccess(ScopeAccess),
     TypeModifier(TypeModifier),

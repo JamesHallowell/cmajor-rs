@@ -1,4 +1,5 @@
 mod attribute;
+mod child;
 mod decl;
 mod dump;
 mod expr;
@@ -11,12 +12,12 @@ pub mod visit;
 
 pub use {
     attribute::{Attribute, AttributeList},
+    child::{Checkpoint, ChildId, ChildList, ChildPool},
     decl::{Alias, AliasKind, Decl, Declarator, Var, VarRole},
     dump::dump,
     expr::{
-        Assign, Binary, BracketTerm, Bracketed, Call, Expr, Field, Ident, Literal, Parentheses,
-        PostfixUnary, ProcessorProperty, ScopeAccess, Ternary, TypeModifier, Unary,
-        VectorSizeSuffix,
+        Assign, Binary, Bracketed, Call, Expr, Field, Ident, Literal, Parentheses, PostfixUnary,
+        ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
     },
     graph::{
         Connection, ConnectionDecl, ConnectionIf, EndpointDecl, Graph, HoistTarget, HoistedPath,

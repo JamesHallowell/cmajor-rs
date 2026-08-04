@@ -1,6 +1,9 @@
 use {
     crate::static_assert_eq,
-    std::{collections::HashMap, marker::PhantomData, mem::size_of, num::NonZero},
+    std::{
+        collections::HashMap, marker::PhantomData, mem::size_of, num::NonZero,
+        range::RangeInclusive,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -106,6 +109,17 @@ where
         self.items
             .last()
             .map(|item| (K::from(KeyData::from_index(self.items.len() - 1)), item))
+    }
+}
+
+impl<K, V> Arena<K, V>
+where
+    KeyData: From<K>,
+{
+    pub fn slice(&self, range: RangeInclusive<K>) -> &[V] {
+        let start = KeyData::from(range.start).to_index();
+        let end = KeyData::from(range.last).to_index();
+        &self.items[start..=end]
     }
 }
 

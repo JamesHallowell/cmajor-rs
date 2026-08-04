@@ -4,7 +4,8 @@ use crate::{
         decl::{Alias, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
-            ProcessorProperty, ScopeAccess, Ternary, TypeModifier, Unary, VectorSizeSuffix,
+            ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary,
+            VectorSizeSuffix,
         },
         graph::{Connection, ConnectionDecl, ConnectionIf, EndpointDecl, NodeDecl},
         item::{
@@ -214,6 +215,11 @@ pub trait Visitor {
         bracketed.walk(ast, self);
     }
 
+    fn visit_slice(&mut self, ast: &Ast, id: NodeId, slice: &Slice) {
+        let _ = id;
+        slice.walk(ast, self);
+    }
+
     fn visit_field(&mut self, ast: &Ast, id: NodeId, field: &Field) {
         let _ = id;
         field.walk(ast, self);
@@ -374,6 +380,7 @@ where
         Expr::Ternary(ternary) => visitor.visit_ternary(ast, id, ternary),
         Expr::Call(call) => visitor.visit_call(ast, id, call),
         Expr::Bracketed(bracketed) => visitor.visit_bracketed(ast, id, bracketed),
+        Expr::Slice(slice) => visitor.visit_slice(ast, id, slice),
         Expr::Field(field) => visitor.visit_field(ast, id, field),
         Expr::ScopeAccess(scope_access) => visitor.visit_scope_access(ast, id, scope_access),
         Expr::TypeModifier(type_modifier) => visitor.visit_type_modifier(ast, id, type_modifier),
@@ -705,8 +712,10 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for &expr in &self.inner {
-            visitor.visit(ast, expr);
+        if let Some(children) = self.inner {
+            for &child in ast.children(children) {
+                visitor.visit(ast, child);
+            }
         }
     }
 }
@@ -778,13 +787,24 @@ where
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
         visitor.visit(ast, self.base);
-        for term in &self.terms {
-            if let Some(start) = term.start {
-                visitor.visit(ast, start);
+        if let Some(terms) = self.terms {
+            for &term in ast.children(terms) {
+                visitor.visit(ast, term);
             }
-            if let Some(end) = term.end {
-                visitor.visit(ast, end);
-            }
+        }
+    }
+}
+
+impl<V> Walk<V> for Slice
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(start) = self.start {
+            visitor.visit(ast, start);
+        }
+        if let Some(end) = self.end {
+            visitor.visit(ast, end);
         }
     }
 }

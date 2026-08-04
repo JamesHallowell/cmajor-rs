@@ -3,6 +3,7 @@ use {
         arena_key,
         ast::{
             attribute::AttributeList,
+            child::{ChildList, ChildPool},
             decl::Decl,
             expr::Expr,
             graph::Graph,
@@ -70,6 +71,7 @@ pub struct Ast {
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Range<TokenId>>,
+    child_pool: ChildPool,
 }
 
 impl Ast {
@@ -77,11 +79,13 @@ impl Ast {
         nodes: Arena<NodeId, Node>,
         roots: Vec<NodeId>,
         spans: SecondaryArena<NodeId, Range<TokenId>>,
+        child_pool: ChildPool,
     ) -> Self {
         let ast = Self {
             nodes,
             roots,
             spans,
+            child_pool,
         };
 
         #[cfg(test)]
@@ -92,6 +96,10 @@ impl Ast {
 
     pub fn roots(&self) -> &[NodeId] {
         &self.roots
+    }
+
+    pub fn children(&self, children: ChildList) -> &[NodeId] {
+        self.child_pool.get(children)
     }
 
     pub fn push(&mut self, node: impl Into<Node>) -> NodeId {

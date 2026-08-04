@@ -2,14 +2,14 @@ use {
     crate::{
         Diagnostic,
         ast::{
-            self, Alias, Assign, Ast, Attribute, AttributeList, Binary, Block, BracketTerm,
-            Bracketed, BreakStmt, Call, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
+            self, Alias, Assign, Ast, Attribute, AttributeList, Binary, Block, Bracketed,
+            BreakStmt, Call, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
             Decl, DeclStmt, Declarator, EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt,
             ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget, HoistedPath, Ident,
             IfStmt, Import, InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node,
             NodeDecl, NodeId, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty,
-            ReturnStmt, ScopeAccess, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole,
-            VectorSizeSuffix, WhileStmt,
+            ReturnStmt, ScopeAccess, Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var,
+            VarRole, VectorSizeSuffix, WhileStmt,
         },
         lexer::{
             Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
@@ -36,7 +36,7 @@ pub fn parse(source: &str) -> Parse {
     let mut parser = Parser::new(&tokens, source);
     parser.parse();
     Parse {
-        ast: Ast::new(parser.nodes, parser.roots, parser.spans),
+        ast: Ast::new(parser.nodes, parser.roots, parser.spans, parser.child_pool),
         diagnostics: parser.diagnostics,
         tokens,
     }
@@ -220,6 +220,7 @@ struct Parser<'a> {
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Range<TokenId>>,
+    child_pool: ChildPool,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -287,6 +288,9 @@ macro_rules! list {
     ($parser:ident, (, $body:expr, )) => {
         list!(@impl $parser, token!('('), token!(,), token!(')'), $body)
     };
+    ($parser:ident, (), $body:expr) => {
+        list!(@impl2 $parser, token!('('), token!(')'), $body)
+    };
     ($parser:ident, [, $body:expr, ]) => {
         list!(@impl $parser, token!('['), token!(,), token!(']'), $body)
     };
@@ -334,6 +338,18 @@ macro_rules! list {
             items
         }
     };
+    (@impl2 $parser:ident, $start:expr, $stop:pat, $body:expr) => {
+        {
+            $parser.expect($start);
+            until!($parser, $stop, {
+                $body;
+                if $parser.advance_if(token!(,)).is_none() {
+                    break;
+                }
+            });
+            expect_matches!($parser, $stop);
+        }
+    };
 }
 
 impl<'a> Parser<'a> {
@@ -345,6 +361,7 @@ impl<'a> Parser<'a> {
             nodes: Arena::default(),
             roots: vec![],
             spans: SecondaryArena::default(),
+            child_pool: ChildPool::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -477,8 +494,13 @@ impl<'a> Parser<'a> {
             }
             token!('(') => {
                 let (paren, _) = self.peek_verbose();
-                let inner = list!(self, (, self.parse_expr(), ));
-                self.add_node(paren, Expr::Parentheses(Parentheses { paren, inner }))
+                let checkpoint = self.child_pool.checkpoint();
+                list!(self, (), {
+                    let expr = self.parse_expr();
+                    self.child_pool.stage(expr);
+                });
+                let children = self.child_pool.commit(checkpoint);
+                self.add_node(paren, Expr::Parentheses(Parentheses { inner: children }))
             }
             token if token.is_type_like() => {
                 let token = self.advance();
@@ -590,7 +612,13 @@ impl<'a> Parser<'a> {
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
         let (bracket, _) = self.peek_verbose();
-        let terms = list!(self, [, self.parse_bracket_term(), ]);
+
+        let checkpoint = self.child_pool.checkpoint();
+        list!(self, [, {
+            let term = self.parse_bracket_term();
+            self.child_pool.stage(term);
+        }, ]);
+        let terms = self.child_pool.commit(checkpoint);
 
         let start = self.spans[base].start;
         self.add_node(
@@ -603,23 +631,26 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn parse_bracket_term(&mut self) -> BracketTerm {
-        let start = (!self.at(token!(:))).then(|| self.parse_expr());
-
-        if self.advance_if(token!(:)).is_some() {
+    fn parse_bracket_term(&mut self) -> NodeId {
+        if let Some(colon) = self.advance_if(token!(:)) {
             let end = self.not_at(token!(']')).then(|| self.parse_expr());
-            BracketTerm {
-                start,
-                end,
-                is_range: true,
-            }
-        } else {
-            BracketTerm {
-                start,
-                end: None,
-                is_range: false,
-            }
+            return self.add_node(colon, Expr::Slice(Slice { start: None, end }));
         }
+
+        let start = self.parse_expr();
+        if self.advance_if(token!(:)).is_none() {
+            return start;
+        }
+
+        let end = self.not_at(token!(']')).then(|| self.parse_expr());
+        let start_tok = self.spans[start].start;
+        self.add_node(
+            start_tok,
+            Expr::Slice(Slice {
+                start: Some(start),
+                end,
+            }),
+        )
     }
 
     fn parse_field(&mut self, base: NodeId) -> NodeId {
@@ -1863,7 +1894,7 @@ mod tests {
         let root = parse_fn(&mut parser);
         assert_eq!(parser.diagnostics, vec![]);
 
-        let ast = Ast::new(parser.nodes, vec![root], parser.spans);
+        let ast = Ast::new(parser.nodes, vec![root], parser.spans, parser.child_pool);
         ast::dump(&ast, &tokens, source, root)
     }
 
@@ -2830,7 +2861,7 @@ mod tests {
         insta::assert_snapshot!(parse_expr("arr[1:3]"), @"
         Bracketed 0..8
           arr 0..3
-          Slice
+          Slice 4..7
             1 4..5
             3 6..7
         ");

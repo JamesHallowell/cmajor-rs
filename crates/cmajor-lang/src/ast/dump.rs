@@ -1,12 +1,13 @@
 use {
     crate::{
         ast::{
-            AliasKind, Ast, AttributeList, BracketTerm, Decl, Expr, Graph, HoistTarget,
-            InterpolationKind, Item, NodeId, Stmt, VarRole,
+            AliasKind, Ast, AttributeList, Decl, Expr, Graph, HoistTarget, InterpolationKind,
+            Item, NodeId, Stmt, VarRole,
             decl::{Alias, Var},
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
-                ProcessorProperty, ScopeAccess, Ternary, TypeModifier, Unary, VectorSizeSuffix,
+                ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary,
+                VectorSizeSuffix,
             },
             graph::{Connection, ConnectionDecl, ConnectionIf, EndpointDecl, NodeDecl},
             item::{
@@ -85,18 +86,6 @@ impl<'a> Dumper<'a> {
         node
     }
 
-    fn bracket_term(&mut self, term: &BracketTerm) -> DumpNode {
-        if term.is_range {
-            let mut children = Vec::new();
-            children.extend(term.start.map(|id| self.child(id)));
-            children.extend(term.end.map(|id| self.child(id)));
-            node("Slice".to_string(), children)
-        } else if let Some(start) = term.start {
-            self.child(start)
-        } else {
-            leaf("_".to_string())
-        }
-    }
 }
 
 fn role_label(role: &VarRole) -> &'static str {
@@ -477,7 +466,12 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             Expr::Literal(literal) => leaf(self.text(literal.token()).to_string()),
             &Expr::Ident(Ident { token }) => leaf(self.text(&token).to_string()),
             Expr::Parentheses(Parentheses { inner, .. }) => {
-                let children = inner.iter().map(|&id| self.child(id)).collect();
+                let children = inner
+                    .map(|inner| self.ast.children(inner))
+                    .into_iter()
+                    .flatten()
+                    .map(|&id| self.child(id))
+                    .collect();
                 node("Parentheses".to_string(), children)
             }
             Expr::Unary(Unary { op, operand }) => {
@@ -520,8 +514,20 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Expr::Bracketed(Bracketed { base, terms, .. }) => {
                 let mut children = vec![self.child(*base)];
-                children.extend(terms.iter().map(|term| self.bracket_term(term)));
+                children.extend(
+                    terms
+                        .map(|terms| self.ast.children(terms))
+                        .into_iter()
+                        .flatten()
+                        .map(|&id| self.child(id)),
+                );
                 node("Bracketed".to_string(), children)
+            }
+            Expr::Slice(Slice { start, end }) => {
+                let mut children = Vec::new();
+                children.extend(start.map(|id| self.child(id)));
+                children.extend(end.map(|id| self.child(id)));
+                node("Slice".to_string(), children)
             }
             Expr::Field(Field { name, base }) => {
                 let label = format!("Field {:?}", self.text(name));

@@ -12,11 +12,15 @@ macro_rules! static_assert {
 
 #[macro_export]
 macro_rules! static_assert_eq {
-    ($left:expr, $right:expr) => {
-        const _: () = assert!($left == $right);
+    ($left:expr, $right:expr $(,)?) => {
+        const _: [(); $left] = [(); $right];
     };
-    ($left:expr, $right:expr, $msg:expr) => {
-        const _: () = assert!($left == $right, $msg);
+}
+
+#[macro_export]
+macro_rules! static_assert_size {
+    ($left:ty, $right:expr $(,)?) => {
+        const _: [(); std::mem::size_of::<$left>()] = [(); $right];
     };
 }
 
