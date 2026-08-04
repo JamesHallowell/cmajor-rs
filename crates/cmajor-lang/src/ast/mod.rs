@@ -29,7 +29,7 @@ pub use {
     },
     node::{Ast, Node, NodeId},
     stmt::{
-        Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt, IfStmt,
-        LoopStmt, ReturnStmt, Stmt, WhileStmt,
+        Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt,
+        IfConstStmt, IfStmt, LoopStmt, ReturnStmt, Stmt, WhileStmt,
     },
 };

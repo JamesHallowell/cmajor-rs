@@ -6,10 +6,10 @@ use {
             BreakStmt, Call, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
             Decl, DeclStmt, Declarator, EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt,
             ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget, HoistedPath, Ident,
-            IfStmt, Import, InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node,
-            NodeDecl, NodeId, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty,
-            ReturnStmt, ScopeAccess, Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var,
-            VarRole, VectorSizeSuffix, WhileStmt,
+            IfConstStmt, IfStmt, Import, InterpolationKind, Item, LoopStmt, ModuleAlias,
+            NamespaceDecl, Node, NodeDecl, NodeId, Parentheses, PostfixUnary, ProcessorDecl,
+            ProcessorProperty, ReturnStmt, ScopeAccess, Slice, Stmt, StructDecl, Ternary,
+            TypeModifier, Unary, Var, VarRole, VectorSizeSuffix, WhileStmt,
         },
         lexer::{
             Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
@@ -781,17 +781,14 @@ impl<'a> Parser<'a> {
         let keyword = self.expect(token!(break));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.add_node(keyword, Stmt::BreakStmt(BreakStmt { keyword, target }))
+        self.add_node(keyword, Stmt::BreakStmt(BreakStmt { target }))
     }
 
     fn parse_continue(&mut self) -> NodeId {
         let keyword = self.expect(token!(continue));
         let target = self.advance_if(TokenKind::Identifier);
         self.expect(token!(;));
-        self.add_node(
-            keyword,
-            Stmt::ContinueStmt(ContinueStmt { keyword, target }),
-        )
+        self.add_node(keyword, Stmt::ContinueStmt(ContinueStmt { target }))
     }
 
     fn parse_forward_branch(&mut self) -> NodeId {
@@ -804,11 +801,7 @@ impl<'a> Parser<'a> {
         self.expect(token!(;));
         self.add_node(
             keyword,
-            Stmt::ForwardBranchStmt(ForwardBranchStmt {
-                keyword,
-                cond,
-                targets,
-            }),
+            Stmt::ForwardBranchStmt(ForwardBranchStmt { cond, targets }),
         )
     }
 
@@ -1389,7 +1382,6 @@ impl<'a> Parser<'a> {
             return self.add_node(
                 label.unwrap_or(keyword),
                 Stmt::LoopStmt(LoopStmt {
-                    keyword,
                     label,
                     count: init,
                     body,
@@ -1407,7 +1399,6 @@ impl<'a> Parser<'a> {
         self.add_node(
             label.unwrap_or(keyword),
             Stmt::ForStmt(ForStmt {
-                keyword,
                 label,
                 init,
                 cond,
@@ -1657,14 +1648,7 @@ impl<'a> Parser<'a> {
         });
         self.expect(token!('}'));
 
-        self.add_node(
-            label.unwrap_or(brace),
-            Stmt::Block(Block {
-                brace,
-                label,
-                stmts,
-            }),
-        )
+        self.add_node(label.unwrap_or(brace), Stmt::Block(Block { label, stmts }))
     }
 
     fn parse_let(&mut self) -> NodeId {
@@ -1718,7 +1702,7 @@ impl<'a> Parser<'a> {
 
     fn parse_if(&mut self) -> NodeId {
         let keyword = self.expect(token!(if));
-        let is_const = self.advance_if(token!(const));
+        let is_const = self.advance_if(token!(const)).is_some();
         self.expect(token!('('));
         let cond = self.parse_expr();
         self.expect(token!(')'));
@@ -1730,13 +1714,19 @@ impl<'a> Parser<'a> {
 
         self.add_node(
             keyword,
-            Stmt::IfStmt(IfStmt {
-                keyword,
-                is_const: is_const.is_some(),
-                cond,
-                then_branch,
-                else_branch,
-            }),
+            if is_const {
+                Stmt::IfConstStmt(IfConstStmt {
+                    cond,
+                    then_branch,
+                    else_branch,
+                })
+            } else {
+                Stmt::IfStmt(IfStmt {
+                    cond,
+                    then_branch,
+                    else_branch,
+                })
+            },
         )
     }
 
@@ -1749,12 +1739,7 @@ impl<'a> Parser<'a> {
 
         self.add_node(
             label.unwrap_or(keyword),
-            Stmt::WhileStmt(WhileStmt {
-                keyword,
-                label,
-                cond,
-                body,
-            }),
+            Stmt::WhileStmt(WhileStmt { label, cond, body }),
         )
     }
 
@@ -1769,12 +1754,7 @@ impl<'a> Parser<'a> {
 
         self.add_node(
             label.unwrap_or(keyword),
-            Stmt::LoopStmt(LoopStmt {
-                keyword,
-                label,
-                count,
-                body,
-            }),
+            Stmt::LoopStmt(LoopStmt { label, count, body }),
         )
     }
 
@@ -1783,7 +1763,7 @@ impl<'a> Parser<'a> {
         let value = self.not_at(token!(;)).then(|| self.parse_expr());
         self.expect(token!(;));
 
-        self.add_node(keyword, Stmt::ReturnStmt(ReturnStmt { keyword, value }))
+        self.add_node(keyword, Stmt::ReturnStmt(ReturnStmt { value }))
     }
 
     fn parse_expr_stmt(&mut self) -> NodeId {
@@ -2284,7 +2264,7 @@ mod tests {
     #[test]
     fn if_const_statement() {
         insta::assert_snapshot!(parse_stmt("if const (a) { b; }"), @"
-        IfStmt const 0..19
+        IfConstStmt 0..19
           a 10..11
           Block 13..19
             ExprStmt 15..17
@@ -3008,12 +2988,10 @@ mod tests {
         insta::assert_snapshot!(
             dump("input { event int e; value float v; }", |parser| {
                 let items = parser.parse_endpoint_group();
-                let brace = parser.peek_verbose().0;
                 let start = parser.spans[*items.first().expect("test has at least one item")].start;
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        brace,
                         label: None,
                         stmts: items,
                     }),
@@ -3099,12 +3077,10 @@ mod tests {
         insta::assert_snapshot!(
             dump("output stream { float32 a; int b; }", |parser| {
                 let items = parser.parse_container_items();
-                let brace = parser.peek_verbose().0;
                 let start = parser.spans[*items.first().expect("test has at least one item")].start;
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        brace,
                         label: None,
                         stmts: items,
                     }),
@@ -3125,12 +3101,10 @@ mod tests {
         insta::assert_snapshot!(
             dump("node b = B, c = C;", |parser| {
                 let items = parser.parse_node_group();
-                let brace = parser.peek_verbose().0;
                 let start = parser.spans[*items.first().expect("test has at least one item")].start;
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        brace,
                         label: None,
                         stmts: items,
                     }),

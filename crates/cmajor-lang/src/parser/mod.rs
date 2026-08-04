@@ -2,4 +2,4 @@
 mod parser;
 mod precedence;
 
-pub use parser::{parse, Parse};
+pub use parser::{Parse, parse};

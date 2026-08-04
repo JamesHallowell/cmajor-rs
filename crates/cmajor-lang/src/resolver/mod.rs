@@ -291,12 +291,14 @@ impl<'a> Visitor for Resolver<'a> {
         self.declare(self.scope(), node_decl.name, SymbolKind::Node, id);
     }
 
-    fn visit_block(&mut self, ast: &Ast, _id: NodeId, block: &Block) {
-        self.with_new_scope_at(block.brace, |this, _| block.walk(ast, this));
+    fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
+        let scope_start = self.ast.span(id).start;
+        self.with_new_scope_at(scope_start, |this, _| block.walk(ast, this));
     }
 
-    fn visit_for_stmt(&mut self, ast: &Ast, _id: NodeId, for_stmt: &ForStmt) {
-        self.with_new_scope_at(for_stmt.keyword, |this, _| {
+    fn visit_for_stmt(&mut self, ast: &Ast, id: NodeId, for_stmt: &ForStmt) {
+        let scope_start = self.ast.span(id).start;
+        self.with_new_scope_at(scope_start, |this, _| {
             if let Some(init) = for_stmt.init {
                 this.visit(ast, init);
             }
@@ -316,16 +318,19 @@ impl<'a> Visitor for Resolver<'a> {
         });
     }
 
-    fn visit_if_stmt(&mut self, ast: &Ast, _id: NodeId, if_stmt: &IfStmt) {
-        self.with_new_scope_at(if_stmt.keyword, |this, _| if_stmt.walk(ast, this));
+    fn visit_if_stmt(&mut self, ast: &Ast, id: NodeId, if_stmt: &IfStmt) {
+        let scope_start = self.ast.span(id).start;
+        self.with_new_scope_at(scope_start, |this, _| if_stmt.walk(ast, this));
     }
 
-    fn visit_while_stmt(&mut self, ast: &Ast, _id: NodeId, while_stmt: &WhileStmt) {
-        self.with_new_scope_at(while_stmt.keyword, |this, _| while_stmt.walk(ast, this));
+    fn visit_while_stmt(&mut self, ast: &Ast, id: NodeId, while_stmt: &WhileStmt) {
+        let scope_start = ast.span(id).start;
+        self.with_new_scope_at(scope_start, |this, _| while_stmt.walk(ast, this));
     }
 
-    fn visit_loop_stmt(&mut self, ast: &Ast, _id: NodeId, loop_stmt: &LoopStmt) {
-        self.with_new_scope_at(loop_stmt.keyword, |this, _| loop_stmt.walk(ast, this));
+    fn visit_loop_stmt(&mut self, ast: &Ast, id: NodeId, loop_stmt: &LoopStmt) {
+        let scope_start = ast.span(id).start;
+        self.with_new_scope_at(scope_start, |this, _| loop_stmt.walk(ast, this));
     }
 
     fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, token: TokenId) {

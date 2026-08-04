@@ -4,7 +4,6 @@ arena_key!(StmtId(pub(super) NodeId));
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
-    pub brace: TokenId,
     pub label: Option<TokenId>,
     pub stmts: Vec<NodeId>,
 }
@@ -21,7 +20,6 @@ pub struct DeclStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStmt {
-    pub keyword: TokenId,
     pub label: Option<TokenId>,
     pub init: Option<NodeId>,
     pub cond: Option<NodeId>,
@@ -30,9 +28,14 @@ pub struct ForStmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct IfConstStmt {
+    pub cond: NodeId,
+    pub then_branch: NodeId,
+    pub else_branch: Option<NodeId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IfStmt {
-    pub keyword: TokenId,
-    pub is_const: bool,
     pub cond: NodeId,
     pub then_branch: NodeId,
     pub else_branch: Option<NodeId>,
@@ -40,7 +43,6 @@ pub struct IfStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    pub keyword: TokenId,
     pub label: Option<TokenId>,
     pub cond: NodeId,
     pub body: NodeId,
@@ -48,7 +50,6 @@ pub struct WhileStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopStmt {
-    pub keyword: TokenId,
     pub label: Option<TokenId>,
     pub count: Option<NodeId>,
     pub body: NodeId,
@@ -56,25 +57,21 @@ pub struct LoopStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReturnStmt {
-    pub keyword: TokenId,
     pub value: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BreakStmt {
-    pub keyword: TokenId,
     pub target: Option<TokenId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContinueStmt {
-    pub keyword: TokenId,
     pub target: Option<TokenId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForwardBranchStmt {
-    pub keyword: TokenId,
     pub cond: NodeId,
     pub targets: Vec<TokenId>,
 }
@@ -86,6 +83,7 @@ pub enum Stmt {
     DeclStmt(DeclStmt),
     ForStmt(ForStmt),
     IfStmt(IfStmt),
+    IfConstStmt(IfConstStmt),
     WhileStmt(WhileStmt),
     LoopStmt(LoopStmt),
     ReturnStmt(ReturnStmt),

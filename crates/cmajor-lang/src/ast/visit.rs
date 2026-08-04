@@ -12,8 +12,8 @@ use crate::{
             StructDecl,
         },
         stmt::{
-            Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt, IfStmt,
-            LoopStmt, ReturnStmt, WhileStmt,
+            Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt,
+            IfConstStmt, IfStmt, LoopStmt, ReturnStmt, WhileStmt,
         },
     },
     lexer::TokenId,
@@ -137,6 +137,11 @@ pub trait Visitor {
     fn visit_if_stmt(&mut self, ast: &Ast, id: NodeId, if_stmt: &IfStmt) {
         let _ = id;
         if_stmt.walk(ast, self);
+    }
+
+    fn visit_if_const_stmt(&mut self, ast: &Ast, id: NodeId, if_const_stmt: &IfConstStmt) {
+        let _ = id;
+        if_const_stmt.walk(ast, self);
     }
 
     fn visit_while_stmt(&mut self, ast: &Ast, id: NodeId, while_stmt: &WhileStmt) {
@@ -353,6 +358,7 @@ where
         Stmt::DeclStmt(decl_stmt) => visitor.visit_decl_stmt(ast, id, decl_stmt),
         Stmt::ForStmt(for_stmt) => visitor.visit_for_stmt(ast, id, for_stmt),
         Stmt::IfStmt(if_stmt) => visitor.visit_if_stmt(ast, id, if_stmt),
+        Stmt::IfConstStmt(if_const_stmt) => visitor.visit_if_const_stmt(ast, id, if_const_stmt),
         Stmt::WhileStmt(while_stmt) => visitor.visit_while_stmt(ast, id, while_stmt),
         Stmt::LoopStmt(loop_stmt) => visitor.visit_loop_stmt(ast, id, loop_stmt),
         Stmt::ReturnStmt(return_stmt) => visitor.visit_return_stmt(ast, id, return_stmt),
@@ -652,6 +658,19 @@ where
 }
 
 impl<V> Walk<V> for IfStmt
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.cond);
+        visitor.visit(ast, self.then_branch);
+        if let Some(else_branch) = self.else_branch {
+            visitor.visit(ast, else_branch);
+        }
+    }
+}
+
+impl<V> Walk<V> for IfConstStmt
 where
     V: Visitor + ?Sized,
 {

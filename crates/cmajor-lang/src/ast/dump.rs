@@ -16,7 +16,7 @@ use {
             },
             stmt::{
                 Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt,
-                IfStmt, LoopStmt, ReturnStmt, WhileStmt,
+                IfConstStmt, IfStmt, LoopStmt, ReturnStmt, WhileStmt,
             },
             visit::ExhaustiveVisitor,
         },
@@ -404,17 +404,25 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 children.push(self.child(*body));
                 node(format!("ForStmt{prefix}"), children)
             }
-            Stmt::IfStmt(IfStmt {
-                is_const,
+            Stmt::IfConstStmt(IfConstStmt {
                 cond,
                 then_branch,
                 else_branch,
                 ..
             }) => {
-                let label = if *is_const { "IfStmt const" } else { "IfStmt" };
                 let mut children = vec![self.child(*cond), self.child(*then_branch)];
                 children.extend(else_branch.map(|id| self.child(id)));
-                node(label.to_string(), children)
+                node("IfConstStmt".to_string(), children)
+            }
+            Stmt::IfStmt(IfStmt {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            }) => {
+                let mut children = vec![self.child(*cond), self.child(*then_branch)];
+                children.extend(else_branch.map(|id| self.child(id)));
+                node("IfStmt".to_string(), children)
             }
             Stmt::WhileStmt(WhileStmt {
                 cond, body, label, ..
