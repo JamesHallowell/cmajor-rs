@@ -1,5 +1,25 @@
 pub mod arena;
 
+#[macro_export]
+macro_rules! static_assert {
+    ($condition:expr) => {
+        const _: () = assert!($condition);
+    };
+    ($condition:expr, $msg:expr) => {
+        const _: () = assert!($condition, $msg);
+    };
+}
+
+#[macro_export]
+macro_rules! static_assert_eq {
+    ($left:expr, $right:expr) => {
+        const _: () = assert!($left == $right);
+    };
+    ($left:expr, $right:expr, $msg:expr) => {
+        const _: () = assert!($left == $right, $msg);
+    };
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Line(usize);
 

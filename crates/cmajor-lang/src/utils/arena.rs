@@ -1,4 +1,7 @@
-use std::{collections::HashMap, marker::PhantomData};
+use {
+    crate::static_assert_eq,
+    std::{collections::HashMap, marker::PhantomData, mem::size_of, num::NonZero},
+};
 
 #[derive(Debug, Clone)]
 pub struct Arena<K, V> {
@@ -49,7 +52,20 @@ macro_rules! arena_key {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct KeyData(u32);
+pub struct KeyData(NonZero<u32>);
+
+static_assert_eq!(size_of::<Option<KeyData>>(), size_of::<u32>());
+
+impl KeyData {
+    fn to_index(&self) -> usize {
+        (self.0.get() - 1) as usize
+    }
+
+    fn from_index(index: usize) -> Self {
+        assert_ne!(index, u32::MAX as usize);
+        KeyData(unsafe { NonZero::new_unchecked((index + 1) as u32) })
+    }
+}
 
 impl std::fmt::Debug for KeyData {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -76,20 +92,20 @@ where
     K: From<KeyData>,
 {
     pub fn push(&mut self, item: impl Into<V>) -> K {
-        let key = K::from(KeyData(self.items.len() as u32));
+        let key = K::from(KeyData::from_index(self.items.len()));
         self.items.push(item.into());
         key
     }
 
     pub fn first(&self) -> (K, &V) {
-        let key = K::from(KeyData(0));
+        let key = K::from(KeyData::from_index(0));
         (key, &self.items[0])
     }
 
     pub fn last(&self) -> Option<(K, &V)> {
         self.items
             .last()
-            .map(|item| (K::from(KeyData((self.items.len() - 1) as u32)), item))
+            .map(|item| (K::from(KeyData::from_index(self.items.len() - 1)), item))
     }
 }
 
@@ -109,7 +125,7 @@ where
     type Output = V;
 
     fn index(&self, key: K) -> &Self::Output {
-        &self.items[KeyData::from(key).0 as usize]
+        &self.items[KeyData::from(key).to_index()]
     }
 }
 
@@ -118,7 +134,7 @@ where
     KeyData: From<K>,
 {
     fn index_mut(&mut self, key: K) -> &mut Self::Output {
-        &mut self.items[KeyData::from(key).0 as usize]
+        &mut self.items[KeyData::from(key).to_index()]
     }
 }
 
@@ -139,7 +155,7 @@ where
             None
         } else {
             let index = self.arena.items.len() - self.remaining;
-            let key = K::from(KeyData(index as u32));
+            let key = K::from(KeyData::from_index(index));
             self.remaining -= 1;
             Some((key, &self.arena.items[index]))
         }
@@ -198,7 +214,7 @@ where
     }
 
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let index = KeyData::from(key).0 as usize;
+        let index = KeyData::from(key).to_index();
         if index >= self.items.len() {
             self.items.resize_with(index + 1, || None);
         }
@@ -206,11 +222,11 @@ where
     }
 
     pub fn get(&self, key: K) -> Option<&V> {
-        self.items.get(KeyData::from(key).0 as usize)?.as_ref()
+        self.items.get(KeyData::from(key).to_index())?.as_ref()
     }
 
     pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
-        self.items.get_mut(KeyData::from(key).0 as usize)?.as_mut()
+        self.items.get_mut(KeyData::from(key).to_index())?.as_mut()
     }
 }
 
