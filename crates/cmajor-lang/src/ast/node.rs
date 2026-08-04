@@ -12,7 +12,7 @@ use {
             visit::Visitor,
         },
         lexer::TokenId,
-        utils::arena::{Arena, SecondaryArena},
+        utils::arena::{Arena, SecondaryArena, SparseSecondaryArena},
     },
     std::range::Range,
 };
@@ -71,7 +71,8 @@ pub struct Ast {
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Range<TokenId>>,
-    child_pool: ChildPool,
+    children: ChildPool,
+    labels: SparseSecondaryArena<NodeId, TokenId>,
 }
 
 impl Ast {
@@ -80,12 +81,14 @@ impl Ast {
         roots: Vec<NodeId>,
         spans: SecondaryArena<NodeId, Range<TokenId>>,
         child_pool: ChildPool,
+        labels: SparseSecondaryArena<NodeId, TokenId>,
     ) -> Self {
         let ast = Self {
             nodes,
             roots,
             spans,
-            child_pool,
+            children: child_pool,
+            labels,
         };
 
         #[cfg(test)]
@@ -99,7 +102,11 @@ impl Ast {
     }
 
     pub fn children(&self, children: ChildList) -> &[NodeId] {
-        self.child_pool.get(children)
+        self.children.get(children)
+    }
+
+    pub fn label(&self, node: NodeId) -> Option<TokenId> {
+        self.labels.get(node).copied()
     }
 
     pub fn push(&mut self, node: impl Into<Node>) -> NodeId {

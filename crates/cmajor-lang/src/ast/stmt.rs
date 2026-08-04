@@ -1,11 +1,14 @@
-use crate::{arena_key, ast::node::NodeId, lexer::TokenId};
+use crate::{
+    arena_key,
+    ast::{ChildList, node::NodeId},
+    lexer::TokenId,
+};
 
 arena_key!(StmtId(pub(super) NodeId));
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
-    pub label: Option<TokenId>,
-    pub stmts: Vec<NodeId>,
+    pub stmts: Box<[NodeId]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +23,6 @@ pub struct DeclStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStmt {
-    pub label: Option<TokenId>,
     pub init: Option<NodeId>,
     pub cond: Option<NodeId>,
     pub update: Option<NodeId>,
@@ -43,14 +45,12 @@ pub struct IfStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    pub label: Option<TokenId>,
     pub cond: NodeId,
     pub body: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopStmt {
-    pub label: Option<TokenId>,
     pub count: Option<NodeId>,
     pub body: NodeId,
 }
@@ -73,7 +73,7 @@ pub struct ContinueStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForwardBranchStmt {
     pub cond: NodeId,
-    pub targets: Vec<TokenId>,
+    pub targets: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

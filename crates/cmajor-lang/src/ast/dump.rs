@@ -122,7 +122,7 @@ fn interpolation_label(kind: &InterpolationKind) -> &'static str {
 impl<'a> ExhaustiveVisitor for Dumper<'a> {
     type Output = DumpNode;
 
-    fn visit_item(&mut self, _ast: &Ast, item: &Item) -> DumpNode {
+    fn visit_item(&mut self, _ast: &Ast, _id: NodeId, item: &Item) -> DumpNode {
         match item {
             Item::NamespaceDecl(NamespaceDecl {
                 segments,
@@ -273,7 +273,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         }
     }
 
-    fn visit_decl(&mut self, _ast: &Ast, decl: &Decl) -> DumpNode {
+    fn visit_decl(&mut self, _ast: &Ast, _id: NodeId, decl: &Decl) -> DumpNode {
         match decl {
             Decl::Var(Var {
                 role,
@@ -310,7 +310,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         }
     }
 
-    fn visit_graph(&mut self, _ast: &Ast, member: &Graph) -> DumpNode {
+    fn visit_graph(&mut self, _ast: &Ast, _id: NodeId, member: &Graph) -> DumpNode {
         match member {
             Graph::EndpointDeclaration(EndpointDeclaration {
                 direction,
@@ -421,10 +421,12 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         }
     }
 
-    fn visit_stmt(&mut self, _ast: &Ast, stmt: &Stmt) -> DumpNode {
+    fn visit_stmt(&mut self, _ast: &Ast, id: NodeId, stmt: &Stmt) -> DumpNode {
         match stmt {
-            Stmt::Block(Block { stmts, label, .. }) => {
-                let prefix = label
+            Stmt::Block(Block { stmts }) => {
+                let prefix = self
+                    .ast
+                    .label(id)
                     .map(|l| format!(" {:?}", self.text(&l)))
                     .unwrap_or_default();
                 let children = stmts.iter().map(|&id| self.child(id)).collect();
@@ -440,10 +442,11 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 cond,
                 update,
                 body,
-                label,
                 ..
             }) => {
-                let prefix = label
+                let prefix = self
+                    .ast
+                    .label(id)
                     .map(|l| format!(" {:?}", self.text(&l)))
                     .unwrap_or_default();
                 let mut children: Vec<_> = init.map(|id| self.child(id)).into_iter().collect();
@@ -472,20 +475,20 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 children.extend(else_branch.map(|id| self.child(id)));
                 node("IfStmt".to_string(), children)
             }
-            Stmt::WhileStmt(WhileStmt {
-                cond, body, label, ..
-            }) => {
-                let prefix = label
+            Stmt::WhileStmt(WhileStmt { cond, body, .. }) => {
+                let prefix = self
+                    .ast
+                    .label(id)
                     .map(|l| format!(" {:?}", self.text(&l)))
                     .unwrap_or_default();
                 let cond = self.child(*cond);
                 let body = self.child(*body);
                 node(format!("WhileStmt{prefix}"), vec![cond, body])
             }
-            Stmt::LoopStmt(LoopStmt {
-                count, body, label, ..
-            }) => {
-                let prefix = label
+            Stmt::LoopStmt(LoopStmt { count, body, .. }) => {
+                let prefix = self
+                    .ast
+                    .label(id)
                     .map(|l| format!(" {:?}", self.text(&l)))
                     .unwrap_or_default();
                 let mut children: Vec<_> = count.map(|id| self.child(id)).into_iter().collect();
@@ -510,13 +513,19 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Stmt::ForwardBranchStmt(ForwardBranchStmt { cond, targets, .. }) => {
                 let mut children = vec![self.child(*cond)];
-                children.extend(targets.iter().map(|t| leaf(self.text(t).to_string())));
+                children.extend(
+                    targets
+                        .map(|targets| self.ast.children(targets))
+                        .into_iter()
+                        .flatten()
+                        .map(|&id| self.child(id)),
+                );
                 node("ForwardBranchStmt".to_string(), children)
             }
         }
     }
 
-    fn visit_expr(&mut self, _ast: &Ast, expr: &Expr) -> DumpNode {
+    fn visit_expr(&mut self, _ast: &Ast, _id: NodeId, expr: &Expr) -> DumpNode {
         match expr {
             Expr::Literal(literal) => leaf(self.text(literal.token()).to_string()),
             &Expr::Ident(Ident { token }) => leaf(self.text(&token).to_string()),
@@ -631,7 +640,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         }
     }
 
-    fn visit_attribute_list(&mut self, _ast: &Ast, list: &AttributeList) -> DumpNode {
+    fn visit_attribute_list(&mut self, _ast: &Ast, _id: NodeId, list: &AttributeList) -> DumpNode {
         let children = list
             .attributes
             .iter()
@@ -646,7 +655,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
         node("AttributeList".to_string(), children)
     }
 
-    fn visit_error(&mut self, _ast: &Ast, token: TokenId) -> DumpNode {
+    fn visit_error(&mut self, _ast: &Ast, _id: NodeId, token: TokenId) -> DumpNode {
         leaf(format!("Error at {token:?}"))
     }
 }

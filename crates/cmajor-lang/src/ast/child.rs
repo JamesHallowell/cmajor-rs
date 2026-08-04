@@ -39,7 +39,7 @@ impl ChildPool {
         let (mut first, mut last) = (None, None);
         for node in self.scratch.drain(checkpoint..) {
             let child = self.pool.push(node);
-            if let None = first {
+            if first.is_none() {
                 first = Some(child);
             }
             last = Some(child);

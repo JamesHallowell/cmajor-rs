@@ -285,23 +285,30 @@ pub trait Visitor {
 pub trait ExhaustiveVisitor {
     type Output;
 
-    fn visit_item(&mut self, ast: &Ast, item: &Item) -> Self::Output;
-    fn visit_decl(&mut self, ast: &Ast, decl: &Decl) -> Self::Output;
-    fn visit_graph(&mut self, ast: &Ast, graph: &Graph) -> Self::Output;
-    fn visit_stmt(&mut self, ast: &Ast, stmt: &Stmt) -> Self::Output;
-    fn visit_expr(&mut self, ast: &Ast, expr: &Expr) -> Self::Output;
-    fn visit_attribute_list(&mut self, ast: &Ast, attribute_list: &AttributeList) -> Self::Output;
-    fn visit_error(&mut self, ast: &Ast, token: TokenId) -> Self::Output;
+    fn visit_item(&mut self, ast: &Ast, id: NodeId, item: &Item) -> Self::Output;
+    fn visit_decl(&mut self, ast: &Ast, id: NodeId, decl: &Decl) -> Self::Output;
+    fn visit_graph(&mut self, ast: &Ast, id: NodeId, graph: &Graph) -> Self::Output;
+    fn visit_stmt(&mut self, ast: &Ast, id: NodeId, stmt: &Stmt) -> Self::Output;
+    fn visit_expr(&mut self, ast: &Ast, id: NodeId, expr: &Expr) -> Self::Output;
+    fn visit_attribute_list(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        attribute_list: &AttributeList,
+    ) -> Self::Output;
+    fn visit_error(&mut self, ast: &Ast, id: NodeId, token: TokenId) -> Self::Output;
 
     fn visit(&mut self, ast: &Ast, id: NodeId) -> Self::Output {
         match ast.get(id) {
-            Node::Item(item) => self.visit_item(ast, item),
-            Node::Decl(decl) => self.visit_decl(ast, decl),
-            Node::Graph(graph) => self.visit_graph(ast, graph),
-            Node::Stmt(stmt) => self.visit_stmt(ast, stmt),
-            Node::Expr(expr) => self.visit_expr(ast, expr),
-            Node::AttributeList(attribute_list) => self.visit_attribute_list(ast, attribute_list),
-            Node::Error { token } => self.visit_error(ast, *token),
+            Node::Item(item) => self.visit_item(ast, id, item),
+            Node::Decl(decl) => self.visit_decl(ast, id, decl),
+            Node::Graph(graph) => self.visit_graph(ast, id, graph),
+            Node::Stmt(stmt) => self.visit_stmt(ast, id, stmt),
+            Node::Expr(expr) => self.visit_expr(ast, id, expr),
+            Node::AttributeList(attribute_list) => {
+                self.visit_attribute_list(ast, id, attribute_list)
+            }
+            Node::Error { token } => self.visit_error(ast, id, *token),
         }
     }
 }

@@ -20,7 +20,7 @@ use {
         skip_to_matching, token,
         utils::{
             self,
-            arena::{Arena, SecondaryArena},
+            arena::{Arena, SecondaryArena, SparseSecondaryArena},
         },
     },
     std::range::Range,
@@ -37,7 +37,13 @@ pub fn parse(source: &str) -> Parse {
     let mut parser = Parser::new(&tokens, source);
     parser.parse();
     Parse {
-        ast: Ast::new(parser.nodes, parser.roots, parser.spans, parser.child_pool),
+        ast: Ast::new(
+            parser.nodes,
+            parser.roots,
+            parser.spans,
+            parser.child_pool,
+            parser.labels,
+        ),
         diagnostics: parser.diagnostics,
         tokens,
     }
@@ -222,6 +228,7 @@ struct Parser<'a> {
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Range<TokenId>>,
     child_pool: ChildPool,
+    labels: SparseSecondaryArena<NodeId, TokenId>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -394,6 +401,7 @@ impl<'a> Parser<'a> {
             roots: vec![],
             spans: SecondaryArena::default(),
             child_pool: ChildPool::default(),
+            labels: SparseSecondaryArena::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -798,7 +806,13 @@ impl<'a> Parser<'a> {
         let cond = self.parse_expr();
         self.expect(token!(')'));
         self.expect(token!(->));
-        let targets = list!(self, (), self.expect(TokenKind::Identifier));
+        let checkpoint = self.child_pool.checkpoint();
+        list2!(self, (), {
+            let ident = self.expect(TokenKind::Identifier);
+            let ident = self.add_node(ident, Expr::Ident(Ident { token: ident }));
+            self.child_pool.stage(ident);
+        });
+        let targets = self.child_pool.commit(checkpoint);
         self.expect(token!(;));
         self.add_node(
             keyword,
@@ -1317,7 +1331,7 @@ impl<'a> Parser<'a> {
                     sources,
                     arrow,
                     delay,
-                    destinations: destinations.clone(),
+                    destinations,
                 }),
             ));
 
@@ -1385,14 +1399,14 @@ impl<'a> Parser<'a> {
         if is_bounded_range_for {
             self.advance();
             let body = self.parse_statement();
-            return self.add_node(
+            let node = self.add_node(
                 label.unwrap_or(keyword),
-                Stmt::LoopStmt(LoopStmt {
-                    label,
-                    count: init,
-                    body,
-                }),
+                Stmt::LoopStmt(LoopStmt { count: init, body }),
             );
+            if let Some(label) = label {
+                self.labels.insert(node, label);
+            }
+            return node;
         }
 
         self.expect(token!(;));
@@ -1402,16 +1416,21 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.add_node(
+        let node = self.add_node(
             label.unwrap_or(keyword),
             Stmt::ForStmt(ForStmt {
-                label,
                 init,
                 cond,
                 update,
                 body,
             }),
-        )
+        );
+
+        if let Some(label) = label {
+            self.labels.insert(node, label);
+        }
+
+        node
     }
 
     fn parse_for_init(&mut self) -> NodeId {
@@ -1648,7 +1667,18 @@ impl<'a> Parser<'a> {
         });
         self.expect(token!('}'));
 
-        self.add_node(label.unwrap_or(brace), Stmt::Block(Block { label, stmts }))
+        let node = self.add_node(
+            label.unwrap_or(brace),
+            Stmt::Block(Block {
+                stmts: stmts.into(),
+            }),
+        );
+
+        if let Some(label) = label {
+            self.labels.insert(node, label);
+        }
+
+        node
     }
 
     fn parse_let(&mut self) -> NodeId {
@@ -1737,10 +1767,14 @@ impl<'a> Parser<'a> {
         self.expect(token!(')'));
         let body = self.parse_statement();
 
-        self.add_node(
+        let node = self.add_node(
             label.unwrap_or(keyword),
-            Stmt::WhileStmt(WhileStmt { label, cond, body }),
-        )
+            Stmt::WhileStmt(WhileStmt { cond, body }),
+        );
+        if let Some(label) = label {
+            self.labels.insert(node, label);
+        }
+        node
     }
 
     fn parse_loop(&mut self, label: Option<TokenId>) -> NodeId {
@@ -1752,10 +1786,16 @@ impl<'a> Parser<'a> {
         });
         let body = self.parse_statement();
 
-        self.add_node(
+        let node = self.add_node(
             label.unwrap_or(keyword),
-            Stmt::LoopStmt(LoopStmt { label, count, body }),
-        )
+            Stmt::LoopStmt(LoopStmt { count, body }),
+        );
+
+        if let Some(label) = label {
+            self.labels.insert(node, label);
+        }
+
+        node
     }
 
     fn parse_return(&mut self) -> NodeId {
@@ -1894,7 +1934,13 @@ mod tests {
         let root = parse_fn(&mut parser);
         assert_eq!(parser.diagnostics, vec![]);
 
-        let ast = Ast::new(parser.nodes, vec![root], parser.spans, parser.child_pool);
+        let ast = Ast::new(
+            parser.nodes,
+            vec![root],
+            parser.spans,
+            parser.child_pool,
+            parser.labels,
+        );
         ast::dump(&ast, &tokens, source, root)
     }
 
@@ -2828,8 +2874,8 @@ mod tests {
             @"
         ForwardBranchStmt 0..32
           cond 16..20
-          a
-          b
+          a 26..27
+          b 29..30
         "
         );
     }
@@ -2992,8 +3038,7 @@ mod tests {
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        label: None,
-                        stmts: items,
+                        stmts: items.into(),
                     }),
                 )
             }),
@@ -3081,8 +3126,7 @@ mod tests {
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        label: None,
-                        stmts: items,
+                        stmts: items.into(),
                     }),
                 )
             }),
@@ -3105,8 +3149,7 @@ mod tests {
                 parser.add_node(
                     start,
                     Stmt::Block(Block {
-                        label: None,
-                        stmts: items,
+                        stmts: items.into()
                     }),
                 )
             }),
