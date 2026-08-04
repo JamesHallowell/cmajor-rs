@@ -1,8 +1,8 @@
 use {
     crate::{
         ast::{
-            AliasKind, Ast, AttributeList, Decl, Expr, Graph, HoistTarget, InterpolationKind,
-            Item, NodeId, Stmt, VarRole,
+            AliasKind, Ast, AttributeList, Decl, Expr, Graph, HoistTarget, InterpolationKind, Item,
+            NodeId, Stmt, VarRole,
             decl::{Alias, Var},
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
@@ -85,7 +85,6 @@ impl<'a> Dumper<'a> {
         append_span(&mut node, ast, self.tokens, id);
         node
     }
-
 }
 
 fn role_label(role: &VarRole) -> &'static str {
@@ -509,7 +508,12 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Expr::Call(Call { callee, args, .. }) => {
                 let mut children = vec![self.child(*callee)];
-                children.extend(args.iter().map(|&id| self.child(id)));
+                children.extend(
+                    args.map(|children| self.ast.children(children))
+                        .into_iter()
+                        .flatten()
+                        .map(|&id| self.child(id)),
+                );
                 node("Call".to_string(), children)
             }
             Expr::Bracketed(Bracketed { base, terms, .. }) => {
@@ -556,7 +560,13 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Expr::VectorSizeSuffix(VectorSizeSuffix { element, terms, .. }) => {
                 let mut children = vec![self.child(*element)];
-                children.extend(terms.iter().map(|&id| self.child(id)));
+                children.extend(
+                    terms
+                        .map(|terms| self.ast.children(terms))
+                        .into_iter()
+                        .flatten()
+                        .map(|&id| self.child(id)),
+                );
                 node("VectorSizeSuffix".to_string(), children)
             }
             Expr::ProcessorProperty(ProcessorProperty { name }) => {

@@ -1,6 +1,7 @@
 use crate::{
     ast::{child::ChildList, node::NodeId},
     lexer::TokenId,
+    static_assert_size,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,21 +76,18 @@ pub struct Assign {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ternary {
     pub cond: NodeId,
-    pub question: TokenId,
     pub then_branch: NodeId,
     pub else_branch: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Call {
-    pub paren: TokenId,
     pub callee: NodeId,
-    pub args: Vec<NodeId>,
+    pub args: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bracketed {
-    pub bracket: TokenId,
     pub base: NodeId,
     pub terms: Option<ChildList>,
 }
@@ -115,9 +113,8 @@ pub struct TypeModifier {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VectorSizeSuffix {
-    pub angle: TokenId,
     pub element: NodeId,
-    pub terms: Vec<NodeId>,
+    pub terms: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,3 +141,5 @@ pub enum Expr {
     VectorSizeSuffix(VectorSizeSuffix),
     ProcessorProperty(ProcessorProperty),
 }
+
+static_assert_size!(Expr, 16);

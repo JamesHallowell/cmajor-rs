@@ -4,8 +4,7 @@ use crate::{
         decl::{Alias, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
-            ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary,
-            VectorSizeSuffix,
+            ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
         },
         graph::{Connection, ConnectionDecl, ConnectionIf, EndpointDecl, NodeDecl},
         item::{
@@ -775,8 +774,10 @@ where
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
         visitor.visit(ast, self.callee);
-        for &arg in &self.args {
-            visitor.visit(ast, arg);
+        if let Some(args) = self.args {
+            for &arg in ast.children(args) {
+                visitor.visit(ast, arg);
+            }
         }
     }
 }
@@ -842,8 +843,10 @@ where
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
         visitor.visit(ast, self.element);
-        for &term in &self.terms {
-            visitor.visit(ast, term);
+        if let Some(terms) = self.terms {
+            for &term in ast.children(terms) {
+                visitor.visit(ast, term);
+            }
         }
     }
 }

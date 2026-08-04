@@ -285,22 +285,19 @@ macro_rules! while_consuming {
 }
 
 macro_rules! list {
-    ($parser:ident, (, $body:expr, )) => {
+    ($parser:ident, (), $body:expr) => {
         list!(@impl $parser, token!('('), token!(,), token!(')'), $body)
     };
-    ($parser:ident, (), $body:expr) => {
-        list!(@impl2 $parser, token!('('), token!(')'), $body)
-    };
-    ($parser:ident, [, $body:expr, ]) => {
+    ($parser:ident, [], $body:expr) => {
         list!(@impl $parser, token!('['), token!(,), token!(']'), $body)
     };
-    ($parser:ident, {, $body:expr, }) => {
+    ($parser:ident, {}, $body:expr) => {
         list!(@impl $parser, token!('{'), token!(,), token!('}'), $body)
     };
-    ($parser:ident, <, $body:expr, >) => {
+    ($parser:ident, <>, $body:expr) => {
         list!(@impl $parser, token!(<), token!(,), token!(>), $body)
     };
-    ($parser:ident, [[, $body:expr, ]]) => {
+    ($parser:ident, [[]], $body:expr) => {
         {
             $parser.expect(token!('['));
             $parser.expect(token!('['));
@@ -338,7 +335,41 @@ macro_rules! list {
             items
         }
     };
-    (@impl2 $parser:ident, $start:expr, $stop:pat, $body:expr) => {
+}
+
+macro_rules! list2 {
+    ($parser:ident, (), $body:expr) => {
+        list2!(@impl $parser, token!('('), token!(')'), $body)
+    };
+    ($parser:ident, [], $body:expr) => {
+        list2!(@impl $parser, token!('['), token!(']'), $body)
+    };
+    ($parser:ident, {}, $body:expr) => {
+        list2!(@impl $parser, token!('{'), token!('}'), $body)
+    };
+    ($parser:ident, <>, $body:expr) => {
+        list2!(@impl $parser, token!(<), token!(>), $body)
+    };
+    ($parser:ident, [[]], $body:expr) => {
+        {
+            $parser.expect(token!('['));
+            $parser.expect(token!('['));
+
+            while !matches!(
+                $parser.peek_2(),
+                (token!(']'), token!(']')) | (TokenKind::EndOfFile, _)
+            ) {
+                $body;
+                if $parser.advance_if(token!(,)).is_none() {
+                    break;
+                }
+            }
+
+            $parser.expect(token!(']'));
+            $parser.expect(token!(']'));
+        }
+    };
+    (@impl $parser:ident, $start:expr, $stop:pat, $body:expr) => {
         {
             $parser.expect($start);
             until!($parser, $stop, {
@@ -549,7 +580,7 @@ impl<'a> Parser<'a> {
 
             lhs = match infix {
                 Infix::Ternary => {
-                    let question = self.expect(token!(?));
+                    self.expect(token!(?));
                     let then_branch = self.parse_expr();
                     self.expect(token!(:));
                     let else_branch =
@@ -560,7 +591,6 @@ impl<'a> Parser<'a> {
                         start,
                         Expr::Ternary(Ternary {
                             cond: lhs,
-                            question,
                             then_branch,
                             else_branch,
                         }),
@@ -597,38 +627,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call(&mut self, callee: NodeId) -> NodeId {
-        let (paren, _) = self.peek_verbose();
-        let args = list!(self, (, self.parse_expr(), ));
+        let checkpoint = self.child_pool.checkpoint();
+        list2!(self, (), {
+            let expr = self.parse_expr();
+            self.child_pool.stage(expr);
+        });
+        let args = self.child_pool.commit(checkpoint);
         let start = self.spans[callee].start;
-        self.add_node(
-            start,
-            Expr::Call(Call {
-                paren,
-                callee,
-                args,
-            }),
-        )
+        self.add_node(start, Expr::Call(Call { callee, args }))
     }
 
     fn parse_bracketed_suffix(&mut self, base: NodeId) -> NodeId {
-        let (bracket, _) = self.peek_verbose();
-
         let checkpoint = self.child_pool.checkpoint();
-        list!(self, [, {
+        list2!(self, [], {
             let term = self.parse_bracket_term();
             self.child_pool.stage(term);
-        }, ]);
+        });
         let terms = self.child_pool.commit(checkpoint);
 
         let start = self.spans[base].start;
-        self.add_node(
-            start,
-            Expr::Bracketed(Bracketed {
-                bracket,
-                base,
-                terms,
-            }),
-        )
+        self.add_node(start, Expr::Bracketed(Bracketed { base, terms }))
     }
 
     fn parse_bracket_term(&mut self) -> NodeId {
@@ -782,7 +800,7 @@ impl<'a> Parser<'a> {
         let cond = self.parse_expr();
         self.expect(token!(')'));
         self.expect(token!(->));
-        let targets = list!(self, (, self.expect(TokenKind::Identifier), ));
+        let targets = list!(self, (), self.expect(TokenKind::Identifier));
         self.expect(token!(;));
         self.add_node(
             keyword,
@@ -812,7 +830,7 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self) -> NodeId {
         let keyword = self.expect(token!(enum));
         let name = self.expect(TokenKind::Identifier);
-        let values = list!(self, {, self.expect(TokenKind::Identifier), });
+        let values = list!(self, {}, self.expect(TokenKind::Identifier));
 
         self.add_node(
             keyword,
@@ -900,7 +918,7 @@ impl<'a> Parser<'a> {
 
     fn parse_optional_generics(&mut self) -> Vec<TokenId> {
         if self.at(token!(<)) {
-            list!(self, <, self.expect(TokenKind::Identifier), >)
+            list!(self, <>, self.expect(TokenKind::Identifier))
         } else {
             Vec::new()
         }
@@ -924,7 +942,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
-        list!(self, (, self.parse_param(), ))
+        list!(self, (), self.parse_param())
     }
 
     fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
@@ -1016,7 +1034,7 @@ impl<'a> Parser<'a> {
 
     fn parse_optional_specialisation_params(&mut self) -> Vec<NodeId> {
         if self.at(token!('(')) {
-            list!(self, (, self.parse_specialisation_param(), ))
+            list!(self, (), self.parse_specialisation_param())
         } else {
             vec![]
         }
@@ -1481,7 +1499,7 @@ impl<'a> Parser<'a> {
 
     fn parse_attribute_list(&mut self) -> NodeId {
         let (start, _) = self.peek_verbose();
-        let attributes = list!(self, [[, self.parse_attribute(), ]]);
+        let attributes = list!(self, [[]], self.parse_attribute());
         self.add_node(start, AttributeList { attributes })
     }
 
@@ -1547,7 +1565,7 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_member(&mut self, direction: TokenId, kind: TokenId) -> Vec<NodeId> {
         let types = if self.at(token!('(')) {
-            list!(self, (, self.parse_type(), ))
+            list!(self, (), self.parse_type())
         } else {
             vec![self.parse_type()]
         };
@@ -1838,29 +1856,34 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_vector_size_suffix(&mut self, element: NodeId) -> NodeId {
-        let angle = self.expect(token!(<));
+        self.expect(token!(<));
+
+        let checkpoint = self.child_pool.checkpoint();
         let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
+        self.child_pool.stage(term);
+        let terms = self.child_pool.commit(checkpoint);
+
         self.expect(token!(>));
 
         let start = self.spans[element].start;
         self.add_node(
             start,
-            Expr::VectorSizeSuffix(VectorSizeSuffix {
-                angle,
-                element,
-                terms: vec![term],
-            }),
+            Expr::VectorSizeSuffix(VectorSizeSuffix { element, terms }),
         )
     }
 
     fn try_parse_vector_size_suffix(&mut self, element: NodeId) -> Option<NodeId> {
         let mut checkpoint = self.clone();
 
-        let angle = checkpoint.advance();
-        let mut terms =
-            vec![checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base())];
+        checkpoint.expect(token!(<));
+
+        let child_pool_checkpoint = checkpoint.child_pool.checkpoint();
+
+        let term = checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
+        checkpoint.child_pool.stage(term);
         while_consuming!(checkpoint, token!(,), {
-            terms.push(checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()));
+            let term = checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
+            checkpoint.child_pool.stage(term);
         });
 
         let succeeded =
@@ -1870,16 +1893,13 @@ impl<'a> Parser<'a> {
             return None;
         }
         *self = checkpoint;
+        let terms = self.child_pool.commit(child_pool_checkpoint);
 
-        self.advance();
+        self.expect(token!(>));
         let start = self.spans[element].start;
         Some(self.add_node(
             start,
-            Expr::VectorSizeSuffix(VectorSizeSuffix {
-                angle,
-                element,
-                terms,
-            }),
+            Expr::VectorSizeSuffix(VectorSizeSuffix { element, terms }),
         ))
     }
 }
