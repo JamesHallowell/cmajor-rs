@@ -20,12 +20,12 @@ pub use {
         ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
     },
     graph::{
-        Connection, ConnectionDecl, ConnectionIf, EndpointDecl, Graph, HoistTarget, HoistedPath,
-        InterpolationKind, NodeDecl,
+        Connection, ConnectionDecl, ConnectionIf, EndpointDeclaration, Graph, HoistTarget,
+        HoistedEndpointDeclaration, InterpolationKind, NodeDecl,
     },
     item::{
-        EnumDecl, FunctionDecl, GraphDecl, Import, Item, ModuleAlias, NamespaceDecl, ProcessorDecl,
-        StructDecl,
+        EnumDecl, EventHandlerDecl, FunctionDecl, GraphDecl, Import, Item, ModuleAlias,
+        NamespaceDecl, ProcessorDecl, StructDecl,
     },
     node::{Ast, Node, NodeId},
     stmt::{

@@ -1,12 +1,15 @@
 use crate::{
     ast::{
-        Ast, AttributeList, Decl, Expr, Graph, Item, Node, NodeId, Stmt,
+        Ast, AttributeList, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId, Stmt,
         decl::{Alias, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
             ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
         },
-        graph::{Connection, ConnectionDecl, ConnectionIf, EndpointDecl, NodeDecl},
+        graph::{
+            Connection, ConnectionDecl, ConnectionIf, EndpointDeclaration,
+            HoistedEndpointDeclaration, NodeDecl,
+        },
         item::{
             EnumDecl, FunctionDecl, GraphDecl, Import, ModuleAlias, NamespaceDecl, ProcessorDecl,
             StructDecl,
@@ -60,6 +63,15 @@ pub trait Visitor {
         function_decl.walk(ast, self);
     }
 
+    fn visit_event_handler_decl(
+        &mut self,
+        ast: &Ast,
+        _id: NodeId,
+        event_handler_decl: &EventHandlerDecl,
+    ) {
+        event_handler_decl.walk(ast, self);
+    }
+
     fn visit_import(&mut self, _ast: &Ast, _id: NodeId, _import: &Import) {}
 
     fn visit_module_alias(&mut self, ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
@@ -85,9 +97,24 @@ pub trait Visitor {
         walk_graph(ast, self, id, graph);
     }
 
-    fn visit_endpoint_decl(&mut self, ast: &Ast, id: NodeId, endpoint_decl: &EndpointDecl) {
+    fn visit_endpoint_declaration(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        endpoint_declaration: &EndpointDeclaration,
+    ) {
         let _ = id;
-        endpoint_decl.walk(ast, self);
+        endpoint_declaration.walk(ast, self);
+    }
+
+    fn visit_hoisted_endpoint_declaration(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        hoisted_endpoint_declaration: &HoistedEndpointDeclaration,
+    ) {
+        let _ = id;
+        hoisted_endpoint_declaration.walk(ast, self);
     }
 
     fn visit_node_decl(&mut self, ast: &Ast, id: NodeId, node_decl: &NodeDecl) {
@@ -318,6 +345,9 @@ where
         Item::StructDecl(struct_decl) => visitor.visit_struct_decl(ast, id, struct_decl),
         Item::EnumDecl(enum_decl) => visitor.visit_enum_decl(ast, id, enum_decl),
         Item::FunctionDecl(function_decl) => visitor.visit_function_decl(ast, id, function_decl),
+        Item::EventHandlerDecl(event_handler_decl) => {
+            visitor.visit_event_handler_decl(ast, id, event_handler_decl)
+        }
         Item::Import(import) => visitor.visit_import(ast, id, import),
         Item::ModuleAlias(module_alias) => visitor.visit_module_alias(ast, id, module_alias),
     }
@@ -338,7 +368,12 @@ where
     V: Visitor + ?Sized,
 {
     match graph {
-        Graph::EndpointDecl(endpoint_decl) => visitor.visit_endpoint_decl(ast, id, endpoint_decl),
+        Graph::EndpointDeclaration(endpoint_declaration) => {
+            visitor.visit_endpoint_declaration(ast, id, endpoint_declaration)
+        }
+        Graph::HoistedEndpointDeclaration(hoisted_endpoint_declaration) => {
+            visitor.visit_hoisted_endpoint_declaration(ast, id, hoisted_endpoint_declaration)
+        }
         Graph::NodeDecl(node_decl) => visitor.visit_node_decl(ast, id, node_decl),
         Graph::ConnectionDecl(connection_decl) => {
             visitor.visit_connection_decl(ast, id, connection_decl)
@@ -477,9 +512,22 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        if let Some(ty) = self.ty {
-            visitor.visit(ast, ty);
+        visitor.visit(ast, self.returns);
+        for &param in &self.params {
+            visitor.visit(ast, param);
         }
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+        visitor.visit(ast, self.body);
+    }
+}
+
+impl<V> Walk<V> for EventHandlerDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
         for &param in &self.params {
             visitor.visit(ast, param);
         }
@@ -536,7 +584,7 @@ where
     }
 }
 
-impl<V> Walk<V> for EndpointDecl
+impl<V> Walk<V> for EndpointDeclaration
 where
     V: Visitor + ?Sized,
 {
@@ -547,7 +595,18 @@ where
         if let Some(size) = self.size {
             visitor.visit(ast, size);
         }
-        if let Some(index) = self.hoisted.as_ref().and_then(|hoisted| hoisted.index) {
+        if let Some(attributes) = self.attributes {
+            visitor.visit(ast, attributes);
+        }
+    }
+}
+
+impl<V> Walk<V> for HoistedEndpointDeclaration
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(index) = self.index {
             visitor.visit(ast, index);
         }
         if let Some(attributes) = self.attributes {
@@ -584,13 +643,13 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for &source in &self.sources {
+        for &source in ast.children(self.sources) {
             visitor.visit(ast, source);
         }
         if let Some(delay) = self.delay {
             visitor.visit(ast, delay);
         }
-        for &destination in &self.destinations {
+        for &destination in ast.children(self.destinations) {
             visitor.visit(ast, destination);
         }
     }

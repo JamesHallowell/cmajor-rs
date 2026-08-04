@@ -47,25 +47,32 @@ pub struct EnumDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecl {
-    pub ty: Option<NodeId>,
+    pub returns: NodeId,
     pub name: TokenId,
     pub generics: Vec<TokenId>,
     pub params: Vec<NodeId>,
     pub is_const: bool,
-    pub is_event_handler: bool,
+    pub attributes: Option<NodeId>,
+    pub body: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventHandlerDecl {
+    pub name: TokenId,
+    pub generics: Vec<TokenId>,
+    pub params: Vec<NodeId>,
+    pub is_const: bool,
     pub attributes: Option<NodeId>,
     pub body: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
-    pub keyword: TokenId,
     pub path: Vec<TokenId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleAlias {
-    pub keyword: TokenId,
     pub kind: AliasKind,
     pub name: TokenId,
     pub target: NodeId,
@@ -79,6 +86,7 @@ pub enum Item {
     StructDecl(StructDecl),
     EnumDecl(EnumDecl),
     FunctionDecl(FunctionDecl),
+    EventHandlerDecl(EventHandlerDecl),
     Import(Import),
     ModuleAlias(ModuleAlias),
 }

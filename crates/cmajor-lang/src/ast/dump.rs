@@ -1,15 +1,18 @@
 use {
     crate::{
         ast::{
-            AliasKind, Ast, AttributeList, Decl, Expr, Graph, HoistTarget, InterpolationKind, Item,
-            NodeId, Stmt, VarRole,
+            AliasKind, Ast, AttributeList, Decl, EventHandlerDecl, Expr, Graph, HoistTarget,
+            InterpolationKind, Item, NodeId, Stmt, VarRole,
             decl::{Alias, Var},
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
                 ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary,
                 VectorSizeSuffix,
             },
-            graph::{Connection, ConnectionDecl, ConnectionIf, EndpointDecl, NodeDecl},
+            graph::{
+                Connection, ConnectionDecl, ConnectionIf, EndpointDeclaration,
+                HoistedEndpointDeclaration, NodeDecl,
+            },
             item::{
                 EnumDecl, FunctionDecl, GraphDecl, Import, ModuleAlias, NamespaceDecl,
                 ProcessorDecl, StructDecl,
@@ -182,12 +185,11 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 leaf(format!("EnumDecl {:?} {{{values}}}", self.text(name)))
             }
             Item::FunctionDecl(FunctionDecl {
-                ty,
+                returns,
                 name,
                 generics,
                 params,
                 is_const,
-                is_event_handler,
                 attributes,
                 body,
             }) => {
@@ -204,18 +206,46 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                     )
                 };
                 let const_suffix = if *is_const { " const" } else { "" };
-                let kind = if *is_event_handler {
-                    "EventHandlerDecl"
-                } else {
-                    "FunctionDecl"
-                };
-                let mut children: Vec<_> = ty.map(|id| self.child(id)).into_iter().collect();
+                let mut children = vec![self.child(*returns)];
                 children.extend(params.iter().map(|&id| self.child(id)));
                 children.extend(attributes.map(|id| self.child(id)));
                 children.push(self.child(*body));
                 node(
                     format!(
-                        "{kind} {:?}{generics_suffix}{const_suffix}",
+                        "FunctionDecl {:?}{generics_suffix}{const_suffix}",
+                        self.text(name)
+                    ),
+                    children,
+                )
+            }
+            Item::EventHandlerDecl(EventHandlerDecl {
+                name,
+                generics,
+                params,
+                is_const,
+                attributes,
+                body,
+            }) => {
+                let generics_suffix = if generics.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "<{}>",
+                        generics
+                            .iter()
+                            .map(|t| self.text(t))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let const_suffix = if *is_const { " const" } else { "" };
+                let mut children = vec![];
+                children.extend(params.iter().map(|&id| self.child(id)));
+                children.extend(attributes.map(|id| self.child(id)));
+                children.push(self.child(*body));
+                node(
+                    format!(
+                        "EventHandlerDecl {:?}{generics_suffix}{const_suffix}",
                         self.text(name)
                     ),
                     children,
@@ -282,40 +312,48 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
 
     fn visit_graph(&mut self, _ast: &Ast, member: &Graph) -> DumpNode {
         match member {
-            Graph::EndpointDecl(EndpointDecl {
+            Graph::EndpointDeclaration(EndpointDeclaration {
                 direction,
                 kind,
                 types,
                 name,
                 size,
-                hoisted,
                 attributes,
             }) => {
                 let dir = self.text(direction);
-                let label = if let Some(hoisted) = hoisted {
-                    let path = hoisted
-                        .segments
-                        .iter()
-                        .map(|t| self.text(t))
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    let target = match &hoisted.target {
-                        HoistTarget::Name(name) => self.text(name).to_string(),
-                        HoistTarget::Wildcard {
-                            prefix: Some(prefix),
-                        } => {
-                            format!("{}*", self.text(prefix))
-                        }
-                        HoistTarget::Wildcard { prefix: None } => "*".to_string(),
-                    };
-                    format!("EndpointDecl {dir} {path}.{target}")
-                } else {
-                    let kind_text = kind.as_ref().map(|t| self.text(t)).unwrap_or_default();
-                    let name_text = name.as_ref().map(|t| self.text(t)).unwrap_or_default();
-                    format!("EndpointDecl {dir} {kind_text} {name_text:?}")
-                };
+                let kind_text = self.text(kind);
+                let name_text = self.text(name);
+                let label = format!("EndpointDecl {dir} {kind_text} {name_text:?}");
                 let mut children: Vec<_> = types.iter().map(|&id| self.child(id)).collect();
                 children.extend(size.map(|id| self.child(id)));
+                children.extend(attributes.map(|id| self.child(id)));
+                node(label, children)
+            }
+            Graph::HoistedEndpointDeclaration(HoistedEndpointDeclaration {
+                direction,
+                segments,
+                index,
+                target,
+                attributes,
+                ..
+            }) => {
+                let dir = self.text(direction);
+                let path = segments
+                    .iter()
+                    .map(|t| self.text(t))
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let target = match target {
+                    HoistTarget::Name(name) => self.text(name).to_string(),
+                    HoistTarget::Wildcard {
+                        prefix: Some(prefix),
+                    } => {
+                        format!("{}*", self.text(prefix))
+                    }
+                    HoistTarget::Wildcard { prefix: None } => "*".to_string(),
+                };
+                let label = format!("EndpointDecl {dir} {path}.{target}");
+                let mut children: Vec<_> = index.map(|id| self.child(id)).into_iter().collect();
                 children.extend(attributes.map(|id| self.child(id)));
                 node(label, children)
             }
@@ -345,13 +383,23 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                     Some(kind) => format!("Connection [{}]", interpolation_label(kind)),
                     None => "Connection".to_string(),
                 };
-                let sources = sources.iter().map(|&id| self.child(id)).collect();
+                let sources = self
+                    .ast
+                    .children(*sources)
+                    .iter()
+                    .map(|&id| self.child(id))
+                    .collect();
                 let mut children = vec![node("Sources".to_string(), sources)];
                 if let Some(delay) = delay {
                     let delay = self.child(*delay);
                     children.push(node("Delay".to_string(), vec![delay]));
                 }
-                let destinations = destinations.iter().map(|&id| self.child(id)).collect();
+                let destinations = self
+                    .ast
+                    .children(*destinations)
+                    .iter()
+                    .map(|&id| self.child(id))
+                    .collect();
                 children.push(node("Destinations".to_string(), destinations));
                 node(label, children)
             }

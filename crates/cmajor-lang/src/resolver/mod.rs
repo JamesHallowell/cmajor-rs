@@ -11,9 +11,9 @@ pub use {
 use crate::{
     Diagnostic,
     ast::{
-        Alias, Ast, Block, EndpointDecl, EnumDecl, ForStmt, FunctionDecl, GraphDecl, IfStmt,
-        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, ProcessorDecl, Stmt,
-        StructDecl, Var, WhileStmt,
+        Alias, Ast, Block, EndpointDeclaration, EnumDecl, ForStmt, FunctionDecl, GraphDecl,
+        HoistedEndpointDeclaration, IfStmt, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl,
+        NodeId, ProcessorDecl, Stmt, StructDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
     lexer::{TokenId, TokenKind, TokenStream},
@@ -248,9 +248,7 @@ impl<'a> Visitor for Resolver<'a> {
         self.declare(self.scope(), function_decl.name, SymbolKind::Function, id);
 
         self.with_new_scope_at(function_decl.name, |this, _| {
-            if let Some(ty) = function_decl.ty {
-                this.visit(ast, ty);
-            }
+            this.visit(ast, function_decl.returns);
             for &param in &function_decl.params {
                 this.visit(ast, param);
             }
@@ -281,8 +279,27 @@ impl<'a> Visitor for Resolver<'a> {
         self.declare(self.scope(), alias.name, SymbolKind::Alias, id);
     }
 
-    fn visit_endpoint_decl(&mut self, _ast: &Ast, id: NodeId, endpoint_decl: &EndpointDecl) {
-        if let Some(name) = endpoint_decl.name {
+    fn visit_endpoint_declaration(
+        &mut self,
+        _ast: &Ast,
+        id: NodeId,
+        endpoint_declaration: &EndpointDeclaration,
+    ) {
+        self.declare(
+            self.scope(),
+            endpoint_declaration.name,
+            SymbolKind::Endpoint,
+            id,
+        );
+    }
+
+    fn visit_hoisted_endpoint_declaration(
+        &mut self,
+        _ast: &Ast,
+        id: NodeId,
+        hoisted_endpoint_declaration: &HoistedEndpointDeclaration,
+    ) {
+        if let Some(name) = hoisted_endpoint_declaration.name {
             self.declare(self.scope(), name, SymbolKind::Endpoint, id);
         }
     }

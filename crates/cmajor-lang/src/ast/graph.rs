@@ -1,4 +1,7 @@
-use crate::{ast::node::NodeId, lexer::TokenId};
+use crate::{
+    ast::{child::ChildList, node::NodeId},
+    lexer::TokenId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpolationKind {
@@ -17,26 +20,27 @@ pub enum HoistTarget {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HoistedPath {
-    pub segments: Vec<TokenId>,
-    pub index: Option<NodeId>,
-    pub target: HoistTarget,
+pub struct EndpointDeclaration {
+    pub direction: TokenId,
+    pub kind: TokenId,
+    pub types: Vec<NodeId>,
+    pub name: TokenId,
+    pub size: Option<NodeId>,
+    pub attributes: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EndpointDecl {
+pub struct HoistedEndpointDeclaration {
     pub direction: TokenId,
-    pub kind: Option<TokenId>,
-    pub types: Vec<NodeId>,
+    pub segments: Vec<TokenId>,
+    pub index: Option<NodeId>,
+    pub target: HoistTarget,
     pub name: Option<TokenId>,
-    pub size: Option<NodeId>,
-    pub hoisted: Option<HoistedPath>,
     pub attributes: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeDecl {
-    pub keyword: TokenId,
     pub name: TokenId,
     pub processor: NodeId,
     pub array_size: Option<NodeId>,
@@ -44,22 +48,20 @@ pub struct NodeDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectionDecl {
-    pub keyword: TokenId,
     pub connections: Vec<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Connection {
     pub interpolation: Option<InterpolationKind>,
-    pub sources: Vec<NodeId>,
+    pub sources: ChildList,
     pub arrow: TokenId,
     pub delay: Option<NodeId>,
-    pub destinations: Vec<NodeId>,
+    pub destinations: ChildList,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectionIf {
-    pub keyword: TokenId,
     pub cond: NodeId,
     pub then_branch: Vec<NodeId>,
     pub else_branch: Option<Vec<NodeId>>,
@@ -67,7 +69,8 @@ pub struct ConnectionIf {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Graph {
-    EndpointDecl(EndpointDecl),
+    EndpointDeclaration(EndpointDeclaration),
+    HoistedEndpointDeclaration(HoistedEndpointDeclaration),
     NodeDecl(NodeDecl),
     ConnectionDecl(ConnectionDecl),
     Connection(Connection),

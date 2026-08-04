@@ -3,13 +3,14 @@ use {
         Diagnostic,
         ast::{
             self, Alias, Assign, Ast, Attribute, AttributeList, Binary, Block, Bracketed,
-            BreakStmt, Call, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
-            Decl, DeclStmt, Declarator, EndpointDecl, EnumDecl, Expr, ExprStmt, Field, ForStmt,
-            ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget, HoistedPath, Ident,
-            IfConstStmt, IfStmt, Import, InterpolationKind, Item, LoopStmt, ModuleAlias,
-            NamespaceDecl, Node, NodeDecl, NodeId, Parentheses, PostfixUnary, ProcessorDecl,
-            ProcessorProperty, ReturnStmt, ScopeAccess, Slice, Stmt, StructDecl, Ternary,
-            TypeModifier, Unary, Var, VarRole, VectorSizeSuffix, WhileStmt,
+            BreakStmt, Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf,
+            ContinueStmt, Decl, DeclStmt, Declarator, EndpointDeclaration, EnumDecl,
+            EventHandlerDecl, Expr, ExprStmt, Field, ForStmt, ForwardBranchStmt, FunctionDecl,
+            Graph, GraphDecl, HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt,
+            Import, InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl,
+            NodeId, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
+            ScopeAccess, Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole,
+            VectorSizeSuffix, WhileStmt,
         },
         lexer::{
             Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
@@ -817,7 +818,7 @@ impl<'a> Parser<'a> {
             path
         };
         self.expect(token!(;));
-        self.add_node(keyword, Item::Import(Import { keyword, path }))
+        self.add_node(keyword, Item::Import(Import { path }))
     }
 
     fn parse_enum(&mut self) -> NodeId {
@@ -938,7 +939,12 @@ impl<'a> Parser<'a> {
         list!(self, (), self.parse_param())
     }
 
-    fn parse_function_decl(&mut self, ty: NodeId, name: TokenId, generics: Vec<TokenId>) -> NodeId {
+    fn parse_function_decl(
+        &mut self,
+        returns: NodeId,
+        name: TokenId,
+        generics: Vec<TokenId>,
+    ) -> NodeId {
         let params = self.parse_params();
         let is_const = self.advance_if(token!(const)).is_some();
         let attributes = self
@@ -946,16 +952,15 @@ impl<'a> Parser<'a> {
             .then(|| self.parse_attribute_list());
         let body = self.parse_block(None);
 
-        let start = self.spans[ty].start;
+        let start = self.spans[returns].start;
         self.add_node(
             start,
             Item::FunctionDecl(FunctionDecl {
-                ty: Some(ty),
+                returns,
                 name,
                 generics,
                 params,
                 is_const,
-                is_event_handler: false,
                 attributes,
                 body,
             }),
@@ -970,13 +975,11 @@ impl<'a> Parser<'a> {
 
         self.add_node(
             keyword,
-            Item::FunctionDecl(FunctionDecl {
-                ty: None,
+            Item::EventHandlerDecl(EventHandlerDecl {
                 name,
                 generics: Vec::new(),
                 params,
                 is_const: false,
-                is_event_handler: true,
                 attributes: None,
                 body,
             }),
@@ -998,7 +1001,6 @@ impl<'a> Parser<'a> {
             return self.add_node(
                 keyword,
                 Item::ModuleAlias(ModuleAlias {
-                    keyword,
                     kind: ast::AliasKind::Namespace,
                     name,
                     target,
@@ -1121,7 +1123,6 @@ impl<'a> Parser<'a> {
             return self.add_node(
                 keyword,
                 Item::ModuleAlias(ModuleAlias {
-                    keyword,
                     kind: ast::AliasKind::Processor,
                     name,
                     target,
@@ -1206,7 +1207,6 @@ impl<'a> Parser<'a> {
         self.add_node(
             keyword,
             Graph::NodeDecl(NodeDecl {
-                keyword,
                 name,
                 processor,
                 array_size,
@@ -1219,10 +1219,7 @@ impl<'a> Parser<'a> {
         let connections = self.parse_connection_list();
         self.add_node(
             keyword,
-            Graph::ConnectionDecl(ConnectionDecl {
-                keyword,
-                connections,
-            }),
+            Graph::ConnectionDecl(ConnectionDecl { connections }),
         )
     }
 
@@ -1263,7 +1260,6 @@ impl<'a> Parser<'a> {
         self.add_node(
             keyword,
             Graph::ConnectionIf(ConnectionIf {
-                keyword,
                 cond,
                 then_branch,
                 else_branch,
@@ -1286,18 +1282,19 @@ impl<'a> Parser<'a> {
             });
             let destinations = self.parse_connection_endpoints();
 
-            if sources.len() > 1 && destinations.len() > 1 {
+            if self.child_pool.get(sources).len() > 1 && self.child_pool.get(destinations).len() > 1
+            {
                 self.error(arrow, "many-to-many connections are not supported");
             }
 
             let chain_continues = self.at(token!(->));
             if chain_continues {
-                if destinations.len() > 1 {
+                if self.child_pool.get(destinations).len() > 1 {
                     self.error(
                         arrow,
                         "cannot chain a connection with multiple destinations",
                     );
-                } else if let Some(&dest) = destinations.first()
+                } else if let Some(&dest) = self.child_pool.get(destinations).first()
                     && matches!(self.nodes[dest], Node::Expr(Expr::Field { .. }))
                 {
                     self.error(
@@ -1307,7 +1304,9 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let start = self.spans[*sources
+            let start = self.spans[*self
+                .child_pool
+                .get(sources)
                 .first()
                 .expect("a connection chain always has at least one source")]
             .start;
@@ -1330,12 +1329,19 @@ impl<'a> Parser<'a> {
         connections
     }
 
-    fn parse_connection_endpoints(&mut self) -> Vec<NodeId> {
-        let mut endpoints = vec![self.parse_expr()];
+    fn parse_connection_endpoints(&mut self) -> ChildList {
+        let checkpoint = self.child_pool.checkpoint();
+
+        let expr = self.parse_expr();
+        self.child_pool.stage(expr);
         while_consuming!(self, token!(,), {
-            endpoints.push(self.parse_expr());
+            let expr = self.parse_expr();
+            self.child_pool.stage(expr);
         });
-        endpoints
+
+        self.child_pool
+            .commit(checkpoint)
+            .expect("a connection always has at least one endpoint")
     }
 
     fn parse_interpolation_if_present(&mut self) -> Option<InterpolationKind> {
@@ -1538,17 +1544,12 @@ impl<'a> Parser<'a> {
 
         self.add_node(
             direction,
-            Graph::EndpointDecl(EndpointDecl {
+            Graph::HoistedEndpointDeclaration(HoistedEndpointDeclaration {
                 direction,
-                kind: None,
-                types: Vec::new(),
+                segments,
+                index,
+                target,
                 name,
-                size: None,
-                hoisted: Some(HoistedPath {
-                    segments,
-                    index,
-                    target,
-                }),
                 attributes,
             }),
         )
@@ -1576,13 +1577,12 @@ impl<'a> Parser<'a> {
             .map(|(name, size)| {
                 self.add_node(
                     direction,
-                    Graph::EndpointDecl(EndpointDecl {
+                    Graph::EndpointDeclaration(EndpointDeclaration {
                         direction,
-                        kind: Some(kind),
+                        kind,
                         types: types.clone(),
-                        name: Some(name),
+                        name,
                         size,
-                        hoisted: None,
                         attributes,
                     }),
                 )
