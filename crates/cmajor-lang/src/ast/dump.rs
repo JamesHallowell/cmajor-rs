@@ -429,7 +429,12 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                     .label(id)
                     .map(|l| format!(" {:?}", self.text(&l)))
                     .unwrap_or_default();
-                let children = stmts.iter().map(|&id| self.child(id)).collect();
+                let children = stmts
+                    .map(|stmts| self.ast.children(stmts))
+                    .into_iter()
+                    .flatten()
+                    .map(|&child| self.child(child))
+                    .collect();
                 node(format!("Block{prefix}"), children)
             }
             Stmt::ExprStmt(ExprStmt { expr }) => {

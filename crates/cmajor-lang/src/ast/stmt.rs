@@ -2,13 +2,14 @@ use crate::{
     arena_key,
     ast::{ChildList, node::NodeId},
     lexer::TokenId,
+    static_assert_size,
 };
 
 arena_key!(StmtId(pub(super) NodeId));
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
-    pub stmts: Box<[NodeId]>,
+    pub stmts: Option<ChildList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,3 +92,5 @@ pub enum Stmt {
     ContinueStmt(ContinueStmt),
     ForwardBranchStmt(ForwardBranchStmt),
 }
+
+static_assert_size!(Stmt, 20);

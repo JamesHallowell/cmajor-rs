@@ -684,8 +684,10 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for &stmt in &self.stmts {
-            visitor.visit(ast, stmt);
+        if let Some(stmts) = self.stmts {
+            for &stmt in ast.children(stmts) {
+                visitor.visit(ast, stmt);
+            }
         }
     }
 }

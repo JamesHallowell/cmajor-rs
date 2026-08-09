@@ -1661,18 +1661,15 @@ impl<'a> Parser<'a> {
 
     fn parse_block(&mut self, label: Option<TokenId>) -> NodeId {
         let brace = self.expect(token!('{'));
-        let mut stmts = Vec::new();
+        let stmts = self.child_pool.checkpoint();
         until!(self, token!('}'), {
-            stmts.push(self.parse_statement());
+            let stmt = self.parse_statement();
+            self.child_pool.stage(stmt);
         });
         self.expect(token!('}'));
+        let stmts = self.child_pool.commit(stmts);
 
-        let node = self.add_node(
-            label.unwrap_or(brace),
-            Stmt::Block(Block {
-                stmts: stmts.into(),
-            }),
-        );
+        let node = self.add_node(label.unwrap_or(brace), Stmt::Block(Block { stmts }));
 
         if let Some(label) = label {
             self.labels.insert(node, label);
@@ -3032,22 +3029,13 @@ mod tests {
     #[test]
     fn outer_braced_endpoint_group_with_mixed_kinds() {
         insta::assert_snapshot!(
-            dump("input { event int e; value float v; }", |parser| {
-                let items = parser.parse_endpoint_group();
-                let start = parser.spans[*items.first().expect("test has at least one item")].start;
-                parser.add_node(
-                    start,
-                    Stmt::Block(Block {
-                        stmts: items.into(),
-                    }),
-                )
-            }),
+            dump("processor P { input { event int e; value float v; } }", |parser| parser.parse_container()),
             @r#"
-        Block 0..37
-          EndpointDecl input event "e" 0..20
-            int 14..17
-          EndpointDecl input value "v" 0..35
-            float 27..32
+        ProcessorDecl "P" 0..53
+          EndpointDecl input event "e" 14..34
+            int 28..31
+          EndpointDecl input value "v" 14..49
+            float 41..46
         "#
         );
     }
@@ -3120,22 +3108,13 @@ mod tests {
     #[test]
     fn braced_endpoint_group_desugars_to_flat_members() {
         insta::assert_snapshot!(
-            dump("output stream { float32 a; int b; }", |parser| {
-                let items = parser.parse_container_items();
-                let start = parser.spans[*items.first().expect("test has at least one item")].start;
-                parser.add_node(
-                    start,
-                    Stmt::Block(Block {
-                        stmts: items.into(),
-                    }),
-                )
-            }),
+            dump("processor P { output stream { float32 a; int b; } }", |parser| parser.parse_container()),
             @r#"
-        Block 0..35
-          EndpointDecl output stream "a" 0..26
-            float32 16..23
-          EndpointDecl output stream "b" 0..33
-            int 27..30
+        ProcessorDecl "P" 0..51
+          EndpointDecl output stream "a" 14..40
+            float32 30..37
+          EndpointDecl output stream "b" 14..47
+            int 41..44
         "#
         );
     }
@@ -3143,22 +3122,13 @@ mod tests {
     #[test]
     fn comma_separated_node_decls_without_braces() {
         insta::assert_snapshot!(
-            dump("node b = B, c = C;", |parser| {
-                let items = parser.parse_node_group();
-                let start = parser.spans[*items.first().expect("test has at least one item")].start;
-                parser.add_node(
-                    start,
-                    Stmt::Block(Block {
-                        stmts: items.into()
-                    }),
-                )
-            }),
+            dump("graph G { node b = B, c = C; }", |parser| parser.parse_container()),
             @r#"
-        Block 0..18
-          NodeDecl "b" 0..10
-            B 9..10
-          NodeDecl "c" 0..17
-            C 16..17
+        GraphDecl "G" 0..30
+          NodeDecl "b" 10..20
+            B 19..20
+          NodeDecl "c" 10..27
+            C 26..27
         "#
         );
     }
