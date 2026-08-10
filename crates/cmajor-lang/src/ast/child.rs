@@ -1,6 +1,11 @@
 use {
     crate::{arena_key, ast::NodeId, utils::arena::Arena},
-    std::range::RangeInclusive,
+    std::{
+        cell::RefCell,
+        marker::PhantomData,
+        range::RangeInclusive,
+        rc::{Rc, Weak},
+    },
 };
 
 arena_key!(ChildId(pub(super) NodeId));
@@ -9,36 +14,28 @@ pub type ChildList = RangeInclusive<ChildId>;
 
 #[derive(Debug, Default, Clone)]
 pub struct ChildPool {
-    scratch: Vec<NodeId>,
-    pool: Arena<ChildId, NodeId>,
+    scratch: Rc<RefCell<Vec<NodeId>>>,
+    children: Arena<ChildId, NodeId>,
 }
 
-pub struct Checkpoint(usize);
+pub struct Checkpoint<T>(usize, Weak<RefCell<Vec<NodeId>>>, PhantomData<T>);
 
-impl ChildPool {
-    pub fn new() -> Self {
-        Self {
-            scratch: Vec::default(),
-            pool: Arena::default(),
-        }
-    }
+pub struct MaybeNoneStaged {}
+pub struct AtLeastOneStaged {}
 
-    pub fn checkpoint(&self) -> Checkpoint {
-        Checkpoint(self.scratch.len())
-    }
+pub trait Commit {
+    type Committed;
 
-    pub fn stage(&mut self, node: NodeId) {
-        self.scratch.push(node);
-    }
+    fn commit(checkpoint: usize, pool: &mut ChildPool) -> Self::Committed;
+}
 
-    pub fn commit(&mut self, Checkpoint(checkpoint): Checkpoint) -> Option<ChildList> {
-        if self.scratch.is_empty() {
-            return None;
-        }
+impl Commit for Checkpoint<MaybeNoneStaged> {
+    type Committed = Option<ChildList>;
 
+    fn commit(checkpoint: usize, pool: &mut ChildPool) -> Self::Committed {
         let (mut first, mut last) = (None, None);
-        for node in self.scratch.drain(checkpoint..) {
-            let child = self.pool.push(node);
+        for node in pool.scratch.borrow_mut().drain(checkpoint..) {
+            let child = pool.children.push(node);
             if first.is_none() {
                 first = Some(child);
             }
@@ -50,9 +47,77 @@ impl ChildPool {
             _ => None,
         }
     }
+}
+
+impl Commit for Checkpoint<AtLeastOneStaged> {
+    type Committed = ChildList;
+
+    fn commit(checkpoint: usize, pool: &mut ChildPool) -> Self::Committed {
+        let first = pool
+            .children
+            .push(pool.scratch.borrow_mut().remove(checkpoint));
+
+        let last = pool
+            .scratch
+            .borrow_mut()
+            .drain(checkpoint..)
+            .map(|node| pool.children.push(node))
+            .last()
+            .unwrap_or(first);
+
+        ChildList::from(first..=last)
+    }
+}
+
+impl Checkpoint<MaybeNoneStaged> {
+    pub fn with_at_least_one_staged(self, node: NodeId) -> Checkpoint<AtLeastOneStaged> {
+        self.stage(node);
+        Checkpoint(self.0, self.1.clone(), PhantomData)
+    }
+}
+
+impl<T> Checkpoint<T> {
+    pub fn stage(&self, node: NodeId) {
+        self.1
+            .upgrade()
+            .inspect(|scratch| scratch.borrow_mut().push(node));
+    }
+
+    pub fn abort(self) {
+        if let Some(scratch) = self.1.upgrade() {
+            scratch.borrow_mut().truncate(self.0);
+        }
+    }
+}
+
+impl ChildPool {
+    pub fn new() -> Self {
+        Self {
+            scratch: Rc::default(),
+            children: Arena::default(),
+        }
+    }
+
+    pub fn checkpoint(&self) -> Checkpoint<MaybeNoneStaged> {
+        Checkpoint(
+            self.scratch.borrow().len(),
+            Rc::downgrade(&self.scratch),
+            PhantomData,
+        )
+    }
+
+    pub fn commit<T>(
+        &mut self,
+        Checkpoint(checkpoint, _, _): Checkpoint<T>,
+    ) -> <Checkpoint<T> as Commit>::Committed
+    where
+        Checkpoint<T>: Commit,
+    {
+        Checkpoint::<T>::commit(checkpoint, self)
+    }
 
     pub fn get(&self, children: ChildList) -> &[NodeId] {
-        self.pool.slice(children)
+        self.children.slice(children)
     }
 }
 
@@ -77,7 +142,7 @@ mod tests {
 
         let checkpoint = pool.checkpoint();
         let node = nodes.push(());
-        pool.stage(node);
+        checkpoint.stage(node);
         let children = pool.commit(checkpoint);
 
         assert_eq!(
@@ -97,7 +162,7 @@ mod tests {
         {
             let checkpoint = pool.checkpoint();
             let node2 = nodes.push(());
-            pool.stage(node2);
+            checkpoint.stage(node2);
             let children = pool.commit(checkpoint);
 
             assert_eq!(
@@ -106,7 +171,7 @@ mod tests {
             );
         }
 
-        pool.stage(node1);
+        checkpoint.stage(node1);
         let children = pool.commit(checkpoint);
 
         assert_eq!(
@@ -126,8 +191,8 @@ mod tests {
             let checkpoint = pool.checkpoint();
             let a1 = nodes.push(());
             let a2 = nodes.push(());
-            pool.stage(a1);
-            pool.stage(a2);
+            checkpoint.stage(a1);
+            checkpoint.stage(a2);
             let children = pool.commit(checkpoint).unwrap();
             assert_eq!(pool.get(children.clone()), [a1, a2]);
             nodes.push(())
@@ -137,15 +202,15 @@ mod tests {
             let checkpoint = pool.checkpoint();
             let b1 = nodes.push(());
             let b2 = nodes.push(());
-            pool.stage(b1);
-            pool.stage(b2);
+            checkpoint.stage(b1);
+            checkpoint.stage(b2);
             let children = pool.commit(checkpoint).unwrap();
             assert_eq!(pool.get(children.clone()), [b1, b2]);
             nodes.push(())
         };
 
-        pool.stage(group_a);
-        pool.stage(group_b);
+        outer_checkpoint.stage(group_a);
+        outer_checkpoint.stage(group_b);
         let children = pool.commit(outer_checkpoint);
 
         assert_eq!(

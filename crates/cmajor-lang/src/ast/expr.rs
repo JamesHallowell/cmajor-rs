@@ -114,7 +114,7 @@ pub struct TypeModifier {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VectorSizeSuffix {
     pub element: NodeId,
-    pub terms: Option<ChildList>,
+    pub terms: ChildList,
 }
 
 #[derive(Debug, Clone, PartialEq)]

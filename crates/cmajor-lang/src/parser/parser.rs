@@ -219,7 +219,6 @@ impl Infix {
     }
 }
 
-#[derive(Clone)]
 struct Parser<'a> {
     tokens: &'a TokenStream,
     iter: NonTrivialTokenStreamIterator<'a>,
@@ -537,7 +536,7 @@ impl<'a> Parser<'a> {
                 let checkpoint = self.child_pool.checkpoint();
                 list!(self, (), {
                     let expr = self.parse_expr();
-                    self.child_pool.stage(expr);
+                    checkpoint.stage(expr);
                 });
                 let children = self.child_pool.commit(checkpoint);
                 self.add_node(paren, Expr::Parentheses(Parentheses { inner: children }))
@@ -639,7 +638,7 @@ impl<'a> Parser<'a> {
         let checkpoint = self.child_pool.checkpoint();
         list2!(self, (), {
             let expr = self.parse_expr();
-            self.child_pool.stage(expr);
+            checkpoint.stage(expr);
         });
         let args = self.child_pool.commit(checkpoint);
         let start = self.spans[callee].start;
@@ -650,7 +649,7 @@ impl<'a> Parser<'a> {
         let checkpoint = self.child_pool.checkpoint();
         list2!(self, [], {
             let term = self.parse_bracket_term();
-            self.child_pool.stage(term);
+            checkpoint.stage(term);
         });
         let terms = self.child_pool.commit(checkpoint);
 
@@ -810,7 +809,7 @@ impl<'a> Parser<'a> {
         list2!(self, (), {
             let ident = self.expect(TokenKind::Identifier);
             let ident = self.add_node(ident, Expr::Ident(Ident { token: ident }));
-            self.child_pool.stage(ident);
+            checkpoint.stage(ident);
         });
         let targets = self.child_pool.commit(checkpoint);
         self.expect(token!(;));
@@ -1344,18 +1343,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_connection_endpoints(&mut self) -> ChildList {
-        let checkpoint = self.child_pool.checkpoint();
+        let checkpoint = self
+            .child_pool
+            .checkpoint()
+            .with_at_least_one_staged(self.parse_expr());
 
-        let expr = self.parse_expr();
-        self.child_pool.stage(expr);
         while_consuming!(self, token!(,), {
             let expr = self.parse_expr();
-            self.child_pool.stage(expr);
+            checkpoint.stage(expr);
         });
 
-        self.child_pool
-            .commit(checkpoint)
-            .expect("a connection always has at least one endpoint")
+        self.child_pool.commit(checkpoint)
     }
 
     fn parse_interpolation_if_present(&mut self) -> Option<InterpolationKind> {
@@ -1664,7 +1662,7 @@ impl<'a> Parser<'a> {
         let stmts = self.child_pool.checkpoint();
         until!(self, token!('}'), {
             let stmt = self.parse_statement();
-            self.child_pool.stage(stmt);
+            stmts.stage(stmt);
         });
         self.expect(token!('}'));
         let stmts = self.child_pool.commit(stmts);
@@ -1875,9 +1873,9 @@ impl<'a> Parser<'a> {
     fn parse_vector_size_suffix(&mut self, element: NodeId) -> NodeId {
         self.expect(token!(<));
 
-        let checkpoint = self.child_pool.checkpoint();
-        let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
-        self.child_pool.stage(term);
+        let checkpoint = self.child_pool.checkpoint().with_at_least_one_staged(
+            self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()),
+        );
         let terms = self.child_pool.commit(checkpoint);
 
         self.expect(token!(>));
@@ -1890,27 +1888,29 @@ impl<'a> Parser<'a> {
     }
 
     fn try_parse_vector_size_suffix(&mut self, element: NodeId) -> Option<NodeId> {
-        let mut checkpoint = self.clone();
+        let iter = self.iter.clone();
+        let diagnostics = self.diagnostics.len();
 
-        checkpoint.expect(token!(<));
+        self.expect(token!(<));
 
-        let child_pool_checkpoint = checkpoint.child_pool.checkpoint();
-
-        let term = checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
-        checkpoint.child_pool.stage(term);
-        while_consuming!(checkpoint, token!(,), {
-            let term = checkpoint.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
-            checkpoint.child_pool.stage(term);
+        let checkpoint = self.child_pool.checkpoint().with_at_least_one_staged(
+            self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base()),
+        );
+        while_consuming!(self, token!(,), {
+            let term = self.parse_expr_with_min_binding_power(PrecedenceLevel::Shift.base());
+            checkpoint.stage(term);
         });
 
-        let succeeded =
-            self.diagnostics.len() == checkpoint.diagnostics.len() && checkpoint.at(token!(>));
+        let succeeded = self.diagnostics.len() == diagnostics && self.at(token!(>));
 
         if !succeeded {
+            checkpoint.abort();
+            self.diagnostics.truncate(diagnostics);
+            self.iter = iter;
             return None;
         }
-        *self = checkpoint;
-        let terms = self.child_pool.commit(child_pool_checkpoint);
+
+        let terms = self.child_pool.commit(checkpoint);
 
         self.expect(token!(>));
         let start = self.spans[element].start;

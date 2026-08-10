@@ -1,3 +1,5 @@
+#[allow(clippy::module_inception)]
+mod ast;
 mod attribute;
 mod child;
 mod decl;
@@ -5,12 +7,12 @@ mod dump;
 mod expr;
 mod graph;
 mod item;
-#[allow(clippy::module_inception)]
 mod node;
 mod stmt;
 pub mod visit;
 
 pub use {
+    ast::Ast,
     attribute::{Attribute, AttributeList},
     child::{Checkpoint, ChildId, ChildList, ChildPool},
     decl::{Alias, AliasKind, Decl, Declarator, Var, VarRole},
@@ -27,7 +29,7 @@ pub use {
         EnumDecl, EventHandlerDecl, FunctionDecl, GraphDecl, Import, Item, ModuleAlias,
         NamespaceDecl, ProcessorDecl, StructDecl,
     },
-    node::{Ast, Node, NodeId},
+    node::{Node, NodeId},
     stmt::{
         Block, BreakStmt, ContinueStmt, DeclStmt, ExprStmt, ForStmt, ForwardBranchStmt,
         IfConstStmt, IfStmt, LoopStmt, ReturnStmt, Stmt, WhileStmt,

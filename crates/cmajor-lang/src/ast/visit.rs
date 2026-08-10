@@ -930,10 +930,8 @@ where
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
         visitor.visit(ast, self.element);
-        if let Some(terms) = self.terms {
-            for &term in ast.children(terms) {
-                visitor.visit(ast, term);
-            }
+        for &term in ast.children(self.terms) {
+            visitor.visit(ast, term);
         }
     }
 }

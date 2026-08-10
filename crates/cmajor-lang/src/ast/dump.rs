@@ -630,13 +630,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Expr::VectorSizeSuffix(VectorSizeSuffix { element, terms, .. }) => {
                 let mut children = vec![self.child(*element)];
-                children.extend(
-                    terms
-                        .map(|terms| self.ast.children(terms))
-                        .into_iter()
-                        .flatten()
-                        .map(|&id| self.child(id)),
-                );
+                children.extend(self.ast.children(*terms).iter().map(|&id| self.child(id)));
                 node("VectorSizeSuffix".to_string(), children)
             }
             Expr::ProcessorProperty(ProcessorProperty { name }) => {
