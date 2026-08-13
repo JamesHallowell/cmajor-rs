@@ -382,12 +382,15 @@ fn is_binary_digit(c: char) -> bool {
 mod tests {
     use {super::*, crate::lexer::token::Keyword};
 
-    fn lex(input: &str) -> Vec<(TokenKind, &str)> {
+    fn lex<'a>(input: &'a str) -> Vec<(TokenKind, &'a str)> {
         let token_stream = tokenize(input);
 
         token_stream
             .into_iter()
-            .map(|(id, token)| (token.kind, token_stream.text(input, id)))
+            .map(|(id, token)| {
+                let span = token_stream.span(id);
+                (token.kind, &input[span.start as usize..span.end as usize])
+            })
             .collect()
     }
 

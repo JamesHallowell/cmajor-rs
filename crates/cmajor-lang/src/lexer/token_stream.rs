@@ -46,13 +46,8 @@ impl TokenStream {
         (start..start + token.len).into()
     }
 
-    pub fn to_position_span(&self, span: Range<TokenId>) -> Range<u32> {
+    pub fn to_positions(&self, span: Range<TokenId>) -> Range<u32> {
         (self.positions[span.start]..self.positions[span.end] + self.get(span.end).len).into()
-    }
-
-    pub fn text<'src>(&self, source: &'src str, id: TokenId) -> &'src str {
-        let span = self.span(id);
-        &source[span.start as usize..span.end as usize]
     }
 
     pub fn end_of_file(&self) -> TokenId {

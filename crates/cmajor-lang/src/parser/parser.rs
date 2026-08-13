@@ -19,8 +19,8 @@ use {
         parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
         skip_to_matching, token,
         utils::{
-            self,
             arena::{Arena, SecondaryArena, SparseSecondaryArena},
+            source::Source,
         },
     },
     std::range::Range,
@@ -222,7 +222,7 @@ impl Infix {
 struct Parser<'a> {
     tokens: &'a TokenStream,
     iter: NonTrivialTokenStreamIterator<'a>,
-    source: &'a str,
+    source: Source<'a>,
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Range<TokenId>>,
@@ -252,7 +252,7 @@ macro_rules! expect_identifier {
             let (id, token) = $parser.peek_verbose();
             match token.kind {
                 TokenKind::Identifier => {
-                    let text = $parser.tokens.text($parser.source, id);
+                    let text = $parser.text(id);
 
                     if matches!(text, $expected $(if $guard)?) {
                         $parser.advance()
@@ -395,7 +395,7 @@ impl<'a> Parser<'a> {
         Parser {
             tokens,
             iter: tokens.into_iter().ignore_trivia(),
-            source,
+            source: source.into(),
             nodes: Arena::default(),
             roots: vec![],
             spans: SecondaryArena::default(),
@@ -433,7 +433,8 @@ impl<'a> Parser<'a> {
     }
 
     fn text(&self, token: TokenId) -> &str {
-        self.tokens.text(self.source, token)
+        let span = self.tokens.span(token);
+        &self.source[span]
     }
 
     fn at(&self, kind: impl Into<TokenKind>) -> bool {
@@ -465,13 +466,12 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let position = self.tokens.span(token).start;
+        let span = self.tokens.span(token);
+        let location = self.source.location(span);
 
-        let (line, column) = utils::line_col(self.source, position);
         self.diagnostics.push(Diagnostic {
             token,
-            line,
-            column,
+            location: location.start,
             message: message.into(),
         });
     }

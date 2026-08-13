@@ -18,8 +18,12 @@ use crate::{
     },
     lexer::{TokenId, TokenKind, TokenStream},
     parser::Parse,
-    utils::{self, Column, Line, arena::SparseSecondaryArena},
+    utils::{
+        arena::SparseSecondaryArena,
+        source::{Source, SourceLocation},
+    },
 };
+use std::range::Range;
 
 pub struct Resolution {
     pub symbols: SymbolTable,
@@ -40,7 +44,7 @@ pub fn resolve(source: &str, parse: &Parse) -> Resolution {
 struct Resolver<'a> {
     ast: &'a Ast,
     tokens: &'a TokenStream,
-    source: &'a str,
+    source: Source<'a>,
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     current_scope: ScopeId,
@@ -55,7 +59,7 @@ impl<'a> Resolver<'a> {
         Resolver {
             ast,
             tokens,
-            source,
+            source: source.into(),
             symbols,
             diagnostics: Vec::new(),
             current_scope: global_scope,
@@ -69,7 +73,7 @@ impl<'a> Resolver<'a> {
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic::at_token(
-            self.source,
+            self.source.as_str(),
             self.tokens,
             token,
             message,
@@ -77,7 +81,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn name(&self, token: TokenId) -> &str {
-        self.tokens.text(self.source, token)
+        &self.source[self.tokens.span(token)]
     }
 
     fn declare(
@@ -93,18 +97,18 @@ impl<'a> Resolver<'a> {
             && let Some(existing) = self.symbols.lookup_local(scope, &name)
         {
             let existing = self.symbols.symbol(existing).name_token;
-            let (line, column) = self.location(existing);
+            let location = self.location(existing).start;
             self.error(
                 name_token,
-                format!("redefinition of '{name}' (previously declared at {line}:{column})"),
+                format!("redefinition of '{name}' (previously declared at {location})"),
             );
         }
 
         self.symbols.declare(scope, kind, node, name, name_token)
     }
 
-    fn location(&self, token: TokenId) -> (Line, Column) {
-        utils::line_col(self.source, self.tokens.span(token).start)
+    fn location(&self, token: TokenId) -> Range<SourceLocation> {
+        self.source.location(self.tokens.span(token))
     }
 
     fn declare_container(
@@ -177,7 +181,8 @@ impl<'a> Resolver<'a> {
             return;
         }
 
-        let name = self.tokens.text(self.source, ident);
+        let span = self.tokens.span(ident);
+        let name = &self.source[span];
 
         if self.symbols.lookup_visible(scope, name).is_none() {
             self.error(ident, format!("undeclared identifier '{name}'"));

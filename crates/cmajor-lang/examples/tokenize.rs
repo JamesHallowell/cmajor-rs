@@ -1,4 +1,5 @@
 use cmajor_lang::lexer::tokenize;
+use cmajor_lang::utils::source::Source;
 
 fn main() {
     let path = std::env::args().nth(1).expect("Usage: tokenize <input>");
@@ -10,7 +11,8 @@ fn main() {
     let token_stream = tokenize(&source);
     for (id, token) in token_stream.into_iter().ignore_trivia() {
         let span = token_stream.span(id);
-        let text = token_stream.text(&source, id);
+        let source: Source<'_> = source.as_str().into();
+        let text = &source[span];
 
         println!(
             "{:>4}..{:<4} {:<15} {:?}",

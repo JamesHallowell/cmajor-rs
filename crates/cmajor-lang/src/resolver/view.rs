@@ -1,7 +1,7 @@
 use crate::{
     lexer::TokenStream,
     resolver::{Resolution, ScopeId, SymbolKind},
-    utils,
+    utils::source::{Source, SourceLocation},
 };
 
 pub struct ResolutionView<'a> {
@@ -20,7 +20,8 @@ impl<'a> ResolutionView<'a> {
     }
 
     fn location(&self, position: u32) -> String {
-        let (line, column) = utils::line_col(self.source, position);
+        let SourceLocation { line, column } =
+            Source::new(self.source).location(position..position).start;
         format!("{line}:{column}")
     }
 

@@ -1,13 +1,12 @@
 use crate::{
     lexer::{TokenId, TokenStream},
-    utils::{self, Column, Line},
+    utils::source::{Source, SourceLocation},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
     pub token: TokenId,
-    pub line: Line,
-    pub column: Column,
+    pub location: SourceLocation,
     pub message: String,
 }
 
@@ -19,11 +18,10 @@ impl Diagnostic {
         message: impl Into<String>,
     ) -> Self {
         let span = token_stream.span(token);
-        let (line, column) = utils::line_col(source, span.start);
+        let location = Source::new(source).location(span);
         Self {
             token,
-            line,
-            column,
+            location: location.start,
             message: message.into(),
         }
     }
@@ -31,6 +29,6 @@ impl Diagnostic {
 
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.column, self.message)
+        write!(f, "{}: {}", self.location, self.message)
     }
 }

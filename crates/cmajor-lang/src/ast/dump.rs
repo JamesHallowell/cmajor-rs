@@ -24,6 +24,7 @@ use {
             visit::ExhaustiveVisitor,
         },
         lexer::{TokenId, TokenStream},
+        utils::source::Source,
     },
     std::fmt::Write as _,
 };
@@ -32,7 +33,7 @@ pub fn dump(ast: &Ast, tokens: &TokenStream, source: &str, root: NodeId) -> Stri
     let mut dumper = Dumper {
         ast,
         tokens,
-        source,
+        source: source.into(),
     };
     let mut root_node = dumper.visit(ast, root);
     append_span(&mut root_node, ast, tokens, root);
@@ -43,7 +44,7 @@ pub fn dump(ast: &Ast, tokens: &TokenStream, source: &str, root: NodeId) -> Stri
 }
 
 fn append_span(node: &mut DumpNode, ast: &Ast, tokens: &TokenStream, id: NodeId) {
-    let span = tokens.to_position_span(ast.span(id));
+    let span = tokens.to_positions(ast.span(id));
     let _ = write!(node.label, " {}..{}", span.start, span.end);
 }
 
@@ -74,18 +75,18 @@ fn node(label: String, children: Vec<DumpNode>) -> DumpNode {
 struct Dumper<'a> {
     ast: &'a Ast,
     tokens: &'a TokenStream,
-    source: &'a str,
+    source: Source<'a>,
 }
 
 impl<'a> Dumper<'a> {
-    fn text(&self, token: &TokenId) -> &'a str {
-        self.tokens.text(self.source, *token)
+    fn text(&'a self, token: &TokenId) -> &'a str {
+        let span = self.tokens.span(*token);
+        &self.source[span]
     }
 
     fn child(&mut self, id: NodeId) -> DumpNode {
-        let ast = self.ast;
-        let mut node = self.visit(ast, id);
-        append_span(&mut node, ast, self.tokens, id);
+        let mut node = self.visit(self.ast, id);
+        append_span(&mut node, self.ast, self.tokens, id);
         node
     }
 }
