@@ -1,4 +1,7 @@
-use crate::{ast::node::NodeId, lexer::TokenId};
+use crate::{
+    ast::{annotation::Annotations, child::ChildList, node::NodeId},
+    lexer::TokenId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AliasKind {
@@ -26,9 +29,15 @@ pub struct Declarator {
 pub struct Var {
     pub role: VarRole,
     pub ty: Option<NodeId>,
-    pub is_external: bool,
     pub declarators: Vec<Declarator>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct External {
+    pub ty: NodeId,
+    pub names: ChildList,
+    pub annotations: Annotations,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,4 +52,5 @@ pub struct Alias {
 pub enum Decl {
     Var(Var),
     Alias(Alias),
+    External(External),
 }

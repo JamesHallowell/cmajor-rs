@@ -1,9 +1,6 @@
 use {
-    crate::static_assert_eq,
-    std::{
-        collections::HashMap, marker::PhantomData, mem::size_of, num::NonZero,
-        range::RangeInclusive,
-    },
+    crate::static_assert_size,
+    std::{collections::HashMap, marker::PhantomData, num::NonZero, range::RangeInclusive},
 };
 
 #[derive(Debug, Clone)]
@@ -57,10 +54,10 @@ macro_rules! arena_key {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct KeyData(NonZero<u32>);
 
-static_assert_eq!(size_of::<Option<KeyData>>(), size_of::<u32>());
+static_assert_size!(Option<KeyData>, 4);
 
 impl KeyData {
-    fn to_index(&self) -> usize {
+    fn to_index(self) -> usize {
         (self.0.get() - 1) as usize
     }
 

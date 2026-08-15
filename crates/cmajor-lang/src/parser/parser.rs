@@ -2,15 +2,15 @@ use {
     crate::{
         Diagnostic,
         ast::{
-            self, Alias, Assign, Ast, Attribute, AttributeList, Binary, Block, Bracketed,
-            BreakStmt, Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf,
-            ContinueStmt, Decl, DeclStmt, Declarator, EndpointDeclaration, EnumDecl,
-            EventHandlerDecl, Expr, ExprStmt, Field, ForStmt, ForwardBranchStmt, FunctionDecl,
-            Graph, GraphDecl, HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt,
-            Import, InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl,
-            NodeId, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
-            ScopeAccess, Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole,
-            VectorSizeSuffix, WhileStmt,
+            self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
+            Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
+            Decl, DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EventHandlerDecl, Expr,
+            ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl,
+            HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
+            InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
+            Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess,
+            Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole, VectorSizeSuffix,
+            WhileStmt,
         },
         lexer::{
             Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
@@ -445,10 +445,6 @@ impl<'a> Parser<'a> {
         self.peek() != kind.into()
     }
 
-    fn at_attribute_list(&self) -> bool {
-        self.peek_2() == (token!('['), token!('['))
-    }
-
     fn advance(&mut self) -> TokenId {
         self.iter
             .next()
@@ -503,6 +499,11 @@ impl<'a> Parser<'a> {
             let root = self.parse_statement();
             self.roots.push(root);
         }
+    }
+
+    fn parse_identifier(&mut self) -> NodeId {
+        let token = self.expect(TokenKind::Identifier);
+        self.add_node(token, Expr::Ident(Ident { token }))
     }
 
     fn parse_expr(&mut self) -> NodeId {
@@ -850,8 +851,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_external_decl(&mut self) -> NodeId {
-        self.expect(token!(external));
-        self.parse_typed_decl_inner(true, true)
+        let external = self.expect(token!(external));
+        let ty = self.parse_type();
+
+        let names = self.child_pool.checkpoint();
+        let names = names.with_at_least_one_staged(self.parse_identifier());
+        while_consuming!(self, token!(,), {
+            names.stage(self.parse_identifier());
+        });
+        let names = self.child_pool.commit(names);
+
+        let annotations = self.parse_annotations();
+
+        self.add_node(
+            external,
+            Decl::External(External {
+                ty,
+                names,
+                annotations,
+            }),
+        )
     }
 
     fn parse_using_stmt(&mut self) -> NodeId {
@@ -875,10 +894,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_typed_decl(&mut self) -> NodeId {
-        self.parse_typed_decl_inner(true, false)
+        self.parse_typed_decl_inner(true)
     }
 
-    fn parse_typed_decl_inner(&mut self, consume_semicolon: bool, is_external: bool) -> NodeId {
+    fn parse_typed_decl_inner(&mut self, consume_semicolon: bool) -> NodeId {
         let ty = self.parse_type();
         let name = self.expect(TokenKind::Identifier);
 
@@ -902,9 +921,7 @@ impl<'a> Parser<'a> {
                 .then(|| self.parse_expr());
             declarators.push(Declarator { name, init });
         });
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let annotations = self.parse_annotations();
         if consume_semicolon {
             self.expect(token!(;));
         }
@@ -914,9 +931,8 @@ impl<'a> Parser<'a> {
             Decl::Var(Var {
                 role: VarRole::Typed,
                 ty: Some(ty),
-                is_external,
                 declarators,
-                attributes,
+                annotations,
             }),
         );
         let start = self.spans[decl].start;
@@ -941,9 +957,8 @@ impl<'a> Parser<'a> {
             Decl::Var(Var {
                 role: VarRole::Parameter,
                 ty: Some(ty),
-                is_external: false,
                 declarators: vec![Declarator { name, init: None }],
-                attributes: None,
+                annotations: Annotations::default(),
             }),
         )
     }
@@ -960,9 +975,7 @@ impl<'a> Parser<'a> {
     ) -> NodeId {
         let params = self.parse_params();
         let is_const = self.advance_if(token!(const)).is_some();
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let attributes = self.parse_annotations();
         let body = self.parse_block(None);
 
         let start = self.spans[returns].start;
@@ -974,7 +987,7 @@ impl<'a> Parser<'a> {
                 generics,
                 params,
                 is_const,
-                attributes,
+                annotations: attributes,
                 body,
             }),
         )
@@ -993,7 +1006,7 @@ impl<'a> Parser<'a> {
                 generics: Vec::new(),
                 params,
                 is_const: false,
-                attributes: None,
+                annotations: Annotations::default(),
                 body,
             }),
         )
@@ -1021,9 +1034,7 @@ impl<'a> Parser<'a> {
             );
         }
 
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let annotations = self.parse_annotations();
         self.expect(token!('{'));
         let items = self.parse_container_items();
         self.expect(token!('}'));
@@ -1034,7 +1045,7 @@ impl<'a> Parser<'a> {
                 keyword,
                 segments,
                 params,
-                attributes,
+                annotations,
                 items,
             }),
         )
@@ -1114,9 +1125,8 @@ impl<'a> Parser<'a> {
                     Decl::Var(Var {
                         role: VarRole::SpecialisationValue,
                         ty: Some(ty),
-                        is_external: false,
                         declarators: vec![Declarator { name, init }],
-                        attributes: None,
+                        annotations: Annotations::default(),
                     }),
                 )
             }
@@ -1143,9 +1153,7 @@ impl<'a> Parser<'a> {
             );
         }
 
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let annotations = self.parse_annotations();
 
         self.expect(token!('{'));
         let items = self.parse_container_items();
@@ -1158,7 +1166,7 @@ impl<'a> Parser<'a> {
                     keyword,
                     name,
                     params,
-                    attributes,
+                    annotations,
                     items,
                 }),
             ),
@@ -1167,7 +1175,7 @@ impl<'a> Parser<'a> {
                 Item::StructDecl(StructDecl {
                     keyword,
                     name,
-                    attributes,
+                    annotations,
                     items,
                 }),
             ),
@@ -1177,7 +1185,7 @@ impl<'a> Parser<'a> {
                     keyword,
                     name,
                     params,
-                    attributes,
+                    annotations,
                     items,
                 }),
             ),
@@ -1433,14 +1441,12 @@ impl<'a> Parser<'a> {
 
     fn parse_for_init(&mut self) -> NodeId {
         match self.peek() {
-            token!(const) => self.parse_typed_decl_inner(false, false),
+            token!(const) => self.parse_typed_decl_inner(false),
             token!(let) => self.parse_let_or_var_inner(token!(let), VarRole::Let, false),
             token!(var) => self.parse_let_or_var_inner(token!(var), VarRole::Var, false),
-            TokenKind::Keyword(keyword) if keyword.is_type() => {
-                self.parse_typed_decl_inner(false, false)
-            }
+            TokenKind::Keyword(keyword) if keyword.is_type() => self.parse_typed_decl_inner(false),
             TokenKind::Identifier if self.looks_like_typed_decl() => {
-                self.parse_typed_decl_inner(false, false)
+                self.parse_typed_decl_inner(false)
             }
             _ => {
                 let expr = self.parse_expr();
@@ -1498,23 +1504,26 @@ impl<'a> Parser<'a> {
         matches!(tokens.next(), Some((_, token)) if token.kind == TokenKind::Identifier)
     }
 
-    fn parse_attribute(&mut self) -> Attribute {
-        let key = match self.peek() {
-            TokenKind::Identifier | TokenKind::Keyword(_) => self.advance(),
-            _ => self.expect(TokenKind::Identifier),
-        };
-        let value = self
-            .advance_if(token!(:))
-            .is_some()
-            .then(|| self.parse_expr());
+    fn parse_annotations(&mut self) -> Annotations {
+        if self.peek_2() != (token!('['), token!('[')) {
+            return Annotations::default();
+        }
 
-        Attribute { key, value }
-    }
+        let annotations = self.child_pool.checkpoint();
+        list2!(self, [[]], {
+            let key = match self.peek() {
+                TokenKind::Identifier | TokenKind::Keyword(_) => self.advance(),
+                _ => self.expect(TokenKind::Identifier),
+            };
+            let value = self
+                .advance_if(token!(:))
+                .is_some()
+                .then(|| self.parse_expr());
 
-    fn parse_attribute_list(&mut self) -> NodeId {
-        let (start, _) = self.peek_verbose();
-        let attributes = list!(self, [[]], self.parse_attribute());
-        self.add_node(start, AttributeList { attributes })
+            annotations.stage(self.add_node(key, Annotation { key, value }));
+        });
+
+        self.child_pool.commit(annotations).into()
     }
 
     fn looks_like_hoisted_endpoint(&self) -> bool {
@@ -1549,9 +1558,7 @@ impl<'a> Parser<'a> {
 
         let rename = self.advance_if(TokenKind::Identifier);
 
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let annotations = self.parse_annotations();
         self.expect(token!(;));
 
         let name = match target {
@@ -1567,7 +1574,7 @@ impl<'a> Parser<'a> {
                 index,
                 target,
                 name,
-                attributes,
+                annotations,
             }),
         )
     }
@@ -1584,9 +1591,7 @@ impl<'a> Parser<'a> {
             names.push(self.parse_endpoint_name());
         });
 
-        let attributes = self
-            .at_attribute_list()
-            .then(|| self.parse_attribute_list());
+        let annotations = self.parse_annotations();
         self.expect(token!(;));
 
         names
@@ -1600,7 +1605,7 @@ impl<'a> Parser<'a> {
                         types: types.clone(),
                         name,
                         size,
-                        attributes,
+                        annotations,
                     }),
                 )
             })
@@ -1609,7 +1614,7 @@ impl<'a> Parser<'a> {
 
     fn parse_endpoint_name(&mut self) -> (TokenId, Option<NodeId>) {
         let name = self.expect(TokenKind::Identifier);
-        let size = (self.at(token!('[')) && !self.at_attribute_list())
+        let size = (self.at(token!('[')) && self.peek_2() != (token!('['), token!('[')))
             .then(|| self.advance())
             .and_then(|_| {
                 let size = self.not_at(token!(']')).then(|| self.parse_expr());
@@ -1706,9 +1711,8 @@ impl<'a> Parser<'a> {
             Decl::Var(Var {
                 role,
                 ty: None,
-                is_external: false,
                 declarators,
-                attributes: None,
+                annotations: Annotations::default(),
             }),
         );
         let start = self.spans[decl].start;
@@ -2834,10 +2838,22 @@ mod tests {
 
     #[test]
     fn external_var_decl() {
-        insta::assert_snapshot!(parse_stmt("external float64 one;"), @r#"
-        VarDecl external typed "one" 9..21
+        insta::assert_snapshot!(parse_stmt("external float64 one;"), @"
+        External 0..20
           float64 9..16
-        "#);
+          one 17..20
+        ");
+    }
+
+    #[test]
+    fn external_multiple_vars() {
+        insta::assert_snapshot!(parse_stmt("external float64 one, two, three;"), @"
+        External 0..32
+          float64 9..16
+          one 17..20
+          two 22..25
+          three 27..32
+        ");
     }
 
     #[test]
@@ -2962,12 +2978,12 @@ mod tests {
             @r#"
         EndpointDecl input event "hpEnable" 0..71
           bool 12..16
-          AttributeList 26..70
-            "name"
+          Annotations
+            "name" 29..46
               "HP Enable" 35..46
-            "init"
+            "init" 48..58
               true 54..58
-            "boolean"
+            "boolean" 60..67
         "#
         );
     }
@@ -2978,8 +2994,8 @@ mod tests {
         EndpointDecl input stream "in" 0..41
           float 13..18
           10 22..24
-          AttributeList 26..40
-            "min"
+          Annotations
+            "min" 29..37
               0.0 34..37
         "#);
     }
@@ -2997,8 +3013,8 @@ mod tests {
     fn hoisted_endpoint_with_attributes() {
         insta::assert_snapshot!(parse_stmt("input filter.frequency [[ mid: 1000 ]];"), @r#"
         EndpointDecl input filter.frequency 0..39
-          AttributeList 23..38
-            "mid"
+          Annotations
+            "mid" 26..35
               1000 31..35
         "#);
     }
@@ -3009,8 +3025,8 @@ mod tests {
             parse_stmt("input modulator.frequencyIn modulationFrequency [[ min: 1.0 ]];"),
             @r#"
         EndpointDecl input modulator.frequencyIn 0..63
-          AttributeList 48..62
-            "min"
+          Annotations
+            "min" 51..59
               1.0 56..59
         "#
         );

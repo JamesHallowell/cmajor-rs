@@ -1,5 +1,5 @@
 use crate::{
-    ast::{child::ChildList, node::NodeId},
+    ast::{annotation::Annotations, child::ChildList, node::NodeId},
     lexer::TokenId,
 };
 
@@ -26,7 +26,7 @@ pub struct EndpointDeclaration {
     pub types: Vec<NodeId>,
     pub name: TokenId,
     pub size: Option<NodeId>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,7 +36,7 @@ pub struct HoistedEndpointDeclaration {
     pub index: Option<NodeId>,
     pub target: HoistTarget,
     pub name: Option<TokenId>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
 }
 
 #[derive(Debug, Clone, PartialEq)]

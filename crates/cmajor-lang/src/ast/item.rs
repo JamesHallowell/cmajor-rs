@@ -1,5 +1,5 @@
 use crate::{
-    ast::{decl::AliasKind, node::NodeId},
+    ast::{annotation::Annotations, decl::AliasKind, node::NodeId},
     lexer::TokenId,
 };
 
@@ -8,7 +8,7 @@ pub struct NamespaceDecl {
     pub keyword: TokenId,
     pub segments: Vec<TokenId>,
     pub params: Vec<NodeId>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub items: Vec<NodeId>,
 }
 
@@ -17,7 +17,7 @@ pub struct ProcessorDecl {
     pub keyword: TokenId,
     pub name: TokenId,
     pub params: Vec<NodeId>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub items: Vec<NodeId>,
 }
 
@@ -26,7 +26,7 @@ pub struct GraphDecl {
     pub keyword: TokenId,
     pub name: TokenId,
     pub params: Vec<NodeId>,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub items: Vec<NodeId>,
 }
 
@@ -34,7 +34,7 @@ pub struct GraphDecl {
 pub struct StructDecl {
     pub keyword: TokenId,
     pub name: TokenId,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub items: Vec<NodeId>,
 }
 
@@ -52,7 +52,7 @@ pub struct FunctionDecl {
     pub generics: Vec<TokenId>,
     pub params: Vec<NodeId>,
     pub is_const: bool,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub body: NodeId,
 }
 
@@ -62,7 +62,7 @@ pub struct EventHandlerDecl {
     pub generics: Vec<TokenId>,
     pub params: Vec<NodeId>,
     pub is_const: bool,
-    pub attributes: Option<NodeId>,
+    pub annotations: Annotations,
     pub body: NodeId,
 }
 

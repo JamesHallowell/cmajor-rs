@@ -257,8 +257,10 @@ impl<'a> Visitor for Resolver<'a> {
             for &param in &function_decl.params {
                 this.visit(ast, param);
             }
-            if let Some(attributes) = function_decl.attributes {
-                this.visit(ast, attributes);
+            if let Some(annotations) = function_decl.annotations.get() {
+                for &annotation in ast.children(annotations) {
+                    this.visit(ast, annotation);
+                }
             }
 
             let Node::Stmt(Stmt::Block(body)) = ast.get(function_decl.body) else {

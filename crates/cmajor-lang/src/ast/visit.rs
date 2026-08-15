@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        Ast, AttributeList, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId, Stmt,
-        decl::{Alias, Var},
+        Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId, Stmt,
+        decl::{Alias, External, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
             ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
@@ -91,6 +91,11 @@ pub trait Visitor {
     fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
         let _ = id;
         alias.walk(ast, self);
+    }
+
+    fn visit_external(&mut self, ast: &Ast, id: NodeId, external: &External) {
+        let _ = id;
+        external.walk(ast, self);
     }
 
     fn visit_graph(&mut self, ast: &Ast, id: NodeId, graph: &Graph) {
@@ -274,9 +279,9 @@ pub trait Visitor {
     fn visit_processor_property(&mut self, _ast: &Ast, _id: NodeId, _property: &ProcessorProperty) {
     }
 
-    fn visit_attribute_list(&mut self, ast: &Ast, id: NodeId, attribute_list: &AttributeList) {
+    fn visit_annotation(&mut self, ast: &Ast, id: NodeId, annotation: &Annotation) {
         let _ = id;
-        attribute_list.walk(ast, self);
+        annotation.walk(ast, self);
     }
 
     fn visit_error(&mut self, _ast: &Ast, _id: NodeId, _token: TokenId) {}
@@ -290,12 +295,7 @@ pub trait ExhaustiveVisitor {
     fn visit_graph(&mut self, ast: &Ast, id: NodeId, graph: &Graph) -> Self::Output;
     fn visit_stmt(&mut self, ast: &Ast, id: NodeId, stmt: &Stmt) -> Self::Output;
     fn visit_expr(&mut self, ast: &Ast, id: NodeId, expr: &Expr) -> Self::Output;
-    fn visit_attribute_list(
-        &mut self,
-        ast: &Ast,
-        id: NodeId,
-        attribute_list: &AttributeList,
-    ) -> Self::Output;
+    fn visit_annotation(&mut self, ast: &Ast, id: NodeId, annotation: &Annotation) -> Self::Output;
     fn visit_error(&mut self, ast: &Ast, id: NodeId, token: TokenId) -> Self::Output;
 
     fn visit(&mut self, ast: &Ast, id: NodeId) -> Self::Output {
@@ -305,9 +305,7 @@ pub trait ExhaustiveVisitor {
             Node::Graph(graph) => self.visit_graph(ast, id, graph),
             Node::Stmt(stmt) => self.visit_stmt(ast, id, stmt),
             Node::Expr(expr) => self.visit_expr(ast, id, expr),
-            Node::AttributeList(attribute_list) => {
-                self.visit_attribute_list(ast, id, attribute_list)
-            }
+            Node::Annotation(attribute_list) => self.visit_annotation(ast, id, attribute_list),
             Node::Error { token } => self.visit_error(ast, id, *token),
         }
     }
@@ -330,9 +328,7 @@ where
         Node::Graph(graph) => visitor.visit_graph(ast, id, graph),
         Node::Stmt(stmt) => visitor.visit_stmt(ast, id, stmt),
         Node::Expr(expr) => visitor.visit_expr(ast, id, expr),
-        Node::AttributeList(attribute_list) => {
-            visitor.visit_attribute_list(ast, id, attribute_list)
-        }
+        Node::Annotation(annotation) => visitor.visit_annotation(ast, id, annotation),
         Node::Error { token } => visitor.visit_error(ast, id, *token),
     }
 }
@@ -367,6 +363,7 @@ where
     match decl {
         Decl::Var(var) => visitor.visit_var(ast, id, var),
         Decl::Alias(alias) => visitor.visit_alias(ast, id, alias),
+        Decl::External(external) => visitor.visit_external(ast, id, external),
     }
 }
 
@@ -436,15 +433,13 @@ where
     }
 }
 
-impl<V> Walk<V> for AttributeList
+impl<V> Walk<V> for Annotation
 where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for attribute in &self.attributes {
-            if let Some(value) = attribute.value {
-                visitor.visit(ast, value);
-            }
+        if let Some(value) = self.value {
+            visitor.visit(ast, value);
         }
     }
 }
@@ -457,8 +452,10 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -474,8 +471,10 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -491,8 +490,10 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -505,8 +506,10 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -523,8 +526,10 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         visitor.visit(ast, self.body);
     }
@@ -538,8 +543,10 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
         visitor.visit(ast, self.body);
     }
@@ -565,28 +572,35 @@ where
     }
 }
 
+impl<V> Walk<V> for External
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.ty);
+        for &name in ast.children(self.names) {
+            visitor.visit(ast, name);
+        }
+    }
+}
+
 impl<V> Walk<V> for Var
 where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        let Var {
-            ty,
-            declarators,
-            attributes,
-            ..
-        } = self;
-
-        if let Some(ty) = ty {
-            visitor.visit(ast, *ty);
+        if let Some(ty) = self.ty {
+            visitor.visit(ast, ty);
         }
-        for declarator in declarators {
+        for declarator in &self.declarators {
             if let Some(init) = declarator.init {
                 visitor.visit(ast, init);
             }
         }
-        if let Some(attributes) = attributes {
-            visitor.visit(ast, *attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
     }
 }
@@ -602,8 +616,10 @@ where
         if let Some(size) = self.size {
             visitor.visit(ast, size);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
     }
 }
@@ -616,8 +632,10 @@ where
         if let Some(index) = self.index {
             visitor.visit(ast, index);
         }
-        if let Some(attributes) = self.attributes {
-            visitor.visit(ast, attributes);
+        if let Some(annotations) = self.annotations.get() {
+            for &annotation in ast.children(annotations) {
+                visitor.visit(ast, annotation);
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     arena_key,
-    ast::{attribute::AttributeList, decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
+    ast::{annotation::Annotation, decl::Decl, expr::Expr, graph::Graph, item::Item, stmt::Stmt},
     lexer::TokenId,
 };
 
@@ -13,7 +13,7 @@ pub enum Node {
     Decl(Decl),
     Item(Item),
     Graph(Graph),
-    AttributeList(AttributeList),
+    Annotation(Annotation),
     Error { token: TokenId },
 }
 
@@ -47,8 +47,8 @@ impl From<Graph> for Node {
     }
 }
 
-impl From<AttributeList> for Node {
-    fn from(attribute_list: AttributeList) -> Self {
-        Node::AttributeList(attribute_list)
+impl From<Annotation> for Node {
+    fn from(annotation: Annotation) -> Self {
+        Node::Annotation(annotation)
     }
 }

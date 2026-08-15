@@ -1,6 +1,6 @@
+mod annotation;
 #[allow(clippy::module_inception)]
 mod ast;
-mod attribute;
 mod child;
 mod decl;
 mod dump;
@@ -12,10 +12,10 @@ mod stmt;
 pub mod visit;
 
 pub use {
+    annotation::{Annotation, Annotations},
     ast::Ast,
-    attribute::{Attribute, AttributeList},
     child::{Checkpoint, ChildId, ChildList, ChildPool},
-    decl::{Alias, AliasKind, Decl, Declarator, Var, VarRole},
+    decl::{Alias, AliasKind, Decl, Declarator, External, Var, VarRole},
     dump::dump,
     expr::{
         Assign, Binary, Bracketed, Call, Expr, Field, Ident, Literal, Parentheses, PostfixUnary,
