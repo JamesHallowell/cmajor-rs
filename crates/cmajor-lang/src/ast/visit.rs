@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId, Stmt,
-        decl::{Alias, External, Var},
+        decl::{Alias, Declarator, External, Param, SpecialisationValue, TypedDecl, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
             ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
@@ -86,6 +86,31 @@ pub trait Visitor {
     fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
         let _ = id;
         var.walk(ast, self);
+    }
+
+    fn visit_declarator(&mut self, ast: &Ast, id: NodeId, declarator: &Declarator) {
+        let _ = id;
+        declarator.walk(ast, self);
+    }
+
+    fn visit_typed_decl(&mut self, ast: &Ast, id: NodeId, typed_decl: &TypedDecl) {
+        let _ = id;
+        typed_decl.walk(ast, self);
+    }
+
+    fn visit_param(&mut self, ast: &Ast, id: NodeId, param: &Param) {
+        let _ = id;
+        param.walk(ast, self);
+    }
+
+    fn visit_specialisation_value(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        specialisation_value: &SpecialisationValue,
+    ) {
+        let _ = id;
+        specialisation_value.walk(ast, self);
     }
 
     fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
@@ -362,8 +387,14 @@ where
 {
     match decl {
         Decl::Var(var) => visitor.visit_var(ast, id, var),
+        Decl::TypedDecl(typed_decl) => visitor.visit_typed_decl(ast, id, typed_decl),
+        Decl::Param(param) => visitor.visit_param(ast, id, param),
+        Decl::SpecialisationValue(specialisation_value) => {
+            visitor.visit_specialisation_value(ast, id, specialisation_value)
+        }
         Decl::Alias(alias) => visitor.visit_alias(ast, id, alias),
         Decl::External(external) => visitor.visit_external(ast, id, external),
+        Decl::Declarator(declarator) => visitor.visit_declarator(ast, id, declarator),
     }
 }
 
@@ -452,10 +483,8 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -471,10 +500,8 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -490,10 +517,8 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -506,10 +531,8 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         for &member in &self.items {
             visitor.visit(ast, member);
@@ -526,10 +549,8 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         visitor.visit(ast, self.body);
     }
@@ -543,10 +564,8 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
         visitor.visit(ast, self.body);
     }
@@ -589,18 +608,55 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        if let Some(ty) = self.ty {
-            visitor.visit(ast, ty);
+        for &declarator in ast.children(self.declarators) {
+            visitor.visit(ast, declarator);
         }
-        for declarator in &self.declarators {
-            if let Some(init) = declarator.init {
-                visitor.visit(ast, init);
-            }
+    }
+}
+
+impl<V> Walk<V> for TypedDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.ty);
+        for &declarator in ast.children(self.declarators) {
+            visitor.visit(ast, declarator);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
+        }
+    }
+}
+
+impl<V> Walk<V> for Param
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.ty);
+    }
+}
+
+impl<V> Walk<V> for SpecialisationValue
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        visitor.visit(ast, self.ty);
+        if let Some(init) = self.init {
+            visitor.visit(ast, init);
+        }
+    }
+}
+
+impl<V> Walk<V> for Declarator
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        if let Some(init) = self.init {
+            visitor.visit(ast, init);
         }
     }
 }
@@ -616,10 +672,8 @@ where
         if let Some(size) = self.size {
             visitor.visit(ast, size);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
     }
 }
@@ -632,10 +686,8 @@ where
         if let Some(index) = self.index {
             visitor.visit(ast, index);
         }
-        if let Some(annotations) = self.annotations.get() {
-            for &annotation in ast.children(annotations) {
-                visitor.visit(ast, annotation);
-            }
+        for (annotation, _) in self.annotations.get(ast) {
+            visitor.visit(ast, annotation);
         }
     }
 }

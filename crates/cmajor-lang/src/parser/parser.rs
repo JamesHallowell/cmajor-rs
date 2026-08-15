@@ -8,9 +8,9 @@ use {
             ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl,
             HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
             InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
-            Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess,
-            Slice, Stmt, StructDecl, Ternary, TypeModifier, Unary, Var, VarRole, VectorSizeSuffix,
-            WhileStmt,
+            Param, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
+            ScopeAccess, Slice, SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier,
+            TypedDecl, Unary, Var, VarKind, VectorSizeSuffix, WhileStmt,
         },
         lexer::{
             Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
@@ -883,7 +883,6 @@ impl<'a> Parser<'a> {
         let decl = self.add_node(
             keyword,
             Decl::Alias(Alias {
-                keyword,
                 kind: ast::AliasKind::Using,
                 name,
                 target: Some(target),
@@ -906,21 +905,23 @@ impl<'a> Parser<'a> {
             return self.parse_function_decl(ty, name, generics);
         }
 
-        let mut declarators = vec![Declarator {
-            name,
-            init: self
-                .advance_if(token!(=))
-                .is_some()
-                .then(|| self.parse_expr()),
-        }];
+        let init = self
+            .advance_if(token!(=))
+            .is_some()
+            .then(|| self.parse_expr());
+        let first = self.add_node(name, Decl::Declarator(Declarator { name, init }));
+        let declarators = self.child_pool.checkpoint();
+        let declarators = declarators.with_at_least_one_staged(first);
         while_consuming!(self, token!(,), {
             let name = self.expect(TokenKind::Identifier);
             let init = self
                 .advance_if(token!(=))
                 .is_some()
                 .then(|| self.parse_expr());
-            declarators.push(Declarator { name, init });
+            let declarator = self.add_node(name, Decl::Declarator(Declarator { name, init }));
+            declarators.stage(declarator);
         });
+        let declarators = self.child_pool.commit(declarators);
         let annotations = self.parse_annotations();
         if consume_semicolon {
             self.expect(token!(;));
@@ -928,9 +929,8 @@ impl<'a> Parser<'a> {
         let start = self.spans[ty].start;
         let decl = self.add_node(
             start,
-            Decl::Var(Var {
-                role: VarRole::Typed,
-                ty: Some(ty),
+            Decl::TypedDecl(TypedDecl {
+                ty,
                 declarators,
                 annotations,
             }),
@@ -952,15 +952,7 @@ impl<'a> Parser<'a> {
         let name = self.expect(TokenKind::Identifier);
 
         let start = self.spans[ty].start;
-        self.add_node(
-            start,
-            Decl::Var(Var {
-                role: VarRole::Parameter,
-                ty: Some(ty),
-                declarators: vec![Declarator { name, init: None }],
-                annotations: Annotations::default(),
-            }),
-        )
+        self.add_node(start, Decl::Param(Param { ty, name }))
     }
 
     fn parse_params(&mut self) -> Vec<NodeId> {
@@ -1071,7 +1063,6 @@ impl<'a> Parser<'a> {
                 self.add_node(
                     keyword,
                     Decl::Alias(Alias {
-                        keyword,
                         kind: ast::AliasKind::Using,
                         name,
                         target,
@@ -1088,7 +1079,6 @@ impl<'a> Parser<'a> {
                 self.add_node(
                     keyword,
                     Decl::Alias(Alias {
-                        keyword,
                         kind: ast::AliasKind::Processor,
                         name,
                         target,
@@ -1105,7 +1095,6 @@ impl<'a> Parser<'a> {
                 self.add_node(
                     keyword,
                     Decl::Alias(Alias {
-                        keyword,
                         kind: ast::AliasKind::Namespace,
                         name,
                         target,
@@ -1122,12 +1111,7 @@ impl<'a> Parser<'a> {
                 let start = self.spans[ty].start;
                 self.add_node(
                     start,
-                    Decl::Var(Var {
-                        role: VarRole::SpecialisationValue,
-                        ty: Some(ty),
-                        declarators: vec![Declarator { name, init }],
-                        annotations: Annotations::default(),
-                    }),
+                    Decl::SpecialisationValue(SpecialisationValue { ty, name, init }),
                 )
             }
         }
@@ -1442,8 +1426,8 @@ impl<'a> Parser<'a> {
     fn parse_for_init(&mut self) -> NodeId {
         match self.peek() {
             token!(const) => self.parse_typed_decl_inner(false),
-            token!(let) => self.parse_let_or_var_inner(token!(let), VarRole::Let, false),
-            token!(var) => self.parse_let_or_var_inner(token!(var), VarRole::Var, false),
+            token!(let) => self.parse_let_or_var_inner(token!(let), VarKind::Let, false),
+            token!(var) => self.parse_let_or_var_inner(token!(var), VarKind::Var, false),
             TokenKind::Keyword(keyword) if keyword.is_type() => self.parse_typed_decl_inner(false),
             TokenKind::Identifier if self.looks_like_typed_decl() => {
                 self.parse_typed_decl_inner(false)
@@ -1682,51 +1666,48 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_let(&mut self) -> NodeId {
-        self.parse_let_or_var_inner(token!(let), VarRole::Let, true)
+        self.parse_let_or_var_inner(token!(let), VarKind::Let, true)
     }
 
     fn parse_var(&mut self) -> NodeId {
-        self.parse_let_or_var_inner(token!(var), VarRole::Var, true)
+        self.parse_let_or_var_inner(token!(var), VarKind::Var, true)
     }
 
     fn parse_let_or_var_inner(
         &mut self,
         keyword: impl Into<TokenKind>,
-        role: VarRole,
+        kind: VarKind,
         consume_semicolon: bool,
     ) -> NodeId {
         let keyword = self.expect(keyword);
 
-        let mut declarators = vec![self.parse_let_declarator()];
+        let declarators = self.child_pool.checkpoint();
+        let declarators = declarators.with_at_least_one_staged(self.parse_let_declarator());
         while_consuming!(self, token!(,), {
-            declarators.push(self.parse_let_declarator());
+            declarators.stage(self.parse_let_declarator());
         });
+        let declarators = self.child_pool.commit(declarators);
 
         if consume_semicolon {
             self.expect(token!(;));
         }
 
-        let decl = self.add_node(
-            keyword,
-            Decl::Var(Var {
-                role,
-                ty: None,
-                declarators,
-                annotations: Annotations::default(),
-            }),
-        );
+        let decl = self.add_node(keyword, Decl::Var(Var { kind, declarators }));
         let start = self.spans[decl].start;
         self.add_node(start, Stmt::DeclStmt(DeclStmt { decl }))
     }
 
-    fn parse_let_declarator(&mut self) -> Declarator {
+    fn parse_let_declarator(&mut self) -> NodeId {
         let name = self.expect(TokenKind::Identifier);
         self.expect(token!(=));
         let init = self.parse_expr();
-        Declarator {
+        self.add_node(
             name,
-            init: Some(init),
-        }
+            Decl::Declarator(Declarator {
+                name,
+                init: Some(init),
+            }),
+        )
     }
 
     fn parse_if(&mut self) -> NodeId {
@@ -2241,45 +2222,51 @@ mod tests {
     #[test]
     fn let_statement() {
         insta::assert_snapshot!(parse_stmt("let x = 1;"), @r#"
-        VarDecl let "x" 0..10
-          1 8..9
+        VarDecl let 0..10
+          Declarator "x" 4..9
+            1 8..9
         "#);
     }
 
     #[test]
     fn var_with_init_statement() {
         insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
-        VarDecl var "y" 0..10
-          3 8..9
+        VarDecl var 0..10
+          Declarator "y" 4..9
+            3 8..9
         "#);
     }
 
     #[test]
     fn var_multiple_declarators() {
         insta::assert_snapshot!(parse_stmt("var a = 1, b = 2;"), @r#"
-        VarDecl var "a, b" 0..17
-          1 8..9
-          2 15..16
+        VarDecl var 0..17
+          Declarator "a" 4..9
+            1 8..9
+          Declarator "b" 11..16
+            2 15..16
         "#);
     }
 
     #[test]
     fn typed_var_decl_statements() {
         insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
-        VarDecl typed "w" 0..10
+        TypedDecl 0..10
           VectorSizeSuffix 0..7
             wrap 0..4
             5 5..6
+          Declarator "w" 8..9
         "#);
     }
 
     #[test]
     fn const_var_decl_statement() {
         insta::assert_snapshot!(parse_stmt("const int x = 1;"), @r#"
-        VarDecl typed "x" 0..16
+        TypedDecl 0..16
           TypeModifier const 0..9
             int 6..9
-          1 14..15
+          Declarator "x" 10..15
+            1 14..15
         "#);
     }
 
@@ -2369,9 +2356,9 @@ mod tests {
         insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"), @r#"
         FunctionDecl "add" 0..39
           int 0..3
-          VarDecl param "a" 8..13
+          Param "a" 8..13
             int 8..11
-          VarDecl param "b" 15..20
+          Param "b" 15..20
             int 15..18
           Block 22..39
             ReturnStmt 24..37
@@ -2386,10 +2373,10 @@ mod tests {
         insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"), @r#"
         FunctionDecl "f" 0..46
           void 0..4
-          VarDecl param "a" 7..19
+          Param "a" 7..19
             TypeModifier const ref 7..17
               int 13..16
-          VarDecl param "b" 21..41
+          Param "b" 21..41
             TypeModifier const ref 21..39
               Bracketed 27..38
                 float32 27..34
@@ -2426,7 +2413,7 @@ mod tests {
             "processor SquareWave (int length) { output stream int out; }"
         ), @r#"
         ProcessorDecl "SquareWave" 0..60
-          VarDecl specialisation "length" 22..32
+          SpecialisationValue "length" 22..32
             int 22..25
           EndpointDecl output stream "out" 36..58
             int 50..53
@@ -2439,7 +2426,7 @@ mod tests {
             "processor Gain (int channelCount = 2) { output stream int out; }"
         ), @r#"
         ProcessorDecl "Gain" 0..64
-          VarDecl specialisation "channelCount" 16..36
+          SpecialisationValue "channelCount" 16..36
             int 16..19
             2 35..36
           EndpointDecl output stream "out" 40..62
@@ -2479,7 +2466,7 @@ mod tests {
         ), @r#"
         GraphDecl "Wrapper" 0..73
           Alias processor "Parameterised" 15..38
-          VarDecl specialisation "x" 40..45
+          SpecialisationValue "x" 40..45
             int 40..43
           EndpointDecl output stream "out" 49..71
             int 63..66
@@ -2502,7 +2489,7 @@ mod tests {
         ), @r#"
         ProcessorDecl "P" 0..64
           Alias using "T" 13..20
-          VarDecl specialisation "length" 22..36
+          SpecialisationValue "length" 22..36
             int 22..25
             4 35..36
           EndpointDecl output stream "out" 40..62
@@ -2573,10 +2560,11 @@ mod tests {
     #[test]
     fn ambiguous_chevron_at_statement_start_is_read_as_a_type_decl() {
         insta::assert_snapshot!(parse_stmt("a < b > c;"), @r#"
-        VarDecl typed "c" 0..10
+        TypedDecl 0..10
           VectorSizeSuffix 0..7
             a 0..1
             b 4..5
+          Declarator "c" 8..9
         "#);
     }
 
@@ -2776,9 +2764,10 @@ mod tests {
     fn classic_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
         ForStmt 0..43
-          VarDecl typed "i" 5..14
+          TypedDecl 5..14
             int 5..8
-            0 13..14
+            Declarator "i" 9..14
+              0 13..14
           Binary "<" 16..22
             i 16..17
             10 20..22
@@ -2795,10 +2784,11 @@ mod tests {
     fn bounded_range_for_loop() {
         insta::assert_snapshot!(parse_stmt("for (wrap<4> i) { advance(); }"), @r#"
         LoopStmt 0..30
-          VarDecl typed "i" 5..14
+          TypedDecl 5..14
             VectorSizeSuffix 5..12
               wrap 5..9
               4 10..11
+            Declarator "i" 13..14
           Block 16..30
             ExprStmt 18..28
               Call 18..27
@@ -2810,10 +2800,11 @@ mod tests {
     fn labelled_bounded_range_for_loop() {
         insta::assert_snapshot!(parse_stmt("outer: for (wrap<4> i) { advance(); }"), @r#"
         LoopStmt "outer" 0..37
-          VarDecl typed "i" 12..21
+          TypedDecl 12..21
             VectorSizeSuffix 12..19
               wrap 12..16
               4 17..18
+            Declarator "i" 20..21
           Block 23..37
             ExprStmt 25..35
               Call 25..34
@@ -2978,12 +2969,11 @@ mod tests {
             @r#"
         EndpointDecl input event "hpEnable" 0..71
           bool 12..16
-          Annotations
-            "name" 29..46
-              "HP Enable" 35..46
-            "init" 48..58
-              true 54..58
-            "boolean" 60..67
+          Annotation "name" 29..46
+            "HP Enable" 35..46
+          Annotation "init" 48..58
+            true 54..58
+          Annotation "boolean" 60..67
         "#
         );
     }
@@ -2994,9 +2984,8 @@ mod tests {
         EndpointDecl input stream "in" 0..41
           float 13..18
           10 22..24
-          Annotations
-            "min" 29..37
-              0.0 34..37
+          Annotation "min" 29..37
+            0.0 34..37
         "#);
     }
 
@@ -3013,9 +3002,8 @@ mod tests {
     fn hoisted_endpoint_with_attributes() {
         insta::assert_snapshot!(parse_stmt("input filter.frequency [[ mid: 1000 ]];"), @r#"
         EndpointDecl input filter.frequency 0..39
-          Annotations
-            "mid" 26..35
-              1000 31..35
+          Annotation "mid" 26..35
+            1000 31..35
         "#);
     }
 
@@ -3025,9 +3013,8 @@ mod tests {
             parse_stmt("input modulator.frequencyIn modulationFrequency [[ min: 1.0 ]];"),
             @r#"
         EndpointDecl input modulator.frequencyIn 0..63
-          Annotations
-            "min" 51..59
-              1.0 56..59
+          Annotation "min" 51..59
+            1.0 56..59
         "#
         );
     }
@@ -3071,8 +3058,9 @@ mod tests {
     fn three_clause_for_loop_with_var_init() {
         insta::assert_snapshot!(parse_stmt("for (var i = 0; i < 10; ++i) {}"), @r#"
         ForStmt 0..31
-          VarDecl var "i" 5..14
-            0 13..14
+          VarDecl var 5..14
+            Declarator "i" 9..14
+              0 13..14
           Binary "<" 16..22
             i 16..17
             10 20..22
@@ -3086,8 +3074,9 @@ mod tests {
     fn three_clause_for_loop_with_let_init() {
         insta::assert_snapshot!(parse_stmt("for (let i = 0; i < 10; ++i) {}"), @r#"
         ForStmt 0..31
-          VarDecl let "i" 5..14
-            0 13..14
+          VarDecl let 5..14
+            Declarator "i" 9..14
+              0 13..14
           Binary "<" 16..22
             i 16..17
             10 20..22

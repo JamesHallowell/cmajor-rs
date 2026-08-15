@@ -1,5 +1,9 @@
 use {
-    crate::{arena_key, ast::NodeId, utils::arena::Arena},
+    crate::{
+        arena_key,
+        ast::{Ast, NodeId},
+        utils::arena::Arena,
+    },
     std::{
         cell::RefCell,
         marker::PhantomData,
@@ -11,6 +15,22 @@ use {
 arena_key!(ChildId(pub(super) NodeId));
 
 pub type ChildList = RangeInclusive<ChildId>;
+
+pub trait ChildListExt {
+    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId>;
+}
+
+impl ChildListExt for ChildList {
+    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId> {
+        ast.children(*self).iter().copied()
+    }
+}
+
+impl ChildListExt for Option<ChildList> {
+    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId> {
+        self.iter().flat_map(|child_list| child_list.children(ast))
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct ChildPool {

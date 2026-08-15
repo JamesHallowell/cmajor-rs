@@ -13,7 +13,8 @@ use crate::{
     ast::{
         Alias, Ast, Block, EndpointDeclaration, EnumDecl, ForStmt, FunctionDecl, GraphDecl,
         HoistedEndpointDeclaration, IfStmt, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl,
-        NodeId, ProcessorDecl, Stmt, StructDecl, Var, WhileStmt,
+        NodeId, Param, ProcessorDecl, SpecialisationValue, Stmt, StructDecl, TypedDecl, Var,
+        WhileStmt,
         visit::{Visitor, Walk},
     },
     lexer::{TokenId, TokenKind, TokenStream},
@@ -257,10 +258,8 @@ impl<'a> Visitor for Resolver<'a> {
             for &param in &function_decl.params {
                 this.visit(ast, param);
             }
-            if let Some(annotations) = function_decl.annotations.get() {
-                for &annotation in ast.children(annotations) {
-                    this.visit(ast, annotation);
-                }
+            for (annotation, _) in function_decl.annotations.get(ast) {
+                this.visit(ast, annotation);
             }
 
             let Node::Stmt(Stmt::Block(body)) = ast.get(function_decl.body) else {
@@ -275,11 +274,42 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
-        for declarator in &var.declarators {
+        let _ = id;
+
+        for (id, declarator) in var.declarators(ast) {
             self.declare(self.scope(), declarator.name, SymbolKind::Variable, id);
         }
-
         var.walk(ast, self);
+    }
+
+    fn visit_typed_decl(&mut self, ast: &Ast, id: NodeId, typed_decl: &TypedDecl) {
+        let _ = id;
+        for (id, declarator) in typed_decl.declarators(ast) {
+            self.declare(self.scope(), declarator.name, SymbolKind::Variable, id);
+        }
+        typed_decl.walk(ast, self);
+    }
+
+    fn visit_param(&mut self, ast: &Ast, id: NodeId, param: &Param) {
+        self.declare(self.scope(), param.name, SymbolKind::Variable, id);
+
+        param.walk(ast, self);
+    }
+
+    fn visit_specialisation_value(
+        &mut self,
+        ast: &Ast,
+        id: NodeId,
+        specialisation_value: &SpecialisationValue,
+    ) {
+        self.declare(
+            self.scope(),
+            specialisation_value.name,
+            SymbolKind::Variable,
+            id,
+        );
+
+        specialisation_value.walk(ast, self);
     }
 
     fn visit_alias(&mut self, _ast: &Ast, id: NodeId, alias: &Alias) {

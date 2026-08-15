@@ -15,7 +15,10 @@ pub use {
     annotation::{Annotation, Annotations},
     ast::Ast,
     child::{Checkpoint, ChildId, ChildList, ChildPool},
-    decl::{Alias, AliasKind, Decl, Declarator, External, Var, VarRole},
+    decl::{
+        Alias, AliasKind, Decl, Declarator, External, Param, SpecialisationValue, TypedDecl, Var,
+        VarKind,
+    },
     dump::dump,
     expr::{
         Assign, Binary, Bracketed, Call, Expr, Field, Ident, Literal, Parentheses, PostfixUnary,
