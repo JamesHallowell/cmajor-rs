@@ -1,6 +1,7 @@
 use crate::{
     ast::{
-        Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId, Stmt,
+        Annotation, Annotations, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId,
+        Stmt,
         decl::{Alias, Declarator, External, Param, SpecialisationValue, TypedDecl, Var},
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
@@ -475,6 +476,17 @@ where
     }
 }
 
+impl<V> Walk<V> for Annotations
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for (id, annotation) in self.iter(ast) {
+            visitor.visit_annotation(ast, id, annotation);
+        }
+    }
+}
+
 impl<V> Walk<V> for NamespaceDecl
 where
     V: Visitor + ?Sized,
@@ -483,9 +495,7 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         for &member in &self.items {
             visitor.visit(ast, member);
         }
@@ -500,9 +510,7 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         for &member in &self.items {
             visitor.visit(ast, member);
         }
@@ -517,9 +525,7 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         for &member in &self.items {
             visitor.visit(ast, member);
         }
@@ -531,9 +537,7 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         for &member in &self.items {
             visitor.visit(ast, member);
         }
@@ -549,9 +553,7 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         visitor.visit(ast, self.body);
     }
 }
@@ -564,9 +566,7 @@ where
         for &param in &self.params {
             visitor.visit(ast, param);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
         visitor.visit(ast, self.body);
     }
 }
@@ -623,9 +623,7 @@ where
         for &declarator in ast.children(self.declarators) {
             visitor.visit(ast, declarator);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
     }
 }
 
@@ -672,9 +670,7 @@ where
         if let Some(size) = self.size {
             visitor.visit(ast, size);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
     }
 }
 
@@ -686,9 +682,7 @@ where
         if let Some(index) = self.index {
             visitor.visit(ast, index);
         }
-        for (annotation, _) in self.annotations.get(ast) {
-            visitor.visit(ast, annotation);
-        }
+        self.annotations.walk(ast, visitor);
     }
 }
 

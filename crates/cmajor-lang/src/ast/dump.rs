@@ -135,7 +135,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                     .collect::<Vec<_>>()
                     .join("::");
                 let mut children: Vec<_> = params.iter().map(|&id| self.child(id)).collect();
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.extend(items.iter().map(|&id| self.child(id)));
                 node(format!("NamespaceDecl {path:?}"), children)
             }
@@ -147,7 +147,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 ..
             }) => {
                 let mut children: Vec<_> = params.iter().map(|&id| self.child(id)).collect();
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.extend(items.iter().map(|&id| self.child(id)));
                 node(format!("ProcessorDecl {:?}", self.text(name)), children)
             }
@@ -159,7 +159,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 ..
             }) => {
                 let mut children: Vec<_> = params.iter().map(|&id| self.child(id)).collect();
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.extend(items.iter().map(|&id| self.child(id)));
                 node(format!("GraphDecl {:?}", self.text(name)), children)
             }
@@ -170,7 +170,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 ..
             }) => {
                 let mut children = vec![];
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.extend(items.iter().map(|&id| self.child(id)));
                 node(format!("StructDecl {:?}", self.text(name)), children)
             }
@@ -206,7 +206,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let const_suffix = if *is_const { " const" } else { "" };
                 let mut children = vec![self.child(*returns)];
                 children.extend(params.iter().map(|&id| self.child(id)));
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.push(self.child(*body));
                 node(
                     format!(
@@ -239,7 +239,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let const_suffix = if *is_const { " const" } else { "" };
                 let mut children = vec![];
                 children.extend(params.iter().map(|&id| self.child(id)));
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.push(self.child(*body));
                 node(
                     format!(
@@ -287,7 +287,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 annotations,
             }) => {
                 let mut children = vec![self.child(*ty)];
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.extend(declarators.iter(self.ast).map(|id| self.child(id)));
                 node("TypedDecl".to_string(), children)
             }
@@ -323,7 +323,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let label = "External".to_string();
                 let mut children = vec![self.child(*ty)];
                 children.extend(ast.children(*names).iter().map(|&node| self.child(node)));
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 node(label, children)
             }
         }
@@ -345,7 +345,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let label = format!("EndpointDecl {dir} {kind_text} {name_text:?}");
                 let mut children: Vec<_> = types.iter().map(|&id| self.child(id)).collect();
                 children.extend(size.map(|id| self.child(id)));
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 node(label, children)
             }
             Graph::HoistedEndpointDeclaration(HoistedEndpointDeclaration {
@@ -373,7 +373,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 };
                 let label = format!("EndpointDecl {dir} {path}.{target}");
                 let mut children: Vec<_> = index.map(|id| self.child(id)).into_iter().collect();
-                children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
+                children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 node(label, children)
             }
             Graph::NodeDecl(NodeDecl {

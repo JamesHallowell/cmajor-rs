@@ -258,9 +258,7 @@ impl<'a> Visitor for Resolver<'a> {
             for &param in &function_decl.params {
                 this.visit(ast, param);
             }
-            for (annotation, _) in function_decl.annotations.get(ast) {
-                this.visit(ast, annotation);
-            }
+            function_decl.annotations.walk(ast, this);
 
             let Node::Stmt(Stmt::Block(body)) = ast.get(function_decl.body) else {
                 unreachable!("function body is always a block")

@@ -29,14 +29,13 @@ impl From<Option<ChildList>> for Annotations {
 }
 
 impl Annotations {
-    pub fn iter(&self, ast: &Ast) -> impl Iterator<Item = NodeId> {
-        self.0.iter().flat_map(|iter| iter.iter(ast))
-    }
-
-    pub fn get<'ast>(&self, ast: &'ast Ast) -> impl Iterator<Item = (NodeId, &'ast Annotation)> {
-        self.iter(ast).map(|id| match ast.get(id) {
-            Node::Annotation(annotation) => (id, annotation),
-            _ => unreachable!(),
-        })
+    pub fn iter<'ast>(&self, ast: &'ast Ast) -> impl Iterator<Item = (NodeId, &'ast Annotation)> {
+        self.0
+            .iter()
+            .flat_map(|iter| iter.iter(ast))
+            .map(|id| match ast.get(id) {
+                Node::Annotation(annotation) => (id, annotation),
+                _ => unreachable!(),
+            })
     }
 }
