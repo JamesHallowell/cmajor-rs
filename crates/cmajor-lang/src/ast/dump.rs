@@ -3,7 +3,6 @@ use {
         ast::{
             AliasKind, Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, HoistTarget,
             InterpolationKind, Item, NodeId, Stmt, VarKind,
-            child::ChildListExt,
             decl::{Alias, Declarator, External, Param, SpecialisationValue, TypedDecl, Var},
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
@@ -289,7 +288,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }) => {
                 let mut children = vec![self.child(*ty)];
                 children.extend(annotations.iter(self.ast).map(|id| self.child(id)));
-                children.extend(declarators.children(ast).map(|id| self.child(id)));
+                children.extend(declarators.iter(self.ast).map(|id| self.child(id)));
                 node("TypedDecl".to_string(), children)
             }
             Decl::Declarator(Declarator { name, init }) => {

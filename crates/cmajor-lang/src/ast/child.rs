@@ -2,6 +2,7 @@ use {
     crate::{
         arena_key,
         ast::{Ast, NodeId},
+        static_assert_size,
         utils::arena::Arena,
     },
     std::{
@@ -14,21 +15,42 @@ use {
 
 arena_key!(ChildId(pub(super) NodeId));
 
-pub type ChildList = RangeInclusive<ChildId>;
-
-pub trait ChildListExt {
-    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId>;
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ChildList {
+    start: ChildId,
+    last: ChildId,
 }
 
-impl ChildListExt for ChildList {
-    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId> {
-        ast.children(*self).iter().copied()
+static_assert_size!(ChildList, 8);
+static_assert_size!(Option<ChildList>, 8);
+
+impl ChildList {
+    pub fn iter(self, ast: &Ast) -> impl Iterator<Item = NodeId> {
+        ast.children(self).iter().copied()
     }
 }
 
-impl ChildListExt for Option<ChildList> {
-    fn children(&self, ast: &Ast) -> impl Iterator<Item = NodeId> {
-        self.iter().flat_map(|child_list| child_list.children(ast))
+impl From<RangeInclusive<ChildId>> for ChildList {
+    fn from(range: RangeInclusive<ChildId>) -> Self {
+        Self {
+            start: range.start,
+            last: range.last,
+        }
+    }
+}
+
+impl From<ChildList> for RangeInclusive<ChildId> {
+    fn from(child_list: ChildList) -> Self {
+        (child_list.start..=child_list.last).into()
+    }
+}
+
+impl From<std::ops::RangeInclusive<ChildId>> for ChildList {
+    fn from(range: std::ops::RangeInclusive<ChildId>) -> Self {
+        Self {
+            start: *range.start(),
+            last: *range.end(),
+        }
     }
 }
 
@@ -137,7 +159,7 @@ impl ChildPool {
     }
 
     pub fn get(&self, children: ChildList) -> &[NodeId] {
-        self.children.slice(children)
+        self.children.slice(children.into())
     }
 }
 
