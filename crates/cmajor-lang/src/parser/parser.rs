@@ -3,13 +3,13 @@ use crate::{
     ast::{
         self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
         Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl,
-        DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EventHandlerDecl, Expr, ExprStmt,
-        External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget,
-        HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import, InterpolationKind, Item,
-        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Param, Parentheses,
-        PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess, Slice,
-        SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier, TypedDecl, Unary, Var,
-        VarKind, VectorSizeSuffix, WhileStmt,
+        DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
+        ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl,
+        HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
+        InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
+        Param, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
+        ScopeAccess, Slice, SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier,
+        TypedDecl, Unary, Var, VarKind, VectorSizeSuffix, WhileStmt,
     },
     lexer::{
         Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
@@ -833,10 +833,29 @@ impl<'a> Parser<'a> {
         self.add_node(keyword, Item::Import(Import { path }))
     }
 
+    fn parse_enum_value(&mut self) -> NodeId {
+        let name = self.expect(TokenKind::Identifier);
+        self.add_node(name, Decl::EnumValue(EnumValue { name }))
+    }
+
     fn parse_enum(&mut self) -> NodeId {
         let keyword = self.expect(token!(enum));
         let name = self.expect(TokenKind::Identifier);
-        let values = list!(self, {}, self.expect(TokenKind::Identifier));
+
+        self.expect(token!('{'));
+
+        let values = self
+            .child_pool
+            .checkpoint()
+            .with_at_least_one_staged(self.parse_enum_value());
+
+        while_consuming!(self, token!(,), {
+            values.stage(self.parse_enum_value());
+        });
+
+        self.expect(token!('}'));
+
+        let values = self.child_pool.commit(values);
 
         self.add_node(
             keyword,
@@ -2858,7 +2877,12 @@ mod tests {
 
     #[test]
     fn enum_decl() {
-        insta::assert_snapshot!(parse_all("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C} 0..21"#);
+        insta::assert_snapshot!(parse_all("enum Mode { A, B, C }"), @r#"
+        EnumDecl "Mode" 0..21
+          EnumValue "A" 12..13
+          EnumValue "B" 15..16
+          EnumValue "C" 18..19
+        "#);
     }
 
     #[test]

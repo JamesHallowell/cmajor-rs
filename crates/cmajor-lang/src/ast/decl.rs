@@ -68,6 +68,11 @@ pub struct Alias {
     pub target: Option<NodeId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnumValue {
+    pub name: TokenId,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     Var(Var),
@@ -77,6 +82,7 @@ pub enum Decl {
     Alias(Alias),
     External(External),
     Declarator(Declarator),
+    EnumValue(EnumValue),
 }
 
 static_assert_size!(Decl, 24);

@@ -3,7 +3,9 @@ use {
         ast::{
             AliasKind, Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, HoistTarget,
             InterpolationKind, Item, NodeId, Stmt, VarKind,
-            decl::{Alias, Declarator, External, Param, SpecialisationValue, TypedDecl, Var},
+            decl::{
+                Alias, Declarator, EnumValue, External, Param, SpecialisationValue, TypedDecl, Var,
+            },
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
                 ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary,
@@ -176,11 +178,10 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Item::EnumDecl(EnumDecl { name, values, .. }) => {
                 let values = values
-                    .iter()
-                    .map(|t| self.text(t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                leaf(format!("EnumDecl {:?} {{{values}}}", self.text(name)))
+                    .iter(self.ast)
+                    .map(|id| self.child(id))
+                    .collect::<Vec<_>>();
+                node(format!("EnumDecl {:?}", self.text(name)), values)
             }
             Item::FunctionDecl(FunctionDecl {
                 returns,
@@ -326,6 +327,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 node(label, children)
             }
+            Decl::EnumValue(EnumValue { name }) => leaf(format!("EnumValue {:?}", self.text(name))),
         }
     }
 

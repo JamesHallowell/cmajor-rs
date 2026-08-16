@@ -2,7 +2,9 @@ use crate::{
     ast::{
         Annotation, Annotations, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId,
         Stmt,
-        decl::{Alias, Declarator, External, Param, SpecialisationValue, TypedDecl, Var},
+        decl::{
+            Alias, Declarator, EnumValue, External, Param, SpecialisationValue, TypedDecl, Var,
+        },
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
             ProcessorProperty, ScopeAccess, Slice, Ternary, TypeModifier, Unary, VectorSizeSuffix,
@@ -57,7 +59,12 @@ pub trait Visitor {
         struct_decl.walk(ast, self);
     }
 
-    fn visit_enum_decl(&mut self, _ast: &Ast, _id: NodeId, _enum_decl: &EnumDecl) {}
+    fn visit_enum_decl(&mut self, ast: &Ast, id: NodeId, enum_decl: &EnumDecl) {
+        let _ = id;
+        enum_decl.walk(ast, self);
+    }
+
+    fn visit_enum_value(&mut self, _ast: &Ast, _id: NodeId, _enum_value: &EnumValue) {}
 
     fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
         let _ = id;
@@ -396,6 +403,7 @@ where
         Decl::Alias(alias) => visitor.visit_alias(ast, id, alias),
         Decl::External(external) => visitor.visit_external(ast, id, external),
         Decl::Declarator(declarator) => visitor.visit_declarator(ast, id, declarator),
+        Decl::EnumValue(enum_value) => visitor.visit_enum_value(ast, id, enum_value),
     }
 }
 
@@ -540,6 +548,17 @@ where
         self.annotations.walk(ast, visitor);
         for &member in &self.items {
             visitor.visit(ast, member);
+        }
+    }
+}
+
+impl<V> Walk<V> for EnumDecl
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &value in ast.children(self.values) {
+            visitor.visit(ast, value);
         }
     }
 }

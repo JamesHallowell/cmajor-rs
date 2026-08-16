@@ -47,7 +47,7 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                     Directive::TestCompile => {
                         let source = format!("{global_code}\n{}", section.body);
                         let parse = parser::parse(&source);
-                        if parse.ast.has_errors() {
+                        if parse.ast.has_errors() || !parse.diagnostics.is_empty() {
                             let detail = describe_parse_errors(&parse, &source);
                             Outcome::Fail(format!("parse error produced\n{detail}"))
                         } else {
@@ -68,7 +68,7 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
                     Directive::ExpectError { .. } => {
                         let source = format!("{global_code}\n{}", section.body);
                         let parse = parser::parse(&source);
-                        if parse.ast.has_errors() {
+                        if parse.ast.has_errors() || !parse.diagnostics.is_empty() {
                             actual_error = Some(describe_parse_errors(&parse, &source));
                             Outcome::Pass
                         } else {
@@ -104,18 +104,19 @@ pub fn run(file: &TestFile) -> Vec<TestResult> {
 }
 
 fn describe_parse_errors(parse: &parser::Parse, source: &str) -> String {
-    parse
-        .ast
-        .error_tokens()
-        .into_iter()
-        .map(|token| {
-            let span = parse.tokens.span(token);
-            let start = span.start as usize;
-            let (line, col) = line_col(source, start);
-            let line_text = source.lines().nth(line - 1).unwrap_or("");
-            let token_text = &source[start..span.end as usize];
-            format!("  {line}:{col}: at {token_text:?} in {line_text:?}")
-        })
+    let error_tokens = parse.ast.error_tokens().into_iter().map(|token| {
+        let span = parse.tokens.span(token);
+        let start = span.start as usize;
+        let (line, col) = line_col(source, start);
+        let line_text = source.lines().nth(line - 1).unwrap_or("");
+        let token_text = &source[start..span.end as usize];
+        format!("  {line}:{col}: at {token_text:?} in {line_text:?}")
+    });
+
+    let diagnostics = parse.diagnostics.iter().map(|d| format!("  {d}"));
+
+    error_tokens
+        .chain(diagnostics)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -174,12 +175,20 @@ mod tests {
                 name: "testCompile".into(),
                 line: 1,
                 outcome: Outcome::Fail(
-                    "parse error produced\n  3:9: at \"{\" in \"void f( { }\"".into()
+                    "parse error produced\n  3:9: at \"{\" in \"void f( { }\"\n  3:9: expected type, found BraceLeft\n  3:11: expected Identifier, found BraceRight\n  3:11: expected token! (')'), found BraceRight\n  3:11: expected BraceLeft, found BraceRight".into()
                 ),
                 expected_error: None,
                 actual_error: None,
             }]
         );
+    }
+
+    #[test]
+    fn test_compile_fails_on_a_recovered_parse_diagnostic() {
+        let file = parse_test_file("## testCompile()\n\nenum Mode {}\n");
+        let results = run(&file);
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0].outcome, Outcome::Fail(_)));
     }
 
     #[test]
@@ -193,7 +202,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: Some("2:9: error: nope".into()),
-                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"".into()),
+                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"\n  3:9: expected type, found BraceLeft\n  3:11: expected Identifier, found BraceRight\n  3:11: expected token! (')'), found BraceRight\n  3:11: expected BraceLeft, found BraceRight".into()),
             }]
         );
     }

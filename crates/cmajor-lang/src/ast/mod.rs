@@ -16,8 +16,8 @@ pub use {
     ast::Ast,
     child::{Checkpoint, ChildId, ChildList, ChildPool},
     decl::{
-        Alias, AliasKind, Decl, Declarator, External, Param, SpecialisationValue, TypedDecl, Var,
-        VarKind,
+        Alias, AliasKind, Decl, Declarator, EnumValue, External, Param, SpecialisationValue,
+        TypedDecl, Var, VarKind,
     },
     dump::dump,
     expr::{

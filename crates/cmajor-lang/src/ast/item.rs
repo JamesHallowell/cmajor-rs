@@ -1,5 +1,10 @@
 use crate::{
-    ast::{annotation::Annotations, decl::AliasKind, node::NodeId},
+    ast::{
+        Ast, ChildList, Decl, Node,
+        annotation::Annotations,
+        decl::{AliasKind, EnumValue},
+        node::NodeId,
+    },
     lexer::TokenId,
 };
 
@@ -42,7 +47,7 @@ pub struct StructDecl {
 pub struct EnumDecl {
     pub keyword: TokenId,
     pub name: TokenId,
-    pub values: Vec<TokenId>,
+    pub values: ChildList,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,4 +94,13 @@ pub enum Item {
     EventHandlerDecl(EventHandlerDecl),
     Import(Import),
     ModuleAlias(ModuleAlias),
+}
+
+impl EnumDecl {
+    pub fn values<'ast>(&self, ast: &'ast Ast) -> impl Iterator<Item = (NodeId, &'ast EnumValue)> {
+        self.values.iter(ast).map(|id| match ast.get(id) {
+            Node::Decl(Decl::EnumValue(value)) => (id, value),
+            _ => unreachable!("Expected EnumValue node"),
+        })
+    }
 }
