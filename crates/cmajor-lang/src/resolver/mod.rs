@@ -17,8 +17,9 @@ use crate::{
         SpecialisationValue, Stmt, StructDecl, TypedDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
-    lexer::{TokenId, TokenKind, TokenStream},
+    lexer::{TokenId, TokenStream},
     parser::Parse,
+    resolver::symbol::SymbolOrigin,
     utils::{
         arena::SparseSecondaryArena,
         source::{Source, SourceLocation},
@@ -48,10 +49,10 @@ pub enum Error {
     #[error("undeclared identifier '{name}'")]
     UndeclaredIdentifier { name: String },
 
-    #[error("redefinition of '{name}' (previously declared at {location})")]
+    #[error("redefinition of '{name}' (previously declared at {})", location.map_or_else(|| "<builtin>".to_string(), |location| location.to_string()))]
     RedefinedIdentifier {
         name: String,
-        location: SourceLocation,
+        location: Option<SourceLocation>,
     },
 
     #[error("unexpected node")]
@@ -77,8 +78,63 @@ struct State<'a> {
 
 impl<'a> State<'a> {
     pub fn new(source: &'a str, tokens: &'a TokenStream, ast: &'a Ast) -> Self {
-        let symbols = SymbolTable::new();
+        let mut symbols = SymbolTable::new();
         let global_scope = symbols.global_scope();
+
+        const BUILTINS: &[(&str, SymbolKind)] = &[
+            ("void", SymbolKind::Primitive),
+            ("bool", SymbolKind::Primitive),
+            ("int", SymbolKind::Primitive),
+            ("int32", SymbolKind::Primitive),
+            ("int64", SymbolKind::Primitive),
+            ("float", SymbolKind::Primitive),
+            ("float32", SymbolKind::Primitive),
+            ("float64", SymbolKind::Primitive),
+            ("complex", SymbolKind::Primitive),
+            ("complex32", SymbolKind::Primitive),
+            ("complex64", SymbolKind::Primitive),
+            ("wrap", SymbolKind::Primitive),
+            ("clamp", SymbolKind::Primitive),
+            ("abs", SymbolKind::Function),
+            ("sqrt", SymbolKind::Function),
+            ("pow", SymbolKind::Function),
+            ("fmod", SymbolKind::Function),
+            ("remainder", SymbolKind::Function),
+            ("roundToInt", SymbolKind::Function),
+            ("floor", SymbolKind::Function),
+            ("ceil", SymbolKind::Function),
+            ("rint", SymbolKind::Function),
+            ("log10", SymbolKind::Function),
+            ("log", SymbolKind::Function),
+            ("exp", SymbolKind::Function),
+            ("sin", SymbolKind::Function),
+            ("sinh", SymbolKind::Function),
+            ("asin", SymbolKind::Function),
+            ("asinh", SymbolKind::Function),
+            ("cos", SymbolKind::Function),
+            ("cosh", SymbolKind::Function),
+            ("acos", SymbolKind::Function),
+            ("acosh", SymbolKind::Function),
+            ("tan", SymbolKind::Function),
+            ("tanh", SymbolKind::Function),
+            ("atan", SymbolKind::Function),
+            ("atanh", SymbolKind::Function),
+            ("atan2", SymbolKind::Function),
+            ("max", SymbolKind::Function),
+            ("min", SymbolKind::Function),
+            ("select", SymbolKind::Function),
+            ("lerp", SymbolKind::Function),
+            ("addModulo2Pi", SymbolKind::Function),
+            ("nan", SymbolKind::Variable),
+            ("inf", SymbolKind::Variable),
+            ("pi", SymbolKind::Variable),
+            ("twoPi", SymbolKind::Variable),
+            ("static_assert", SymbolKind::Function),
+        ];
+
+        for &(name, kind) in BUILTINS {
+            symbols.declare(SymbolOrigin::Builtin { name }, kind, global_scope);
+        }
 
         State {
             ast,
@@ -110,9 +166,22 @@ impl<'a> State<'a> {
             .to_source_location_span(&self.source)
     }
 
+    fn symbol_location(&self, symbol: SymbolId) -> Option<Span<SourceLocation>> {
+        let symbol = self.symbols.symbol(symbol);
+        match symbol.origin {
+            SymbolOrigin::Builtin { name: _ } => None,
+            SymbolOrigin::Source { name, node: _ } => Some(self.location(name)),
+        }
+    }
+
     fn has_matching_name(&self, name: TokenId) -> impl FnMut(&Symbol) -> bool {
         let name = self.text(name);
-        move |symbol: &Symbol| self.text(symbol.name) == name
+        move |symbol: &Symbol| match symbol.origin {
+            SymbolOrigin::Builtin { name: symbol_name } => symbol_name == name,
+            SymbolOrigin::Source {
+                name: symbol_name, ..
+            } => self.text(symbol_name) == name,
+        }
     }
 
     fn declare(
@@ -129,7 +198,9 @@ impl<'a> State<'a> {
         if !kind.allows_duplicates()
             && let Some(existing) = self.symbols.find_local(scope, self.has_matching_name(name))
         {
-            let existing_location = self.location(self.symbols.symbol(existing).name).start;
+            let existing_location = self
+                .symbol_location(existing)
+                .map(|location| location.start);
 
             self.error(
                 self.location(name),
@@ -140,7 +211,9 @@ impl<'a> State<'a> {
             );
         }
 
-        let symbol = self.symbols.declare(scope, kind, node, name);
+        let symbol = self
+            .symbols
+            .declare(SymbolOrigin::Source { name, node }, kind, scope);
         self.declared.insert(node, symbol);
         symbol
     }
@@ -165,8 +238,9 @@ impl<'s, 'a> Declare<'s, 'a> {
         name: TokenId,
         kind: SymbolKind,
         node: NodeId,
+        builtins: &[(&'static str, SymbolKind)],
         items: &[NodeId],
-    ) {
+    ) -> SymbolId {
         let symbol = self
             .state
             .declare(self.state.current_scope, name, kind, node);
@@ -181,10 +255,20 @@ impl<'s, 'a> Declare<'s, 'a> {
         self.state.node_scope.insert(node, container_scope);
 
         self.with_scope(container_scope, |this| {
+            for &(name, kind) in builtins {
+                this.state.symbols.declare(
+                    SymbolOrigin::Builtin { name },
+                    kind,
+                    this.state.current_scope,
+                );
+            }
+
             for &member in items {
                 this.visit(ast, member);
             }
         });
+
+        symbol
     }
 
     fn declare_or_reuse_namespace(
@@ -214,15 +298,19 @@ impl<'s, 'a> Declare<'s, 'a> {
                 error_location,
                 Error::RedefinedIdentifier {
                     name: self.state.text(name).to_string(),
-                    location: self.state.location(existing.name).start,
+                    location: self
+                        .state
+                        .symbol_location(existing_id)
+                        .map(|location| location.start),
                 },
             );
         }
 
-        let symbol = self
-            .state
-            .symbols
-            .declare(scope, SymbolKind::Namespace, node, name);
+        let symbol = self.state.symbols.declare(
+            SymbolOrigin::Source { name, node },
+            SymbolKind::Namespace,
+            scope,
+        );
         let scope_start = self.state.ast.span(node).start;
 
         let inner = self.state.symbols.new_scope(scope, scope_start);
@@ -255,6 +343,11 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             processor_decl.name,
             SymbolKind::Processor,
             id,
+            &[
+                ("advance", SymbolKind::Function),
+                ("processor", SymbolKind::Variable),
+                ("console", SymbolKind::Endpoint),
+            ],
             &processor_decl.items,
         );
     }
@@ -265,6 +358,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             graph_decl.name,
             SymbolKind::Graph,
             id,
+            &[],
             &graph_decl.items,
         );
     }
@@ -275,6 +369,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             struct_decl.name,
             SymbolKind::Struct,
             id,
+            &[("this", SymbolKind::Variable)],
             &struct_decl.items,
         );
     }
@@ -285,6 +380,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             enum_decl.name,
             SymbolKind::Enum,
             id,
+            &[],
             ast.children(enum_decl.values),
         );
     }
@@ -635,12 +731,6 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     }
 
     fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, ident: &Ident) {
-        if let TokenKind::Keyword(keyword) = self.state.tokens.get(ident.token).kind
-            && keyword.is_type()
-        {
-            return;
-        }
-
         if self
             .state
             .symbols

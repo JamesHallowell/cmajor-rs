@@ -12,8 +12,15 @@ use {
 arena_key!(SymbolId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolOrigin {
+    Source { name: TokenId, node: NodeId },
+    Builtin { name: &'static str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum SymbolKind {
+    Primitive,
     Namespace,
     Processor,
     Graph,
@@ -35,9 +42,8 @@ impl SymbolKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
-    pub name: TokenId,
+    pub origin: SymbolOrigin,
     pub kind: SymbolKind,
-    pub node: NodeId,
     pub scope: ScopeId,
 }
 
@@ -93,17 +99,10 @@ impl SymbolTable {
         (&self.scopes).into_iter().map(|(id, _)| id)
     }
 
-    pub fn declare(
-        &mut self,
-        scope: ScopeId,
-        kind: SymbolKind,
-        node: NodeId,
-        name: TokenId,
-    ) -> SymbolId {
+    pub fn declare(&mut self, origin: SymbolOrigin, kind: SymbolKind, scope: ScopeId) -> SymbolId {
         let id = self.symbols.push(Symbol {
-            name,
+            origin,
             kind,
-            node,
             scope,
         });
         self.scopes[scope].add_symbol(id);

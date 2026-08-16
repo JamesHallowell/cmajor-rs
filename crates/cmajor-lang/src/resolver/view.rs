@@ -1,6 +1,6 @@
 use crate::{
     lexer::TokenStream,
-    resolver::{Resolution, ScopeId, SymbolKind},
+    resolver::{Resolution, ScopeId, SymbolKind, symbol::SymbolOrigin},
     utils::source::{Source, SourceLocation},
 };
 
@@ -34,10 +34,24 @@ impl<'a> ResolutionView<'a> {
 
         let symbols = table
             .symbols_in(scope)
-            .map(|symbol| SymbolEntry {
-                name: self.source[self.tokens.span(symbol.name)].to_string(),
-                kind: symbol.kind,
-                location: self.location(self.tokens.span(symbol.name).start),
+            .filter(|symbol| matches!(symbol.origin, SymbolOrigin::Source { .. }))
+            .map(|symbol| {
+                let (name, location) = match symbol.origin {
+                    SymbolOrigin::Source { name, .. } => {
+                        let span = self.tokens.span(name);
+                        (
+                            self.source[span].to_string(),
+                            Some(self.location(span.start)),
+                        )
+                    }
+                    SymbolOrigin::Builtin { name } => (name.to_string(), None),
+                };
+
+                SymbolEntry {
+                    name,
+                    kind: symbol.kind,
+                    location,
+                }
             })
             .collect();
 
@@ -99,5 +113,6 @@ struct ScopeEntry {
 struct SymbolEntry {
     name: String,
     kind: SymbolKind,
-    location: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location: Option<String>,
 }
