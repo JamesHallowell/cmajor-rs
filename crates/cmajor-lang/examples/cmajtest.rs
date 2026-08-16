@@ -1,5 +1,5 @@
 use {
-    cmajor_lang::test_format::{self, Outcome},
+    cmajor_lang::test_format::{self, Directive, Outcome, Section, TestFile},
     std::path::{Path, PathBuf},
 };
 
@@ -37,7 +37,20 @@ fn main() {
             std::process::exit(1);
         });
 
-        let file = test_format::parse_test_file(&source);
+        let is_plain_cmajor = file_path.extension().is_some_and(|ext| ext == "cmajor");
+        let file = if is_plain_cmajor {
+            TestFile {
+                prelude: String::new(),
+                sections: vec![Section {
+                    directive: Directive::TestCompile,
+                    disabled: false,
+                    body: source,
+                    line: 1,
+                }],
+            }
+        } else {
+            test_format::parse_test_file(&source)
+        };
         let results = test_format::run(&file);
         let location = file_path
             .file_name()
@@ -112,7 +125,10 @@ fn collect_test_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
             let entry_path = entry.path();
             if entry_path.is_dir() {
                 dirs.push(entry_path);
-            } else if entry_path.extension().is_some_and(|ext| ext == "cmajtest") {
+            } else if entry_path
+                .extension()
+                .is_some_and(|ext| ext == "cmajtest" || ext == "cmajor")
+            {
                 files.push(entry_path);
             }
         }

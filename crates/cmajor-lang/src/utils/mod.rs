@@ -1,5 +1,6 @@
 pub mod arena;
 pub mod source;
+pub mod span;
 
 #[macro_export]
 macro_rules! static_assert {

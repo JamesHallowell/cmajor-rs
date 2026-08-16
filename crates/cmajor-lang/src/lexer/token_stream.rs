@@ -1,10 +1,10 @@
-use {
-    crate::{
-        arena_key,
-        lexer::Token,
-        utils::arena::{Arena, Iter as ArenaIter, SecondaryArena},
+use crate::{
+    arena_key,
+    lexer::Token,
+    utils::{
+        arena::{Arena, Iter as ArenaIter, SecondaryArena},
+        span::Span,
     },
-    std::range::Range,
 };
 
 arena_key!(TokenId);
@@ -40,14 +40,10 @@ impl TokenStream {
         self.tokens[id]
     }
 
-    pub fn span(&self, id: TokenId) -> Range<u32> {
+    pub fn span(&self, id: TokenId) -> Span<u32> {
         let token = self.get(id);
         let start = self.positions[id];
         (start..start + token.len).into()
-    }
-
-    pub fn to_positions(&self, span: Range<TokenId>) -> Range<u32> {
-        (self.positions[span.start]..self.positions[span.end] + self.get(span.end).len).into()
     }
 
     pub fn end_of_file(&self) -> TokenId {

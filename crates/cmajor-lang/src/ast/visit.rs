@@ -976,6 +976,7 @@ where
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
         visitor.visit(ast, self.base);
+        visitor.visit(ast, self.name);
     }
 }
 

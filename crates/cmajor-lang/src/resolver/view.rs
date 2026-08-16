@@ -20,8 +20,7 @@ impl<'a> ResolutionView<'a> {
     }
 
     fn location(&self, position: u32) -> String {
-        let SourceLocation { line, column } =
-            Source::new(self.source).location(position..position).start;
+        let SourceLocation { line, column } = Source::new(self.source).location(position);
         format!("{line}:{column}")
     }
 

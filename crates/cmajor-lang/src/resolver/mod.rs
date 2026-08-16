@@ -11,10 +11,10 @@ pub use {
 use crate::{
     Diagnostic,
     ast::{
-        Alias, Ast, Block, EndpointDeclaration, EnumDecl, ForStmt, FunctionDecl, GraphDecl,
+        Alias, Ast, Block, EndpointDeclaration, EnumDecl, Expr, ForStmt, FunctionDecl, GraphDecl,
         HoistedEndpointDeclaration, IfStmt, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl,
-        NodeId, Param, ProcessorDecl, SpecialisationValue, Stmt, StructDecl, TypedDecl, Var,
-        WhileStmt,
+        NodeId, Param, ProcessorDecl, ScopeAccess, SpecialisationValue, Stmt, StructDecl,
+        TypedDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
     lexer::{TokenId, TokenKind, TokenStream},
@@ -22,9 +22,9 @@ use crate::{
     utils::{
         arena::SparseSecondaryArena,
         source::{Source, SourceLocation},
+        span::Span,
     },
 };
-use std::range::Range;
 
 pub struct Resolution {
     pub symbols: SymbolTable,
@@ -42,6 +42,26 @@ pub fn resolve(source: &str, parse: &Parse) -> Resolution {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("undeclared identifier '{name}'")]
+    UndeclaredIdentifier { name: String },
+
+    #[error("redefinition of '{name}' (previously declared at {location})")]
+    RedefinedIdentifier {
+        name: String,
+        location: SourceLocation,
+    },
+
+    #[error("unexpected node")]
+    UnexpectedNode,
+
+    #[error("'{name}' is not a namespace, processor, graph, struct, or enum")]
+    NotAScope { name: String },
+}
+
+type Result<T> = std::result::Result<T, (Span<SourceLocation>, Error)>;
+
 struct Resolver<'a> {
     ast: &'a Ast,
     tokens: &'a TokenStream,
@@ -49,7 +69,7 @@ struct Resolver<'a> {
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     current_scope: ScopeId,
-    namespace_scopes: SparseSecondaryArena<SymbolId, ScopeId>,
+    symbols_scope: SparseSecondaryArena<SymbolId, ScopeId>,
 }
 
 impl<'a> Resolver<'a> {
@@ -64,24 +84,18 @@ impl<'a> Resolver<'a> {
             symbols,
             diagnostics: Vec::new(),
             current_scope: global_scope,
-            namespace_scopes: SparseSecondaryArena::default(),
+            symbols_scope: SparseSecondaryArena::default(),
         }
     }
 
-    fn scope(&self) -> ScopeId {
-        self.current_scope
+    fn error(&mut self, location: Span<SourceLocation>, err: Error) {
+        self.diagnostics.push(Diagnostic {
+            location,
+            message: err.to_string(),
+        });
     }
 
-    fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        self.diagnostics.push(Diagnostic::at_token(
-            self.source.as_str(),
-            self.tokens,
-            token,
-            message,
-        ))
-    }
-
-    fn name(&self, token: TokenId) -> &str {
+    fn text(&self, token: TokenId) -> &str {
         &self.source[self.tokens.span(token)]
     }
 
@@ -92,24 +106,30 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         node: NodeId,
     ) -> SymbolId {
-        let name = self.name(name_token).to_owned();
+        let name = self.text(name_token).to_owned();
 
         if !kind.allows_duplicates()
             && let Some(existing) = self.symbols.lookup_local(scope, &name)
         {
             let existing = self.symbols.symbol(existing).name_token;
-            let location = self.location(existing).start;
+            let location = self
+                .tokens
+                .span(existing)
+                .to_source_location_span(&self.source)
+                .start;
+
             self.error(
-                name_token,
-                format!("redefinition of '{name}' (previously declared at {location})"),
+                self.tokens
+                    .span(name_token)
+                    .to_source_location_span(&self.source),
+                Error::RedefinedIdentifier {
+                    name: name.clone(),
+                    location,
+                },
             );
         }
 
         self.symbols.declare(scope, kind, node, name, name_token)
-    }
-
-    fn location(&self, token: TokenId) -> Range<SourceLocation> {
-        self.source.location(self.tokens.span(token))
     }
 
     fn declare_container(
@@ -120,9 +140,10 @@ impl<'a> Resolver<'a> {
         id: NodeId,
         items: &[NodeId],
     ) {
-        let _symbol = self.declare(self.scope(), name, kind, id);
+        let symbol = self.declare(self.current_scope, name, kind, id);
 
         self.with_new_scope_at(keyword, |this, inner| {
+            this.symbols_scope.insert(symbol, inner);
             let ast = this.ast;
             for &member in items {
                 this.current_scope = inner;
@@ -138,19 +159,32 @@ impl<'a> Resolver<'a> {
         segment: TokenId,
         node: NodeId,
     ) -> ScopeId {
-        let name = self.name(segment).to_owned();
+        let name = self.text(segment).to_owned();
 
         if let Some(existing_id) = self.symbols.lookup_local(scope, &name) {
             let existing = self.symbols.symbol(existing_id);
             if existing.kind == SymbolKind::Namespace {
                 return *self
-                    .namespace_scopes
+                    .symbols_scope
                     .get(existing_id)
                     .expect("namespace symbol always has an inner scope");
             }
+
+            let error_location = self
+                .tokens
+                .span(segment)
+                .to_source_location_span(&self.source);
+
             self.error(
-                segment,
-                format!("'{name}' is already declared and is not a namespace"),
+                error_location,
+                Error::RedefinedIdentifier {
+                    name: name.clone(),
+                    location: self
+                        .tokens
+                        .span(existing.name_token)
+                        .to_source_location_span(&self.source)
+                        .start,
+                },
             );
         }
 
@@ -158,7 +192,7 @@ impl<'a> Resolver<'a> {
             .symbols
             .declare(scope, SymbolKind::Namespace, node, name, segment);
         let inner = self.symbols.new_scope(scope, keyword);
-        self.namespace_scopes.insert(symbol, inner);
+        self.symbols_scope.insert(symbol, inner);
         inner
     }
 
@@ -167,7 +201,7 @@ impl<'a> Resolver<'a> {
         anchor: TokenId,
         f: impl FnOnce(&mut Self, ScopeId) -> R,
     ) -> R {
-        let parent = self.scope();
+        let parent = self.current_scope;
         let inner = self.symbols.new_scope(parent, anchor);
         self.current_scope = inner;
         let result = f(self, inner);
@@ -182,11 +216,84 @@ impl<'a> Resolver<'a> {
             return;
         }
 
-        let span = self.tokens.span(ident);
-        let name = &self.source[span];
-
+        let name = self.text(ident);
         if self.symbols.lookup_visible(scope, name).is_none() {
-            self.error(ident, format!("undeclared identifier '{name}'"));
+            self.error(
+                self.tokens
+                    .span(ident)
+                    .to_source_location_span(&self.source),
+                Error::UndeclaredIdentifier {
+                    name: name.to_owned(),
+                },
+            );
+        }
+    }
+
+    fn resolve_scope_path(&self, node: NodeId) -> Result<SymbolId> {
+        match self.ast.get(node) {
+            Node::Expr(Expr::Ident(ident)) => {
+                let symbol = self
+                    .symbols
+                    .lookup_visible(self.current_scope, self.text(ident.token))
+                    .ok_or((
+                        self.tokens
+                            .span(ident.token)
+                            .to_source_location_span(&self.source),
+                        Error::UndeclaredIdentifier {
+                            name: self.text(ident.token).to_owned(),
+                        },
+                    ))?;
+
+                Ok(symbol)
+            }
+            Node::Expr(Expr::ScopeAccess(scope_access)) => {
+                let base = self.resolve_scope_path(scope_access.base)?;
+
+                let base_location = self
+                    .ast
+                    .span(scope_access.base)
+                    .to_source_location_span(self.tokens, &self.source);
+
+                let base_scope = *self.symbols_scope.get(base).ok_or_else(|| {
+                    (
+                        base_location,
+                        Error::NotAScope {
+                            name: self.source[base_location].to_owned(),
+                        },
+                    )
+                })?;
+
+                let Node::Expr(Expr::Ident(name)) = self.ast.get(scope_access.name) else {
+                    return Err((
+                        self.ast
+                            .span(scope_access.name)
+                            .to_source_location_span(self.tokens, &self.source),
+                        Error::UnexpectedNode,
+                    ));
+                };
+
+                let member = self
+                    .symbols
+                    .lookup_local(base_scope, self.text(name.token))
+                    .ok_or((
+                        self.tokens
+                            .span(name.token)
+                            .to_source_location_span(&self.source),
+                        Error::UndeclaredIdentifier {
+                            name: self.text(name.token).to_owned(),
+                        },
+                    ))?;
+
+                Ok(member)
+            }
+            _ => {
+                let location = self
+                    .ast
+                    .span(node)
+                    .to_source_location_span(self.tokens, &self.source);
+
+                Err((location, Error::UnexpectedNode))
+            }
         }
     }
 }
@@ -198,7 +305,7 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_namespace_decl(&mut self, ast: &Ast, id: NodeId, namespace_decl: &NamespaceDecl) {
-        let scope = self.scope();
+        let scope = self.current_scope;
         let inner = namespace_decl
             .segments
             .iter()
@@ -242,16 +349,22 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_enum_decl(&mut self, _ast: &Ast, id: NodeId, enum_decl: &EnumDecl) {
-        let scope = self.scope();
-        let _symbol = self.declare(scope, enum_decl.name, SymbolKind::Enum, id);
+        let scope = self.current_scope;
+        let symbol = self.declare(scope, enum_decl.name, SymbolKind::Enum, id);
         let inner = self.symbols.new_scope(scope, enum_decl.keyword);
+        self.symbols_scope.insert(symbol, inner);
         for &value in &enum_decl.values {
             self.declare(inner, value, SymbolKind::EnumValue, id);
         }
     }
 
     fn visit_function_decl(&mut self, ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
-        self.declare(self.scope(), function_decl.name, SymbolKind::Function, id);
+        self.declare(
+            self.current_scope,
+            function_decl.name,
+            SymbolKind::Function,
+            id,
+        );
 
         self.with_new_scope_at(function_decl.name, |this, _| {
             this.visit(ast, function_decl.returns);
@@ -268,14 +381,19 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_module_alias(&mut self, _ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
-        self.declare(self.scope(), module_alias.name, SymbolKind::Alias, id);
+        self.declare(self.current_scope, module_alias.name, SymbolKind::Alias, id);
     }
 
     fn visit_var(&mut self, ast: &Ast, id: NodeId, var: &Var) {
         let _ = id;
 
         for (id, declarator) in var.declarators(ast) {
-            self.declare(self.scope(), declarator.name, SymbolKind::Variable, id);
+            self.declare(
+                self.current_scope,
+                declarator.name,
+                SymbolKind::Variable,
+                id,
+            );
         }
         var.walk(ast, self);
     }
@@ -283,13 +401,18 @@ impl<'a> Visitor for Resolver<'a> {
     fn visit_typed_decl(&mut self, ast: &Ast, id: NodeId, typed_decl: &TypedDecl) {
         let _ = id;
         for (id, declarator) in typed_decl.declarators(ast) {
-            self.declare(self.scope(), declarator.name, SymbolKind::Variable, id);
+            self.declare(
+                self.current_scope,
+                declarator.name,
+                SymbolKind::Variable,
+                id,
+            );
         }
         typed_decl.walk(ast, self);
     }
 
     fn visit_param(&mut self, ast: &Ast, id: NodeId, param: &Param) {
-        self.declare(self.scope(), param.name, SymbolKind::Variable, id);
+        self.declare(self.current_scope, param.name, SymbolKind::Variable, id);
 
         param.walk(ast, self);
     }
@@ -301,7 +424,7 @@ impl<'a> Visitor for Resolver<'a> {
         specialisation_value: &SpecialisationValue,
     ) {
         self.declare(
-            self.scope(),
+            self.current_scope,
             specialisation_value.name,
             SymbolKind::Variable,
             id,
@@ -311,7 +434,7 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_alias(&mut self, _ast: &Ast, id: NodeId, alias: &Alias) {
-        self.declare(self.scope(), alias.name, SymbolKind::Alias, id);
+        self.declare(self.current_scope, alias.name, SymbolKind::Alias, id);
     }
 
     fn visit_endpoint_declaration(
@@ -321,7 +444,7 @@ impl<'a> Visitor for Resolver<'a> {
         endpoint_declaration: &EndpointDeclaration,
     ) {
         self.declare(
-            self.scope(),
+            self.current_scope,
             endpoint_declaration.name,
             SymbolKind::Endpoint,
             id,
@@ -335,12 +458,12 @@ impl<'a> Visitor for Resolver<'a> {
         hoisted_endpoint_declaration: &HoistedEndpointDeclaration,
     ) {
         if let Some(name) = hoisted_endpoint_declaration.name {
-            self.declare(self.scope(), name, SymbolKind::Endpoint, id);
+            self.declare(self.current_scope, name, SymbolKind::Endpoint, id);
         }
     }
 
     fn visit_node_decl(&mut self, _ast: &Ast, id: NodeId, node_decl: &NodeDecl) {
-        self.declare(self.scope(), node_decl.name, SymbolKind::Node, id);
+        self.declare(self.current_scope, node_decl.name, SymbolKind::Node, id);
     }
 
     fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
@@ -386,7 +509,16 @@ impl<'a> Visitor for Resolver<'a> {
     }
 
     fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, token: TokenId) {
-        self.check_ident_defined(self.scope(), token);
+        self.check_ident_defined(self.current_scope, token);
+    }
+
+    fn visit_scope_access(&mut self, _ast: &Ast, id: NodeId, _scope_access: &ScopeAccess) {
+        if let Err((location, err)) = self.resolve_scope_path(id) {
+            self.diagnostics.push(Diagnostic {
+                location,
+                message: err.to_string(),
+            });
+        }
     }
 }
 
@@ -922,5 +1054,527 @@ mod tests {
                             kind: Variable
                             location: "14:34"
         "#);
+    }
+
+    #[test]
+    fn qualified_namespace_member_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                namespace Utils
+                {
+                    int square (int x) { return x * x; }
+                }
+                processor P
+                {
+                    void main()
+                    {
+                        int x = Utils::bogus (4);
+                    }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: Utils
+            kind: Namespace
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "5:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: square
+                kind: Function
+                location: "3:9"
+            scopes:
+              - location: "3:9"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:21"
+          - location: "5:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "7:10"
+            scopes:
+              - location: "7:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "9:13"
+        diagnostics:
+          - "9:24: undeclared identifier 'bogus'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_processor_member_resolves() {
+        assert_resolution!(
+            indoc! {"
+                processor Utils
+                {
+                    int square (int x) { return x * x; }
+                }
+                processor P
+                {
+                    void main() { int x = Utils::square (4); }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: Utils
+            kind: Processor
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "5:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: square
+                kind: Function
+                location: "3:9"
+            scopes:
+              - location: "3:9"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:21"
+          - location: "5:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "7:10"
+            scopes:
+              - location: "7:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "7:23"
+        "#);
+    }
+
+    #[test]
+    fn qualified_processor_member_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                processor Utils
+                {
+                    int square (int x) { return x * x; }
+                }
+                processor P
+                {
+                    void main() { int x = Utils::bogus (4); }
+                }
+            "},
+        @r#"
+        symbols:
+          - name: Utils
+            kind: Processor
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "5:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: square
+                kind: Function
+                location: "3:9"
+            scopes:
+              - location: "3:9"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:21"
+          - location: "5:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "7:10"
+            scopes:
+              - location: "7:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "7:23"
+        diagnostics:
+          - "7:34: undeclared identifier 'bogus'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_struct_member_resolves() {
+        assert_resolution!(
+            indoc! {"
+                struct Point { int x, y; }
+                processor P { void main() { int a = Point::x; } }
+            "},
+        @r#"
+        symbols:
+          - name: Point
+            kind: Struct
+            location: "1:8"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: x
+                kind: Variable
+                location: "1:20"
+              - name: y
+                kind: Variable
+                location: "1:23"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: a
+                    kind: Variable
+                    location: "2:33"
+        "#);
+    }
+
+    #[test]
+    fn qualified_struct_member_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                struct Point { int x, y; }
+                processor P { void main() { int a = Point::z; } }
+            "},
+        @r#"
+        symbols:
+          - name: Point
+            kind: Struct
+            location: "1:8"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: x
+                kind: Variable
+                location: "1:20"
+              - name: y
+                kind: Variable
+                location: "1:23"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: a
+                    kind: Variable
+                    location: "2:33"
+        diagnostics:
+          - "2:44: undeclared identifier 'z'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_graph_member_resolves() {
+        assert_resolution!(
+            indoc! {"
+                processor Foo { output stream int out; }
+                graph G { node a = Foo; }
+                processor P { void main() { let x = G::a; } }
+            "},
+        @r#"
+        symbols:
+          - name: Foo
+            kind: Processor
+            location: "1:11"
+          - name: G
+            kind: Graph
+            location: "2:7"
+          - name: P
+            kind: Processor
+            location: "3:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: out
+                kind: Endpoint
+                location: "1:35"
+          - location: "2:1"
+            symbols:
+              - name: a
+                kind: Node
+                location: "2:16"
+          - location: "3:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "3:20"
+            scopes:
+              - location: "3:20"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:33"
+        "#);
+    }
+
+    #[test]
+    fn qualified_graph_member_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                processor Foo { output stream int out; }
+                graph G { node a = Foo; }
+                processor P { void main() { let x = G::bogus; } }
+            "},
+        @r#"
+        symbols:
+          - name: Foo
+            kind: Processor
+            location: "1:11"
+          - name: G
+            kind: Graph
+            location: "2:7"
+          - name: P
+            kind: Processor
+            location: "3:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: out
+                kind: Endpoint
+                location: "1:35"
+          - location: "2:1"
+            symbols:
+              - name: a
+                kind: Node
+                location: "2:16"
+          - location: "3:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "3:20"
+            scopes:
+              - location: "3:20"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:33"
+        diagnostics:
+          - "3:40: undeclared identifier 'bogus'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_enum_value_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                enum Mode { Play, Stop }
+                processor P { void main() { let m = Mode::Bogus; } }
+            "},
+        @r#"
+        symbols:
+          - name: Mode
+            kind: Enum
+            location: "1:6"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: Play
+                kind: EnumValue
+                location: "1:13"
+              - name: Stop
+                kind: EnumValue
+                location: "1:19"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: m
+                    kind: Variable
+                    location: "2:33"
+        diagnostics:
+          - "2:43: undeclared identifier 'Bogus'"
+        "#);
+    }
+
+    #[test]
+    fn nested_qualified_chain_resolves() {
+        assert_resolution!(
+            indoc! {"
+                namespace A { namespace B { int square (int x) { return x * x; } } }
+                processor P { void main() { int x = A::B::square (4); } }
+            "},
+        @r#"
+        symbols:
+          - name: A
+            kind: Namespace
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: B
+                kind: Namespace
+                location: "1:25"
+            scopes:
+              - location: "1:15"
+                symbols:
+                  - name: square
+                    kind: Function
+                    location: "1:33"
+                scopes:
+                  - location: "1:33"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "1:45"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "2:33"
+        "#);
+    }
+
+    #[test]
+    fn nested_qualified_chain_undeclared() {
+        assert_resolution!(
+            indoc! {"
+                namespace A { namespace B { int square (int x) { return x * x; } } }
+                processor P { void main() { int x = A::B::bogus (4); } }
+            "},
+        @r#"
+        symbols:
+          - name: A
+            kind: Namespace
+            location: "1:11"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: B
+                kind: Namespace
+                location: "1:25"
+            scopes:
+              - location: "1:15"
+                symbols:
+                  - name: square
+                    kind: Function
+                    location: "1:33"
+                scopes:
+                  - location: "1:33"
+                    symbols:
+                      - name: x
+                        kind: Variable
+                        location: "1:45"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "2:33"
+        diagnostics:
+          - "2:43: undeclared identifier 'bogus'"
+        "#);
+    }
+
+    #[test]
+    fn qualified_enum() {
+        assert_resolution!(
+            indoc!{"
+                enum Mode { Play, Stop }
+                processor P { void main() { let m = Mode::Play; } }
+            "},
+        @r#"
+        symbols:
+          - name: Mode
+            kind: Enum
+            location: "1:6"
+          - name: P
+            kind: Processor
+            location: "2:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: Play
+                kind: EnumValue
+                location: "1:13"
+              - name: Stop
+                kind: EnumValue
+                location: "1:19"
+          - location: "2:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "2:20"
+            scopes:
+              - location: "2:20"
+                symbols:
+                  - name: m
+                    kind: Variable
+                    location: "2:33"
+        "#);
+    }
+
+    #[test]
+    fn scope_path_on_non_container_symbol_results_in_diagnostic() {
+        assert_resolution!(
+            indoc! {"
+                processor P { void main() { int a = 1; int b = a::x; } }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "1:20"
+            scopes:
+              - location: "1:20"
+                symbols:
+                  - name: a
+                    kind: Variable
+                    location: "1:33"
+                  - name: b
+                    kind: Variable
+                    location: "1:44"
+        diagnostics:
+          - "1:48: 'a' is not a namespace, processor, graph, struct, or enum"
+        "#
+        );
     }
 }

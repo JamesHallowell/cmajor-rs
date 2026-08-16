@@ -1,21 +1,21 @@
-use {
-    crate::{
-        ast::{
-            child::{ChildList, ChildPool},
-            node::{Node, NodeId},
-            visit::Visitor,
-        },
-        lexer::TokenId,
-        utils::arena::{Arena, SecondaryArena, SparseSecondaryArena},
+use crate::{
+    ast::{
+        child::{ChildList, ChildPool},
+        node::{Node, NodeId},
+        visit::Visitor,
     },
-    std::range::Range,
+    lexer::TokenId,
+    utils::{
+        arena::{Arena, SecondaryArena, SparseSecondaryArena},
+        span::Span,
+    },
 };
 
 #[derive(Debug, Default, Clone)]
 pub struct Ast {
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
-    spans: SecondaryArena<NodeId, Range<TokenId>>,
+    spans: SecondaryArena<NodeId, Span<TokenId>>,
     children: ChildPool,
     labels: SparseSecondaryArena<NodeId, TokenId>,
 }
@@ -24,7 +24,7 @@ impl Ast {
     pub fn new(
         nodes: Arena<NodeId, Node>,
         roots: Vec<NodeId>,
-        spans: SecondaryArena<NodeId, Range<TokenId>>,
+        spans: SecondaryArena<NodeId, Span<TokenId>>,
         child_pool: ChildPool,
         labels: SparseSecondaryArena<NodeId, TokenId>,
     ) -> Self {
@@ -62,7 +62,7 @@ impl Ast {
         &self.nodes[id]
     }
 
-    pub fn span(&self, id: NodeId) -> Range<TokenId> {
+    pub fn span(&self, id: NodeId) -> Span<TokenId> {
         self.spans[id]
     }
 
@@ -114,8 +114,8 @@ pub(crate) fn assert_spans_contain_children(ast: &Ast) {
     use crate::ast::visit::{Visitor, walk};
 
     struct Violation {
-        node: (NodeId, Range<TokenId>),
-        parent: (NodeId, Range<TokenId>),
+        node: (NodeId, Span<TokenId>),
+        parent: (NodeId, Span<TokenId>),
     }
 
     #[derive(Default)]

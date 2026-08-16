@@ -1,29 +1,26 @@
-use {
-    crate::{
-        Diagnostic,
-        ast::{
-            self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
-            Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt,
-            Decl, DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EventHandlerDecl, Expr,
-            ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl,
-            HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
-            InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
-            Param, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
-            ScopeAccess, Slice, SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier,
-            TypedDecl, Unary, Var, VarKind, VectorSizeSuffix, WhileStmt,
-        },
-        lexer::{
-            Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream,
-            tokenize,
-        },
-        parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
-        skip_to_matching, token,
-        utils::{
-            arena::{Arena, SecondaryArena, SparseSecondaryArena},
-            source::Source,
-        },
+use crate::{
+    Diagnostic,
+    ast::{
+        self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
+        Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl,
+        DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EventHandlerDecl, Expr, ExprStmt,
+        External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl, HoistTarget,
+        HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import, InterpolationKind, Item,
+        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Param, Parentheses,
+        PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt, ScopeAccess, Slice,
+        SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier, TypedDecl, Unary, Var,
+        VarKind, VectorSizeSuffix, WhileStmt,
     },
-    std::range::Range,
+    lexer::{
+        Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
+    },
+    parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
+    skip_to_matching, token,
+    utils::{
+        arena::{Arena, SecondaryArena, SparseSecondaryArena},
+        source::Source,
+        span::Span,
+    },
 };
 
 pub struct Parse {
@@ -225,7 +222,7 @@ struct Parser<'a> {
     source: Source<'a>,
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
-    spans: SecondaryArena<NodeId, Range<TokenId>>,
+    spans: SecondaryArena<NodeId, Span<TokenId>>,
     child_pool: ChildPool,
     labels: SparseSecondaryArena<NodeId, TokenId>,
     diagnostics: Vec<Diagnostic>,
@@ -462,12 +459,13 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&mut self, token: TokenId, message: impl Into<String>) {
-        let span = self.tokens.span(token);
-        let location = self.source.location(span);
+        let location = self
+            .tokens
+            .span(token)
+            .to_source_location_span(&self.source);
 
         self.diagnostics.push(Diagnostic {
-            token,
-            location: location.start,
+            location,
             message: message.into(),
         });
     }
@@ -630,7 +628,7 @@ impl<'a> Parser<'a> {
 
     fn parse_scope_access(&mut self, base: NodeId) -> NodeId {
         self.expect(token!(::));
-        let name = self.expect(TokenKind::Identifier);
+        let name = self.parse_identifier();
         let start = self.spans[base].start;
         self.add_node(start, Expr::ScopeAccess(ScopeAccess { name, base }))
     }
@@ -1957,11 +1955,13 @@ mod tests {
 
     #[test]
     fn qualified_type_name() {
-        insta::assert_snapshot!(parse_type("std::midi::Message"), @r#"
-        ScopeAccess "Message" 0..18
-          ScopeAccess "midi" 0..9
+        insta::assert_snapshot!(parse_type("std::midi::Message"), @"
+        ScopeAccess 0..18
+          ScopeAccess 0..9
             std 0..3
-        "#);
+            midi 5..9
+          Message 11..18
+        ");
     }
 
     #[test]
@@ -3021,12 +3021,13 @@ mod tests {
 
     #[test]
     fn qualified_type_name_with_call_segment() {
-        insta::assert_snapshot!(parse_type("Initialized(InitCode)::ADSR"), @r#"
-        ScopeAccess "ADSR" 0..27
+        insta::assert_snapshot!(parse_type("Initialized(InitCode)::ADSR"), @"
+        ScopeAccess 0..27
           Call 0..21
             Initialized 0..11
             InitCode 12..20
-        "#);
+          ADSR 23..27
+        ");
     }
 
     #[test]

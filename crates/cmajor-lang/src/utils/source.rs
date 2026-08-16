@@ -1,4 +1,4 @@
-use std::{range::Range, str::FromStr};
+use {crate::utils::span::Span, std::str::FromStr};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Source<'a> {
@@ -38,12 +38,12 @@ impl<'a> Source<'a> {
         self.source
     }
 
-    fn index_to_location(&self, index: u32) -> SourceLocation {
+    pub fn location(&self, index: u32) -> SourceLocation {
         let index = index as usize;
-        let line = match self.line_starts.binary_search(&index) {
-            Ok(line) => line,
-            Err(line) => line - 1,
-        };
+        let line = self
+            .line_starts
+            .binary_search(&index)
+            .unwrap_or_else(|line| line - 1);
         let column = index - self.line_starts[line];
 
         SourceLocation {
@@ -52,20 +52,13 @@ impl<'a> Source<'a> {
         }
     }
 
-    fn location_to_index(&self, location: SourceLocation) -> u32 {
+    pub fn index(&self, location: SourceLocation) -> u32 {
         let SourceLocation {
             line: Line(line),
             column: Column(column),
         } = location;
 
         (self.line_starts[line - 1] + column - 1) as u32
-    }
-
-    pub fn location(&self, span: impl Into<Range<u32>>) -> Range<SourceLocation> {
-        let span = span.into();
-        let start = self.index_to_location(span.start);
-        let end = self.index_to_location(span.end);
-        (start..end).into()
     }
 }
 
@@ -94,40 +87,30 @@ impl<'a> From<Source<'a>> for &'a str {
     }
 }
 
-impl<'a> std::ops::Index<Range<u32>> for Source<'a> {
+impl<'a> std::ops::Index<Span<u32>> for Source<'a> {
     type Output = str;
 
-    fn index(&self, index: Range<u32>) -> &'a Self::Output {
+    fn index(&self, index: Span<u32>) -> &'a Self::Output {
         &self.source[index.start as usize..index.end as usize]
     }
 }
 
-impl<'a> std::ops::Index<std::ops::Range<u32>> for Source<'a> {
+impl<'a> std::ops::Index<Span<SourceLocation>> for Source<'a> {
     type Output = str;
 
-    fn index(&self, index: std::ops::Range<u32>) -> &'a Self::Output {
-        let index: Range<u32> = index.into();
-        &self.source[index.start as usize..index.end as usize]
-    }
-}
-
-impl<'a> std::ops::Index<Range<SourceLocation>> for Source<'a> {
-    type Output = str;
-
-    fn index(&self, index: Range<SourceLocation>) -> &'a Self::Output {
-        let start = self.location_to_index(index.start);
-        let end = self.location_to_index(index.end);
-        &self.source[start as usize..end as usize]
+    fn index(&self, span: Span<SourceLocation>) -> &'a Self::Output {
+        let span = span.to_position_span(self);
+        &self.source[span.start as usize..span.end as usize]
     }
 }
 
 impl<'a> std::ops::Index<std::ops::Range<SourceLocation>> for Source<'a> {
     type Output = str;
 
-    fn index(&self, index: std::ops::Range<SourceLocation>) -> &'a Self::Output {
-        let start = self.location_to_index(index.start);
-        let end = self.location_to_index(index.end);
-        &self.source[start as usize..end as usize]
+    fn index(&self, span: std::ops::Range<SourceLocation>) -> &'a Self::Output {
+        let span: Span<SourceLocation> = span.into();
+        let span = span.to_position_span(self);
+        &self.source[span.start as usize..span.end as usize]
     }
 }
 
@@ -143,7 +126,9 @@ impl<'a> std::ops::Index<Line> for Source<'a> {
             line: line + 1.into(),
             column: 1.into(),
         };
-        &self[start..end]
+        let span = Span { start, end };
+
+        &self[span]
     }
 }
 
@@ -301,8 +286,8 @@ mod tests {
     fn mapping_locations_to_index() {
         let source: Source = CODE.into();
         let assert_index = |location: SourceLocation, index: u32| {
-            assert_eq!(index, source.location_to_index(location));
-            assert_eq!(location, source.index_to_location(index));
+            assert_eq!(index, source.index(location));
+            assert_eq!(location, source.location(index));
         };
 
         assert_index(location!(1:1), 0);

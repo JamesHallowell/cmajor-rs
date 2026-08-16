@@ -100,8 +100,8 @@ pub struct Field {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopeAccess {
-    pub name: TokenId,
     pub base: NodeId,
+    pub name: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -44,7 +44,7 @@ pub fn dump(ast: &Ast, tokens: &TokenStream, source: &str, root: NodeId) -> Stri
 }
 
 fn append_span(node: &mut DumpNode, ast: &Ast, tokens: &TokenStream, id: NodeId) {
-    let span = tokens.to_positions(ast.span(id));
+    let span = ast.span(id).to_position_span(tokens);
     let _ = write!(node.label, " {}..{}", span.start, span.end);
 }
 
@@ -627,10 +627,11 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let base = self.child(*base);
                 node(label, vec![base])
             }
-            Expr::ScopeAccess(ScopeAccess { name, base }) => {
-                let label = format!("ScopeAccess {:?}", self.text(name));
+            Expr::ScopeAccess(ScopeAccess { base, name }) => {
+                let label = "ScopeAccess".to_string();
                 let base = self.child(*base);
-                node(label, vec![base])
+                let name = self.child(*name);
+                node(label, vec![base, name])
             }
             Expr::TypeModifier(TypeModifier {
                 source,
