@@ -7,11 +7,11 @@ use crate::{
 pub struct ResolutionView<'a> {
     resolution: Resolution,
     tokens: TokenStream,
-    source: &'a str,
+    source: Source<'a>,
 }
 
 impl<'a> ResolutionView<'a> {
-    pub fn new(resolution: Resolution, tokens: TokenStream, source: &'a str) -> Self {
+    pub fn new(resolution: Resolution, tokens: TokenStream, source: Source<'a>) -> Self {
         Self {
             resolution,
             tokens,
@@ -20,7 +20,7 @@ impl<'a> ResolutionView<'a> {
     }
 
     fn location(&self, position: u32) -> String {
-        let SourceLocation { line, column } = Source::new(self.source).location(position);
+        let SourceLocation { line, column } = self.source.location(position);
         format!("{line}:{column}")
     }
 
@@ -35,9 +35,9 @@ impl<'a> ResolutionView<'a> {
         let symbols = table
             .symbols_in(scope)
             .map(|symbol| SymbolEntry {
-                name: symbol.name.clone(),
+                name: self.source[self.tokens.span(symbol.name)].to_string(),
                 kind: symbol.kind,
-                location: self.location(self.tokens.span(symbol.name_token).start),
+                location: self.location(self.tokens.span(symbol.name).start),
             })
             .collect();
 

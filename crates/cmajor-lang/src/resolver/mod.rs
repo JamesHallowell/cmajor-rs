@@ -11,9 +11,9 @@ pub use {
 use crate::{
     Diagnostic,
     ast::{
-        Alias, Ast, Block, EndpointDeclaration, EnumDecl, EventHandlerDecl, Expr, ForStmt,
-        FunctionDecl, GraphDecl, HoistedEndpointDeclaration, IfStmt, LoopStmt, ModuleAlias,
-        NamespaceDecl, Node, NodeDecl, NodeId, Param, ProcessorDecl, ScopeAccess,
+        Alias, Ast, Block, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
+        ForStmt, FunctionDecl, GraphDecl, HoistedEndpointDeclaration, Ident, IfStmt, LoopStmt,
+        ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Param, ProcessorDecl, ScopeAccess,
         SpecialisationValue, Stmt, StructDecl, TypedDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
@@ -104,10 +104,21 @@ impl<'a> State<'a> {
         &self.source[self.tokens.span(token)]
     }
 
+    fn location(&self, token: TokenId) -> Span<SourceLocation> {
+        self.tokens
+            .span(token)
+            .to_source_location_span(&self.source)
+    }
+
+    fn has_matching_name(&self, name: TokenId) -> impl FnMut(&Symbol) -> bool {
+        let name = self.text(name);
+        move |symbol: &Symbol| self.text(symbol.name) == name
+    }
+
     fn declare(
         &mut self,
         scope: ScopeId,
-        name_token: TokenId,
+        name: TokenId,
         kind: SymbolKind,
         node: NodeId,
     ) -> SymbolId {
@@ -115,29 +126,21 @@ impl<'a> State<'a> {
             return symbol;
         }
 
-        let name = self.text(name_token).to_owned();
-
         if !kind.allows_duplicates()
-            && let Some(existing) = self.symbols.lookup_local(scope, &name)
+            && let Some(existing) = self.symbols.find_local(scope, self.has_matching_name(name))
         {
-            let existing_location = self
-                .tokens
-                .span(self.symbols.symbol(existing).name_token)
-                .to_source_location_span(&self.source)
-                .start;
+            let existing_location = self.location(self.symbols.symbol(existing).name).start;
 
             self.error(
-                self.tokens
-                    .span(name_token)
-                    .to_source_location_span(&self.source),
+                self.location(name),
                 Error::RedefinedIdentifier {
-                    name: name.clone(),
+                    name: self.text(name).to_string(),
                     location: existing_location,
                 },
             );
         }
 
-        let symbol = self.symbols.declare(scope, kind, node, name, name_token);
+        let symbol = self.symbols.declare(scope, kind, node, name);
         self.declared.insert(node, symbol);
         symbol
     }
@@ -159,19 +162,23 @@ impl<'s, 'a> Declare<'s, 'a> {
     fn declare_container(
         &mut self,
         ast: &Ast,
-        keyword: TokenId,
         name: TokenId,
         kind: SymbolKind,
-        id: NodeId,
+        node: NodeId,
         items: &[NodeId],
     ) {
-        let symbol = self.state.declare(self.state.current_scope, name, kind, id);
+        let symbol = self
+            .state
+            .declare(self.state.current_scope, name, kind, node);
+
+        let scope_start = self.state.ast.span(node).start;
+
         let container_scope = self
             .state
             .symbols
-            .new_scope(self.state.current_scope, keyword);
+            .new_scope(self.state.current_scope, scope_start);
         self.state.symbols_scope.insert(symbol, container_scope);
-        self.state.node_scope.insert(id, container_scope);
+        self.state.node_scope.insert(node, container_scope);
 
         self.with_scope(container_scope, |this| {
             for &member in items {
@@ -183,13 +190,14 @@ impl<'s, 'a> Declare<'s, 'a> {
     fn declare_or_reuse_namespace(
         &mut self,
         scope: ScopeId,
-        keyword: TokenId,
-        segment: TokenId,
+        name: TokenId,
         node: NodeId,
     ) -> ScopeId {
-        let name = self.state.text(segment).to_owned();
-
-        if let Some(existing_id) = self.state.symbols.lookup_local(scope, &name) {
+        if let Some(existing_id) = self
+            .state
+            .symbols
+            .find_local(scope, self.state.has_matching_name(name))
+        {
             let existing = self.state.symbols.symbol(existing_id);
             if existing.kind == SymbolKind::Namespace {
                 return self
@@ -200,22 +208,13 @@ impl<'s, 'a> Declare<'s, 'a> {
                     .expect("namespace symbol always has an inner scope");
             }
 
-            let error_location = self
-                .state
-                .tokens
-                .span(segment)
-                .to_source_location_span(&self.state.source);
+            let error_location = self.state.location(name);
 
             self.state.error(
                 error_location,
                 Error::RedefinedIdentifier {
-                    name: name.clone(),
-                    location: self
-                        .state
-                        .tokens
-                        .span(existing.name_token)
-                        .to_source_location_span(&self.state.source)
-                        .start,
+                    name: self.state.text(name).to_string(),
+                    location: self.state.location(existing.name).start,
                 },
             );
         }
@@ -223,8 +222,10 @@ impl<'s, 'a> Declare<'s, 'a> {
         let symbol = self
             .state
             .symbols
-            .declare(scope, SymbolKind::Namespace, node, name, segment);
-        let inner = self.state.symbols.new_scope(scope, keyword);
+            .declare(scope, SymbolKind::Namespace, node, name);
+        let scope_start = self.state.ast.span(node).start;
+
+        let inner = self.state.symbols.new_scope(scope, scope_start);
         self.state.symbols_scope.insert(symbol, inner);
         inner
     }
@@ -237,22 +238,20 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             .segments
             .iter()
             .fold(scope, |scope, &segment| {
-                self.declare_or_reuse_namespace(scope, namespace_decl.keyword, segment, id)
+                self.declare_or_reuse_namespace(scope, segment, id)
             });
         self.state.node_scope.insert(id, inner);
 
-        let parent = self.state.current_scope;
-        self.state.current_scope = inner;
-        for &member in &namespace_decl.items {
-            self.visit(ast, member);
-        }
-        self.state.current_scope = parent;
+        self.with_scope(inner, |this| {
+            for &member in &namespace_decl.items {
+                this.visit(ast, member);
+            }
+        });
     }
 
     fn visit_processor_decl(&mut self, ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
         self.declare_container(
             ast,
-            processor_decl.keyword,
             processor_decl.name,
             SymbolKind::Processor,
             id,
@@ -263,7 +262,6 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     fn visit_graph_decl(&mut self, ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
         self.declare_container(
             ast,
-            graph_decl.keyword,
             graph_decl.name,
             SymbolKind::Graph,
             id,
@@ -274,7 +272,6 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
         self.declare_container(
             ast,
-            struct_decl.keyword,
             struct_decl.name,
             SymbolKind::Struct,
             id,
@@ -283,16 +280,22 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     }
 
     fn visit_enum_decl(&mut self, ast: &Ast, id: NodeId, enum_decl: &EnumDecl) {
-        let scope = self.state.current_scope;
-        let symbol = self
-            .state
-            .declare(scope, enum_decl.name, SymbolKind::Enum, id);
-        let inner = self.state.symbols.new_scope(scope, enum_decl.keyword);
-        self.state.symbols_scope.insert(symbol, inner);
-        for (id, value) in enum_decl.values(ast) {
-            self.state
-                .declare(inner, value.name, SymbolKind::EnumValue, id);
-        }
+        self.declare_container(
+            ast,
+            enum_decl.name,
+            SymbolKind::Enum,
+            id,
+            ast.children(enum_decl.values),
+        );
+    }
+
+    fn visit_enum_value(&mut self, _ast: &Ast, id: NodeId, enum_value: &EnumValue) {
+        self.state.declare(
+            self.state.current_scope,
+            enum_value.name,
+            SymbolKind::EnumValue,
+            id,
+        );
     }
 
     fn visit_function_decl(&mut self, _ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
@@ -429,12 +432,12 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 let symbol = self
                     .state
                     .symbols
-                    .lookup_visible(self.state.current_scope, self.state.text(ident.token))
+                    .find_visible(
+                        self.state.current_scope,
+                        self.state.has_matching_name(ident.token),
+                    )
                     .ok_or((
-                        self.state
-                            .tokens
-                            .span(ident.token)
-                            .to_source_location_span(&self.state.source),
+                        self.state.location(ident.token),
                         Error::UndeclaredIdentifier {
                             name: self.state.text(ident.token).to_owned(),
                         },
@@ -445,13 +448,11 @@ impl<'s, 'a> Resolve<'s, 'a> {
             Node::Expr(Expr::ScopeAccess(scope_access)) => {
                 let base = self.resolve_scope_path(scope_access.base)?;
 
-                let base_location = self
-                    .state
-                    .ast
-                    .span(scope_access.base)
-                    .to_source_location_span(self.state.tokens, &self.state.source);
-
                 let base_scope = *self.state.symbols_scope.get(base).ok_or_else(|| {
+                    let base_location = self
+                        .state
+                        .location(self.state.ast.span(scope_access.base).start);
+
                     (
                         base_location,
                         Error::NotAScope {
@@ -463,9 +464,7 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 let Node::Expr(Expr::Ident(name)) = self.state.ast.get(scope_access.name) else {
                     return Err((
                         self.state
-                            .ast
-                            .span(scope_access.name)
-                            .to_source_location_span(self.state.tokens, &self.state.source),
+                            .location(self.state.ast.span(scope_access.name).start),
                         Error::UnexpectedNode,
                     ));
                 };
@@ -473,12 +472,9 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 let member = self
                     .state
                     .symbols
-                    .lookup_local(base_scope, self.state.text(name.token))
+                    .find_local(base_scope, self.state.has_matching_name(name.token))
                     .ok_or((
-                        self.state
-                            .tokens
-                            .span(name.token)
-                            .to_source_location_span(&self.state.source),
+                        self.state.location(name.token),
                         Error::UndeclaredIdentifier {
                             name: self.state.text(name.token).to_owned(),
                         },
@@ -487,12 +483,7 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 Ok(member)
             }
             _ => {
-                let location = self
-                    .state
-                    .ast
-                    .span(node)
-                    .to_source_location_span(self.state.tokens, &self.state.source);
-
+                let location = self.state.location(self.state.ast.span(node).start);
                 Err((location, Error::UnexpectedNode))
             }
         }
@@ -515,8 +506,6 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
         self.resolve_container(ast, id, &struct_decl.items);
     }
-
-    fn visit_enum_decl(&mut self, _ast: &Ast, _id: NodeId, _enum_decl: &EnumDecl) {}
 
     fn visit_function_decl(&mut self, ast: &Ast, _id: NodeId, function_decl: &FunctionDecl) {
         self.with_new_scope_at(function_decl.name, |this, _| {
@@ -551,8 +540,6 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
             body.walk(ast, this);
         });
     }
-
-    fn visit_module_alias(&mut self, _ast: &Ast, _id: NodeId, _module_alias: &ModuleAlias) {}
 
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
         for (id, declarator) in var.declarators(ast) {
@@ -605,26 +592,6 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         specialisation_value.walk(ast, self);
     }
 
-    fn visit_alias(&mut self, _ast: &Ast, _id: NodeId, _alias: &Alias) {}
-
-    fn visit_endpoint_declaration(
-        &mut self,
-        _ast: &Ast,
-        _id: NodeId,
-        _endpoint_declaration: &EndpointDeclaration,
-    ) {
-    }
-
-    fn visit_hoisted_endpoint_declaration(
-        &mut self,
-        _ast: &Ast,
-        _id: NodeId,
-        _hoisted_endpoint_declaration: &HoistedEndpointDeclaration,
-    ) {
-    }
-
-    fn visit_node_decl(&mut self, _ast: &Ast, _id: NodeId, _node_decl: &NodeDecl) {}
-
     fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
         let scope_start = self.state.ast.span(id).start;
         self.with_new_scope_at(scope_start, |this, _| block.walk(ast, this));
@@ -667,27 +634,29 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         self.with_new_scope_at(scope_start, |this, _| loop_stmt.walk(ast, this));
     }
 
-    fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, ident: TokenId) {
-        if let TokenKind::Keyword(keyword) = self.state.tokens.get(ident).kind
+    fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, ident: &Ident) {
+        if let TokenKind::Keyword(keyword) = self.state.tokens.get(ident.token).kind
             && keyword.is_type()
         {
             return;
         }
 
-        let name = self.state.text(ident);
         if self
             .state
             .symbols
-            .lookup_visible(self.state.current_scope, name)
+            .find_visible(
+                self.state.current_scope,
+                self.state.has_matching_name(ident.token),
+            )
             .is_none()
         {
             self.state.error(
                 self.state
                     .tokens
-                    .span(ident)
+                    .span(ident.token)
                     .to_source_location_span(&self.state.source),
                 Error::UndeclaredIdentifier {
-                    name: name.to_owned(),
+                    name: self.state.text(ident.token).to_owned(),
                 },
             );
         }
@@ -711,6 +680,7 @@ mod tests {
         let parse = parser::parse(source);
         assert!(!parse.ast.has_errors(), "source failed to parse: {source}");
         let resolution = resolve(source, &parse);
+        let source = Source::new(source);
         ResolutionView::new(resolution, parse.tokens, source)
     }
 

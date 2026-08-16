@@ -857,14 +857,7 @@ impl<'a> Parser<'a> {
 
         let values = self.child_pool.commit(values);
 
-        self.add_node(
-            keyword,
-            Item::EnumDecl(EnumDecl {
-                keyword,
-                name,
-                values,
-            }),
-        )
+        self.add_node(keyword, Item::EnumDecl(EnumDecl { name, values }))
     }
 
     fn parse_external_decl(&mut self) -> NodeId {
@@ -1052,7 +1045,6 @@ impl<'a> Parser<'a> {
         self.add_node(
             keyword,
             Item::NamespaceDecl(NamespaceDecl {
-                keyword,
                 segments,
                 params,
                 annotations,
@@ -1165,7 +1157,6 @@ impl<'a> Parser<'a> {
             token!(graph) => self.add_node(
                 keyword,
                 Item::GraphDecl(GraphDecl {
-                    keyword,
                     name,
                     params,
                     annotations,
@@ -1175,7 +1166,6 @@ impl<'a> Parser<'a> {
             token!(struct) => self.add_node(
                 keyword,
                 Item::StructDecl(StructDecl {
-                    keyword,
                     name,
                     annotations,
                     items,
@@ -1184,7 +1174,6 @@ impl<'a> Parser<'a> {
             token!(processor) => self.add_node(
                 keyword,
                 Item::ProcessorDecl(ProcessorDecl {
-                    keyword,
                     name,
                     params,
                     annotations,

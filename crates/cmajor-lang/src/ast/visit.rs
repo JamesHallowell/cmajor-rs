@@ -242,7 +242,7 @@ pub trait Visitor {
         walk_expr(ast, self, id, expr);
     }
 
-    fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, _token: TokenId) {}
+    fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, _ident: &Ident) {}
 
     fn visit_parentheses(&mut self, ast: &Ast, id: NodeId, parentheses: &Parentheses) {
         let _ = id;
@@ -455,7 +455,7 @@ where
 {
     match expr {
         Expr::Literal(_) => {}
-        &Expr::Ident(Ident { token }) => visitor.visit_ident(ast, id, token),
+        Expr::Ident(ident) => visitor.visit_ident(ast, id, ident),
         Expr::Parentheses(parentheses) => visitor.visit_parentheses(ast, id, parentheses),
         Expr::Unary(unary) => visitor.visit_unary(ast, id, unary),
         Expr::PostfixUnary(postfix_unary) => visitor.visit_postfix_unary(ast, id, postfix_unary),

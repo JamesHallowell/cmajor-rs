@@ -35,8 +35,7 @@ impl SymbolKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
-    pub name: String,
-    pub name_token: TokenId,
+    pub name: TokenId,
     pub kind: SymbolKind,
     pub node: NodeId,
     pub scope: ScopeId,
@@ -99,12 +98,10 @@ impl SymbolTable {
         scope: ScopeId,
         kind: SymbolKind,
         node: NodeId,
-        name: String,
-        name_token: TokenId,
+        name: TokenId,
     ) -> SymbolId {
         let id = self.symbols.push(Symbol {
             name,
-            name_token,
             kind,
             node,
             scope,
@@ -113,17 +110,23 @@ impl SymbolTable {
         id
     }
 
-    pub fn lookup_local(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+    pub fn find_local<F>(&self, scope: ScopeId, mut predicate: F) -> Option<SymbolId>
+    where
+        F: FnMut(&Symbol) -> bool,
+    {
         self.scopes[scope]
             .symbols()
-            .find(|&&id| self.symbols[id].name == name)
+            .find(|&&id| predicate(&self.symbols[id]))
             .copied()
     }
 
-    pub fn lookup_visible(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+    pub fn find_visible<F>(&self, scope: ScopeId, mut predicate: F) -> Option<SymbolId>
+    where
+        F: FnMut(&Symbol) -> bool,
+    {
         let mut current_scope = scope;
         loop {
-            match self.lookup_local(current_scope, name) {
+            match self.find_local(current_scope, &mut predicate) {
                 Some(id) => return Some(id),
                 None => {
                     current_scope = self.scope(current_scope).parent()?;

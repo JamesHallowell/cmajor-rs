@@ -10,7 +10,6 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NamespaceDecl {
-    pub keyword: TokenId,
     pub segments: Vec<TokenId>,
     pub params: Vec<NodeId>,
     pub annotations: Annotations,
@@ -19,7 +18,6 @@ pub struct NamespaceDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessorDecl {
-    pub keyword: TokenId,
     pub name: TokenId,
     pub params: Vec<NodeId>,
     pub annotations: Annotations,
@@ -28,7 +26,6 @@ pub struct ProcessorDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphDecl {
-    pub keyword: TokenId,
     pub name: TokenId,
     pub params: Vec<NodeId>,
     pub annotations: Annotations,
@@ -37,7 +34,6 @@ pub struct GraphDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
-    pub keyword: TokenId,
     pub name: TokenId,
     pub annotations: Annotations,
     pub items: Vec<NodeId>,
@@ -45,7 +41,6 @@ pub struct StructDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
-    pub keyword: TokenId,
     pub name: TokenId,
     pub values: ChildList,
 }
