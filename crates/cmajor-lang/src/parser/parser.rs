@@ -860,6 +860,7 @@ impl<'a> Parser<'a> {
         let names = self.child_pool.commit(names);
 
         let annotations = self.parse_annotations();
+        self.expect(token!(;));
 
         self.add_node(
             external,
@@ -1908,20 +1909,38 @@ impl<'a> Parser<'a> {
 mod tests {
     use {super::*, crate::ast};
 
-    fn dump(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> String {
+    fn dump(source: &str, parse_fn: Option<fn(&mut Parser) -> NodeId>) -> String {
         let tokens = tokenize(source);
         let mut parser = Parser::new(&tokens, source);
-        let root = parse_fn(&mut parser);
+
+        let roots = match parse_fn {
+            Some(parse_fn) => vec![parse_fn(&mut parser)],
+            None => {
+                parser.parse();
+                parser.roots.clone()
+            }
+        };
+
+        assert_eq!(
+            parser.iter.next(),
+            None,
+            "parser did not consume all tokens"
+        );
         assert_eq!(parser.diagnostics, vec![]);
 
         let ast = Ast::new(
             parser.nodes,
-            vec![root],
+            roots.clone(),
             parser.spans,
             parser.child_pool,
             parser.labels,
         );
-        ast::dump(&ast, &tokens, source, root)
+
+        let mut output = String::new();
+        for root in roots {
+            output.push_str(&ast::dump(&ast, &tokens, source, root));
+        }
+        output
     }
 
     fn has_diagnostics(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> bool {
@@ -1932,15 +1951,15 @@ mod tests {
     }
 
     fn parse_type(source: &str) -> String {
-        dump(source, |parser| parser.parse_type())
+        dump(source, Some(|parser| parser.parse_type()))
     }
 
     fn parse_expr(source: &str) -> String {
-        dump(source, |parser| parser.parse_expr())
+        dump(source, Some(|parser| parser.parse_expr()))
     }
 
-    fn parse_stmt(source: &str) -> String {
-        dump(source, |parser| parser.parse_statement())
+    fn parse_all(source: &str) -> String {
+        dump(source, None)
     }
 
     #[test]
@@ -2221,7 +2240,7 @@ mod tests {
 
     #[test]
     fn let_statement() {
-        insta::assert_snapshot!(parse_stmt("let x = 1;"), @r#"
+        insta::assert_snapshot!(parse_all("let x = 1;"), @r#"
         VarDecl let 0..10
           Declarator "x" 4..9
             1 8..9
@@ -2230,7 +2249,7 @@ mod tests {
 
     #[test]
     fn var_with_init_statement() {
-        insta::assert_snapshot!(parse_stmt("var y = 3;"), @r#"
+        insta::assert_snapshot!(parse_all("var y = 3;"), @r#"
         VarDecl var 0..10
           Declarator "y" 4..9
             3 8..9
@@ -2239,7 +2258,7 @@ mod tests {
 
     #[test]
     fn var_multiple_declarators() {
-        insta::assert_snapshot!(parse_stmt("var a = 1, b = 2;"), @r#"
+        insta::assert_snapshot!(parse_all("var a = 1, b = 2;"), @r#"
         VarDecl var 0..17
           Declarator "a" 4..9
             1 8..9
@@ -2250,18 +2269,27 @@ mod tests {
 
     #[test]
     fn typed_var_decl_statements() {
-        insta::assert_snapshot!(parse_stmt("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
+        insta::assert_snapshot!(parse_all("wrap<5> w; clamp<5> c; int n = 1;"), @r#"
         TypedDecl 0..10
           VectorSizeSuffix 0..7
             wrap 0..4
             5 5..6
           Declarator "w" 8..9
+        TypedDecl 11..22
+          VectorSizeSuffix 11..19
+            clamp 11..16
+            5 17..18
+          Declarator "c" 20..21
+        TypedDecl 23..33
+          int 23..26
+          Declarator "n" 27..32
+            1 31..32
         "#);
     }
 
     #[test]
     fn const_var_decl_statement() {
-        insta::assert_snapshot!(parse_stmt("const int x = 1;"), @r#"
+        insta::assert_snapshot!(parse_all("const int x = 1;"), @r#"
         TypedDecl 0..16
           TypeModifier const 0..9
             int 6..9
@@ -2272,7 +2300,7 @@ mod tests {
 
     #[test]
     fn if_else_statement() {
-        insta::assert_snapshot!(parse_stmt("if (a) { b; } else { c; }"), @"
+        insta::assert_snapshot!(parse_all("if (a) { b; } else { c; }"), @"
         IfStmt 0..25
           a 4..5
           Block 7..13
@@ -2286,7 +2314,7 @@ mod tests {
 
     #[test]
     fn if_without_else() {
-        insta::assert_snapshot!(parse_stmt("if (a) { b; }"), @"
+        insta::assert_snapshot!(parse_all("if (a) { b; }"), @"
         IfStmt 0..13
           a 4..5
           Block 7..13
@@ -2297,7 +2325,7 @@ mod tests {
 
     #[test]
     fn if_const_statement() {
-        insta::assert_snapshot!(parse_stmt("if const (a) { b; }"), @"
+        insta::assert_snapshot!(parse_all("if const (a) { b; }"), @"
         IfConstStmt 0..19
           a 10..11
           Block 13..19
@@ -2308,7 +2336,7 @@ mod tests {
 
     #[test]
     fn while_and_bounded_loop() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "while (n > 0) { n = n - 1; } loop (4) { advance(); }"
         ), @r#"
         WhileStmt 0..28
@@ -2322,12 +2350,18 @@ mod tests {
                 Binary "-" 20..25
                   n 20..21
                   1 24..25
+        LoopStmt 29..52
+          4 35..36
+          Block 38..52
+            ExprStmt 40..50
+              Call 40..49
+                advance 40..47
         "#);
     }
 
     #[test]
     fn unbounded_loop_has_no_count() {
-        insta::assert_snapshot!(parse_stmt("loop { advance(); }"), @"
+        insta::assert_snapshot!(parse_all("loop { advance(); }"), @"
         LoopStmt 0..19
           Block 5..19
             ExprStmt 7..17
@@ -2337,13 +2371,23 @@ mod tests {
     }
 
     #[test]
-    fn return_with_and_without_value() {
-        insta::assert_snapshot!(parse_stmt("return; return x + 1;"), @"ReturnStmt 0..7");
+    fn return_without_value() {
+        insta::assert_snapshot!(parse_all("return;"), @"ReturnStmt 0..7");
+    }
+
+    #[test]
+    fn return_with_value() {
+        insta::assert_snapshot!(parse_all("return x + 1;"), @r#"
+        ReturnStmt 0..13
+          Binary "+" 7..12
+            x 7..8
+            1 11..12
+        "#);
     }
 
     #[test]
     fn break_and_continue() {
-        insta::assert_snapshot!(parse_stmt("loop { break; continue; }"), @"
+        insta::assert_snapshot!(parse_all("loop { break; continue; }"), @"
         LoopStmt 0..25
           Block 5..25
             BreakStmt 7..13
@@ -2353,7 +2397,7 @@ mod tests {
 
     #[test]
     fn function() {
-        insta::assert_snapshot!(parse_stmt("int add(int a, int b) { return a + b; }"), @r#"
+        insta::assert_snapshot!(parse_all("int add(int a, int b) { return a + b; }"), @r#"
         FunctionDecl "add" 0..39
           int 0..3
           Param "a" 8..13
@@ -2370,7 +2414,7 @@ mod tests {
 
     #[test]
     fn function_with_const_params() {
-        insta::assert_snapshot!(parse_stmt("void f(const int& a, const float32[10]& b) { }"), @r#"
+        insta::assert_snapshot!(parse_all("void f(const int& a, const float32[10]& b) { }"), @r#"
         FunctionDecl "f" 0..46
           void 0..4
           Param "a" 7..19
@@ -2387,7 +2431,7 @@ mod tests {
 
     #[test]
     fn const_member_function() {
-        insta::assert_snapshot!(parse_stmt("void f() const { }"), @r#"
+        insta::assert_snapshot!(parse_all("void f() const { }"), @r#"
         FunctionDecl "f" const 0..18
           void 0..4
           Block 15..18
@@ -2396,7 +2440,7 @@ mod tests {
 
     #[test]
     fn loop_with_unbraced_body() {
-        insta::assert_snapshot!(parse_stmt("void main() { loop advance(); }"), @r#"
+        insta::assert_snapshot!(parse_all("void main() { loop advance(); }"), @r#"
         FunctionDecl "main" 0..31
           void 0..4
           Block 12..31
@@ -2409,7 +2453,7 @@ mod tests {
 
     #[test]
     fn processor_with_typed_specialisation_param() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "processor SquareWave (int length) { output stream int out; }"
         ), @r#"
         ProcessorDecl "SquareWave" 0..60
@@ -2422,7 +2466,7 @@ mod tests {
 
     #[test]
     fn processor_with_typed_specialisation_param_default_value() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "processor Gain (int channelCount = 2) { output stream int out; }"
         ), @r#"
         ProcessorDecl "Gain" 0..64
@@ -2436,7 +2480,7 @@ mod tests {
 
     #[test]
     fn processor_with_using_specialisation_param() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "processor Source (using DataType) { output stream int out; }"
         ), @r#"
         ProcessorDecl "Source" 0..60
@@ -2448,7 +2492,7 @@ mod tests {
 
     #[test]
     fn processor_with_using_specialisation_param_default_type() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "processor P (using T = float32) { output stream int out; }"
         ), @r#"
         ProcessorDecl "P" 0..58
@@ -2461,7 +2505,7 @@ mod tests {
 
     #[test]
     fn graph_with_processor_specialisation_param() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "graph Wrapper (processor Parameterised, int x) { output stream int out; }"
         ), @r#"
         GraphDecl "Wrapper" 0..73
@@ -2475,7 +2519,7 @@ mod tests {
 
     #[test]
     fn namespace_with_specialisation_params() {
-        insta::assert_snapshot!(parse_stmt("namespace n (processor p, namespace ns) {}"), @r#"
+        insta::assert_snapshot!(parse_all("namespace n (processor p, namespace ns) {}"), @r#"
         NamespaceDecl "n" 0..42
           Alias processor "p" 13..24
           Alias namespace "ns" 26..38
@@ -2484,7 +2528,7 @@ mod tests {
 
     #[test]
     fn multiple_specialisation_params_of_different_kinds() {
-        insta::assert_snapshot!(parse_stmt(
+        insta::assert_snapshot!(parse_all(
             "processor P (using T, int length = 4) { output stream int out; }"
         ), @r#"
         ProcessorDecl "P" 0..64
@@ -2499,7 +2543,7 @@ mod tests {
 
     #[test]
     fn processor_latency_assignment_is_not_a_container_decl() {
-        insta::assert_snapshot!(parse_stmt("processor.latency = length;"), @r#"
+        insta::assert_snapshot!(parse_all("processor.latency = length;"), @r#"
         ExprStmt 0..27
           Assign "=" 0..26
             ProcessorProperty "latency" 0..17
@@ -2559,7 +2603,7 @@ mod tests {
 
     #[test]
     fn ambiguous_chevron_at_statement_start_is_read_as_a_type_decl() {
-        insta::assert_snapshot!(parse_stmt("a < b > c;"), @r#"
+        insta::assert_snapshot!(parse_all("a < b > c;"), @r#"
         TypedDecl 0..10
           VectorSizeSuffix 0..7
             a 0..1
@@ -2595,7 +2639,7 @@ mod tests {
 
     #[test]
     fn connection() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2.in;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out -> node2.in;"), @r#"
         ConnectionDecl 0..33
           Connection 11..32
             Sources
@@ -2609,7 +2653,7 @@ mod tests {
 
     #[test]
     fn connection_to_single_input() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out -> node2;"), @r#"
         ConnectionDecl 0..30
           Connection 11..29
             Sources
@@ -2622,7 +2666,7 @@ mod tests {
 
     #[test]
     fn connections_in_a_chain() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2 -> node3;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out -> node2 -> node3;"), @r#"
         ConnectionDecl 0..39
           Connection 11..29
             Sources
@@ -2640,7 +2684,7 @@ mod tests {
 
     #[test]
     fn connection_to_multiple_destinations() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out -> node2, node3;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out -> node2, node3;"), @r#"
         ConnectionDecl 0..37
           Connection 11..36
             Sources
@@ -2654,7 +2698,7 @@ mod tests {
 
     #[test]
     fn connection_to_multiple_sources() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out, node2.out -> node3;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out, node2.out -> node3;"), @r#"
         ConnectionDecl 0..41
           Connection 11..40
             Sources
@@ -2669,7 +2713,7 @@ mod tests {
 
     #[test]
     fn connection_with_delay() {
-        insta::assert_snapshot!(parse_stmt("connection node1.out -> [100] -> node2;"), @r#"
+        insta::assert_snapshot!(parse_all("connection node1.out -> [100] -> node2;"), @r#"
         ConnectionDecl 0..39
           Connection 11..38
             Sources
@@ -2684,7 +2728,7 @@ mod tests {
 
     #[test]
     fn connection_with_interpolation() {
-        insta::assert_snapshot!(parse_stmt("connection [linear] node1.out -> node2;"), @r#"
+        insta::assert_snapshot!(parse_all("connection [linear] node1.out -> node2;"), @r#"
         ConnectionDecl 0..39
           Connection [linear] 20..38
             Sources
@@ -2697,7 +2741,7 @@ mod tests {
 
     #[test]
     fn connection_block() {
-        insta::assert_snapshot!(parse_stmt("connection  { node1.out -> node2, node3; node2.out -> node4; }"), @r#"
+        insta::assert_snapshot!(parse_all("connection  { node1.out -> node2, node3; node2.out -> node4; }"), @r#"
         ConnectionDecl 0..62
           Connection 14..39
             Sources
@@ -2717,13 +2761,13 @@ mod tests {
 
     #[test]
     fn empty_connection_block() {
-        insta::assert_snapshot!(parse_stmt("connection {}"), @"ConnectionDecl 0..13");
+        insta::assert_snapshot!(parse_all("connection {}"), @"ConnectionDecl 0..13");
     }
 
     #[test]
     fn conditional_connection() {
         insta::assert_snapshot!(
-            parse_stmt("connection { if (useDistortionFirst) in -> distortion -> out; else in -> out; }"),
+            parse_all("connection { if (useDistortionFirst) in -> distortion -> out; else in -> out; }"),
             @"
         ConnectionDecl 0..79
           ConnectionIf 13..77
@@ -2751,7 +2795,7 @@ mod tests {
 
     #[test]
     fn infinite_for_loop() {
-        insta::assert_snapshot!(parse_stmt("for (;;) { advance(); }"), @"
+        insta::assert_snapshot!(parse_all("for (;;) { advance(); }"), @"
         ForStmt 0..23
           Block 9..23
             ExprStmt 11..21
@@ -2762,7 +2806,7 @@ mod tests {
 
     #[test]
     fn classic_for_loop() {
-        insta::assert_snapshot!(parse_stmt("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
+        insta::assert_snapshot!(parse_all("for (int i = 0; i < 10; ++i) { advance(); }"), @r#"
         ForStmt 0..43
           TypedDecl 5..14
             int 5..8
@@ -2782,7 +2826,7 @@ mod tests {
 
     #[test]
     fn bounded_range_for_loop() {
-        insta::assert_snapshot!(parse_stmt("for (wrap<4> i) { advance(); }"), @r#"
+        insta::assert_snapshot!(parse_all("for (wrap<4> i) { advance(); }"), @r#"
         LoopStmt 0..30
           TypedDecl 5..14
             VectorSizeSuffix 5..12
@@ -2798,7 +2842,7 @@ mod tests {
 
     #[test]
     fn labelled_bounded_range_for_loop() {
-        insta::assert_snapshot!(parse_stmt("outer: for (wrap<4> i) { advance(); }"), @r#"
+        insta::assert_snapshot!(parse_all("outer: for (wrap<4> i) { advance(); }"), @r#"
         LoopStmt "outer" 0..37
           TypedDecl 12..21
             VectorSizeSuffix 12..19
@@ -2814,23 +2858,23 @@ mod tests {
 
     #[test]
     fn enum_decl() {
-        insta::assert_snapshot!(parse_stmt("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C} 0..21"#);
+        insta::assert_snapshot!(parse_all("enum Mode { A, B, C }"), @r#"EnumDecl "Mode" {A, B, C} 0..21"#);
     }
 
     #[test]
     fn import_dotted_path() {
-        insta::assert_snapshot!(parse_stmt("import std.audio;"), @r#"Import "std.audio" 0..17"#);
+        insta::assert_snapshot!(parse_all("import std.audio;"), @r#"Import "std.audio" 0..17"#);
     }
 
     #[test]
     fn import_string_path() {
-        insta::assert_snapshot!(parse_stmt(r#"import "foo.cmajor";"#), @r#"Import "\"foo.cmajor\"" 0..20"#);
+        insta::assert_snapshot!(parse_all(r#"import "foo.cmajor";"#), @r#"Import "\"foo.cmajor\"" 0..20"#);
     }
 
     #[test]
     fn external_var_decl() {
-        insta::assert_snapshot!(parse_stmt("external float64 one;"), @"
-        External 0..20
+        insta::assert_snapshot!(parse_all("external float64 one;"), @"
+        External 0..21
           float64 9..16
           one 17..20
         ");
@@ -2838,8 +2882,8 @@ mod tests {
 
     #[test]
     fn external_multiple_vars() {
-        insta::assert_snapshot!(parse_stmt("external float64 one, two, three;"), @"
-        External 0..32
+        insta::assert_snapshot!(parse_all("external float64 one, two, three;"), @"
+        External 0..33
           float64 9..16
           one 17..20
           two 22..25
@@ -2849,7 +2893,7 @@ mod tests {
 
     #[test]
     fn using_type_alias_statement() {
-        insta::assert_snapshot!(parse_stmt("using T = int;"), @r#"
+        insta::assert_snapshot!(parse_all("using T = int;"), @r#"
         Alias using "T" 0..14
           int 10..13
         "#);
@@ -2858,7 +2902,7 @@ mod tests {
     #[test]
     fn static_assert_with_message() {
         insta::assert_snapshot!(
-            parse_stmt(r#"static_assert(x > 0, "must be positive");"#),
+            parse_all(r#"static_assert(x > 0, "must be positive");"#),
             @r#"
         ExprStmt 0..41
           Call 0..40
@@ -2874,7 +2918,7 @@ mod tests {
     #[test]
     fn forward_branch_stmt() {
         insta::assert_snapshot!(
-            parse_stmt("forward_branch (cond) -> (a, b);"),
+            parse_all("forward_branch (cond) -> (a, b);"),
             @"
         ForwardBranchStmt 0..32
           cond 16..20
@@ -2887,7 +2931,7 @@ mod tests {
     #[test]
     fn labelled_loop_and_break_target() {
         insta::assert_snapshot!(
-            parse_stmt("outer: loop { break outer; }"),
+            parse_all("outer: loop { break outer; }"),
             @r#"
         LoopStmt "outer" 0..28
           Block 12..28
@@ -2920,7 +2964,7 @@ mod tests {
     #[test]
     fn processor_alias_decl() {
         insta::assert_snapshot!(
-            parse_stmt("processor Foo = Bar(4);"),
+            parse_all("processor Foo = Bar(4);"),
             @r#"
         ModuleAlias processor "Foo" 0..23
           Call 16..22
@@ -2932,30 +2976,30 @@ mod tests {
 
     #[test]
     fn hoisted_endpoint_named() {
-        insta::assert_snapshot!(parse_stmt("output child.out;"), @"EndpointDecl output child.out 0..17");
+        insta::assert_snapshot!(parse_all("output child.out;"), @"EndpointDecl output child.out 0..17");
     }
 
     #[test]
     fn hoisted_endpoint_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output child.*;"), @"EndpointDecl output child.* 0..15");
+        insta::assert_snapshot!(parse_all("output child.*;"), @"EndpointDecl output child.* 0..15");
     }
 
     #[test]
     fn hoisted_endpoint_prefixed_wildcard() {
-        insta::assert_snapshot!(parse_stmt("output g2.test*;"), @"EndpointDecl output g2.test* 0..16");
+        insta::assert_snapshot!(parse_all("output g2.test*;"), @"EndpointDecl output g2.test* 0..16");
     }
 
     #[test]
     fn hoisted_endpoint_chained_through_nested_node() {
         insta::assert_snapshot!(
-            parse_stmt("input q.unused.in;"),
+            parse_all("input q.unused.in;"),
             @"EndpointDecl input q.unused.in 0..18"
         );
     }
 
     #[test]
     fn sized_array_endpoint() {
-        insta::assert_snapshot!(parse_stmt("input stream float in[10];"), @r#"
+        insta::assert_snapshot!(parse_all("input stream float in[10];"), @r#"
         EndpointDecl input stream "in" 0..26
           float 13..18
           10 22..24
@@ -2965,7 +3009,7 @@ mod tests {
     #[test]
     fn endpoint_with_attribute_list() {
         insta::assert_snapshot!(
-            parse_stmt(r#"input event bool hpEnable [[ name: "HP Enable", init: true, boolean ]];"#),
+            parse_all(r#"input event bool hpEnable [[ name: "HP Enable", init: true, boolean ]];"#),
             @r#"
         EndpointDecl input event "hpEnable" 0..71
           bool 12..16
@@ -2980,7 +3024,7 @@ mod tests {
 
     #[test]
     fn sized_array_endpoint_with_attribute_list() {
-        insta::assert_snapshot!(parse_stmt("input stream float in[10] [[ min: 0.0 ]];"), @r#"
+        insta::assert_snapshot!(parse_all("input stream float in[10] [[ min: 0.0 ]];"), @r#"
         EndpointDecl input stream "in" 0..41
           float 13..18
           10 22..24
@@ -2991,7 +3035,7 @@ mod tests {
 
     #[test]
     fn multi_type_event_endpoint() {
-        insta::assert_snapshot!(parse_stmt("input event (int, float) e;"), @r#"
+        insta::assert_snapshot!(parse_all("input event (int, float) e;"), @r#"
         EndpointDecl input event "e" 0..27
           int 13..16
           float 18..23
@@ -3000,7 +3044,7 @@ mod tests {
 
     #[test]
     fn hoisted_endpoint_with_attributes() {
-        insta::assert_snapshot!(parse_stmt("input filter.frequency [[ mid: 1000 ]];"), @r#"
+        insta::assert_snapshot!(parse_all("input filter.frequency [[ mid: 1000 ]];"), @r#"
         EndpointDecl input filter.frequency 0..39
           Annotation "mid" 26..35
             1000 31..35
@@ -3010,7 +3054,7 @@ mod tests {
     #[test]
     fn hoisted_endpoint_with_rename_and_attributes() {
         insta::assert_snapshot!(
-            parse_stmt("input modulator.frequencyIn modulationFrequency [[ min: 1.0 ]];"),
+            parse_all("input modulator.frequencyIn modulationFrequency [[ min: 1.0 ]];"),
             @r#"
         EndpointDecl input modulator.frequencyIn 0..63
           Annotation "min" 51..59
@@ -3033,7 +3077,7 @@ mod tests {
     #[test]
     fn outer_braced_endpoint_group_with_mixed_kinds() {
         insta::assert_snapshot!(
-            dump("processor P { input { event int e; value float v; } }", |parser| parser.parse_container()),
+            parse_all("processor P { input { event int e; value float v; } }"),
             @r#"
         ProcessorDecl "P" 0..53
           EndpointDecl input event "e" 14..34
@@ -3057,7 +3101,7 @@ mod tests {
 
     #[test]
     fn three_clause_for_loop_with_var_init() {
-        insta::assert_snapshot!(parse_stmt("for (var i = 0; i < 10; ++i) {}"), @r#"
+        insta::assert_snapshot!(parse_all("for (var i = 0; i < 10; ++i) {}"), @r#"
         ForStmt 0..31
           VarDecl var 5..14
             Declarator "i" 9..14
@@ -3073,7 +3117,7 @@ mod tests {
 
     #[test]
     fn three_clause_for_loop_with_let_init() {
-        insta::assert_snapshot!(parse_stmt("for (let i = 0; i < 10; ++i) {}"), @r#"
+        insta::assert_snapshot!(parse_all("for (let i = 0; i < 10; ++i) {}"), @r#"
         ForStmt 0..31
           VarDecl let 5..14
             Declarator "i" 9..14
@@ -3098,7 +3142,7 @@ mod tests {
     #[test]
     fn using_target_is_a_full_expression() {
         insta::assert_snapshot!(
-            parse_stmt("using ComplexType = FloatArray.elementType.isFloat32 ? complex32 : complex64;"),
+            parse_all("using ComplexType = FloatArray.elementType.isFloat32 ? complex32 : complex64;"),
             @r#"
         Alias using "ComplexType" 0..77
           Ternary 20..76
@@ -3114,7 +3158,7 @@ mod tests {
     #[test]
     fn braced_endpoint_group_desugars_to_flat_members() {
         insta::assert_snapshot!(
-            dump("processor P { output stream { float32 a; int b; } }", |parser| parser.parse_container()),
+            parse_all("processor P { output stream { float32 a; int b; } }"),
             @r#"
         ProcessorDecl "P" 0..51
           EndpointDecl output stream "a" 14..40
@@ -3128,7 +3172,7 @@ mod tests {
     #[test]
     fn comma_separated_node_decls_without_braces() {
         insta::assert_snapshot!(
-            dump("graph G { node b = B, c = C; }", |parser| parser.parse_container()),
+            parse_all("graph G { node b = B, c = C; }"),
             @r#"
         GraphDecl "G" 0..30
           NodeDecl "b" 10..20
