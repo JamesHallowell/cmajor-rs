@@ -311,6 +311,22 @@ impl<'a> State<'a> {
         self.declared[unit].insert(node, symbol);
         symbol
     }
+
+    fn declare_local(&mut self, name: TokenId, kind: SymbolKind, node: NodeId) -> SymbolId {
+        let unit = self.current_unit();
+
+        if let Some(&symbol) = self.declared[unit].get(node) {
+            return symbol;
+        }
+
+        let symbol = self.symbols.declare(
+            SymbolOrigin::Source { unit, name, node },
+            kind,
+            self.current_scope,
+        );
+        self.declared[unit].insert(node, symbol);
+        symbol
+    }
 }
 
 struct Declare<'s, 'a> {
@@ -786,24 +802,14 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
 
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
         for (id, declarator) in var.declarators(ast) {
-            self.state.declare(
-                self.state.current_scope,
-                declarator.name,
-                SymbolKind::Variable,
-                id,
-            );
+            self.state.declare_local(declarator.name, SymbolKind::Variable, id);
         }
         var.walk(ast, self);
     }
 
     fn visit_typed_decl(&mut self, ast: &Ast, _id: NodeId, typed_decl: &TypedDecl) {
         for (id, declarator) in typed_decl.declarators(ast) {
-            self.state.declare(
-                self.state.current_scope,
-                declarator.name,
-                SymbolKind::Variable,
-                id,
-            );
+            self.state.declare_local(declarator.name, SymbolKind::Variable, id);
         }
         typed_decl.walk(ast, self);
     }
@@ -1082,7 +1088,7 @@ mod tests {
     }
 
     #[test]
-    fn local_shadowing_a_parameter_is_reported() {
+    fn local_shadowing_a_parameter_is_permitted() {
         assert_resolution!(
             indoc! {"
                 processor P
@@ -1114,8 +1120,39 @@ mod tests {
                   - name: a
                     kind: Variable
                     location: "3:26"
-        diagnostics:
-          - "3:26: redefinition of 'a' (previously declared at 3:17)"
+        "#
+        );
+    }
+
+    #[test]
+    fn local_shadowing_another_local_in_the_same_block_is_permitted() {
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    void main() { let a = 1; let a = 2; }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "3:10"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: a
+                    kind: Variable
+                    location: "3:23"
+                  - name: a
+                    kind: Variable
+                    location: "3:34"
         "#
         );
     }
