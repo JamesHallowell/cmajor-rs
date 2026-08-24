@@ -13,9 +13,9 @@ pub use {
 use crate::{
     ast::{
         Alias, Ast, Block, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
-        ForStmt, FunctionDecl, GraphDecl, HoistedEndpointDeclaration, Ident, IfStmt, LoopStmt,
-        ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Param, ProcessorDecl, ScopeAccess,
-        SpecialisationValue, Stmt, StructDecl, TypedDecl, Var, WhileStmt,
+        ForStmt, FunctionDecl, GenericParam, GraphDecl, HoistedEndpointDeclaration, Ident, IfStmt,
+        LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId, Param, ProcessorDecl,
+        ScopeAccess, SpecialisationValue, Stmt, StructDecl, TypedDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
     lexer::{TokenId, TokenStream},
@@ -333,6 +333,7 @@ impl<'s, 'a> Declare<'s, 'a> {
         kind: SymbolKind,
         node: NodeId,
         builtins: &[(&'static str, SymbolKind)],
+        params: &[NodeId],
         items: &[NodeId],
     ) -> SymbolId {
         let symbol = self
@@ -356,6 +357,10 @@ impl<'s, 'a> Declare<'s, 'a> {
                     kind,
                     this.state.current_scope,
                 );
+            }
+
+            for &param in params {
+                this.visit(ast, param);
             }
 
             for &member in items {
@@ -431,6 +436,10 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
         self.state.node_scope[unit].insert(id, inner);
 
         self.with_scope(inner, |this| {
+            for &param in &namespace_decl.params {
+                this.visit(ast, param);
+            }
+
             for &member in &namespace_decl.items {
                 this.visit(ast, member);
             }
@@ -448,6 +457,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
                 ("processor", SymbolKind::Variable),
                 ("console", SymbolKind::Endpoint),
             ],
+            &processor_decl.params,
             &processor_decl.items,
         );
     }
@@ -459,6 +469,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             SymbolKind::Graph,
             id,
             &[],
+            &graph_decl.params,
             &graph_decl.items,
         );
     }
@@ -470,6 +481,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             SymbolKind::Struct,
             id,
             &[("this", SymbolKind::Variable)],
+            &[],
             &struct_decl.items,
         );
     }
@@ -480,6 +492,7 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             enum_decl.name,
             SymbolKind::Enum,
             id,
+            &[],
             &[],
             ast.children(enum_decl.values),
         );
@@ -509,6 +522,20 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
         _id: NodeId,
         _event_handler_decl: &EventHandlerDecl,
     ) {
+    }
+
+    fn visit_specialisation_value(
+        &mut self,
+        _ast: &Ast,
+        id: NodeId,
+        specialisation_value: &SpecialisationValue,
+    ) {
+        self.state.declare(
+            self.state.current_scope,
+            specialisation_value.name,
+            SymbolKind::Variable,
+            id,
+        );
     }
 
     fn visit_module_alias(&mut self, _ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
@@ -609,13 +636,17 @@ impl<'s, 'a> Resolve<'s, 'a> {
         result
     }
 
-    fn resolve_container(&mut self, ast: &Ast, id: NodeId, items: &[NodeId]) {
+    fn resolve_container(&mut self, ast: &Ast, id: NodeId, params: &[NodeId], items: &[NodeId]) {
         let unit = self.state.current_unit();
         let inner = *self.state.node_scope[unit]
             .get(id)
             .expect("container scope is created during the declare pass");
 
         self.with_scope(inner, |this| {
+            for &param in params {
+                this.visit(ast, param);
+            }
+
             for &member in items {
                 this.visit(ast, member);
             }
@@ -689,23 +720,26 @@ impl<'s, 'a> Resolve<'s, 'a> {
 
 impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     fn visit_namespace_decl(&mut self, ast: &Ast, id: NodeId, namespace_decl: &NamespaceDecl) {
-        self.resolve_container(ast, id, &namespace_decl.items);
+        self.resolve_container(ast, id, &namespace_decl.params, &namespace_decl.items);
     }
 
     fn visit_processor_decl(&mut self, ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
-        self.resolve_container(ast, id, &processor_decl.items);
+        self.resolve_container(ast, id, &processor_decl.params, &processor_decl.items);
     }
 
     fn visit_graph_decl(&mut self, ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
-        self.resolve_container(ast, id, &graph_decl.items);
+        self.resolve_container(ast, id, &graph_decl.params, &graph_decl.items);
     }
 
     fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
-        self.resolve_container(ast, id, &struct_decl.items);
+        self.resolve_container(ast, id, &[], &struct_decl.items);
     }
 
     fn visit_function_decl(&mut self, ast: &Ast, _id: NodeId, function_decl: &FunctionDecl) {
         self.with_new_scope_at(function_decl.name, |this, _| {
+            for &generic in &function_decl.generics {
+                this.visit(ast, generic);
+            }
             this.visit(ast, function_decl.returns);
             for &param in &function_decl.params {
                 this.visit(ast, param);
@@ -726,6 +760,9 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         event_handler: &EventHandlerDecl,
     ) {
         self.with_new_scope_at(event_handler.name, |this, _| {
+            for &generic in &event_handler.generics {
+                this.visit(ast, generic);
+            }
             for &param in &event_handler.params {
                 this.visit(ast, param);
             }
@@ -736,6 +773,15 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
             };
             body.walk(ast, this);
         });
+    }
+
+    fn visit_generic_param(&mut self, _ast: &Ast, id: NodeId, generic_param: &GenericParam) {
+        self.state.declare(
+            self.state.current_scope,
+            generic_param.name,
+            SymbolKind::Generic,
+            id,
+        );
     }
 
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
@@ -787,6 +833,13 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         );
 
         specialisation_value.walk(ast, self);
+    }
+
+    fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
+        self.state
+            .declare(self.state.current_scope, alias.name, SymbolKind::Alias, id);
+
+        alias.walk(ast, self);
     }
 
     fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
@@ -2023,6 +2076,156 @@ mod tests {
                     location: "1:44"
         diagnostics:
           - "1:48: 'a' is not a namespace, processor, graph, struct, or enum"
+        "#
+        );
+    }
+
+    #[test]
+    fn processor_using_specialisation_param_is_visible_to_members() {
+        assert_resolution!(
+            indoc! {"
+                processor P (using T)
+                {
+                    T helper (T x) { return x; }
+                    void main() { T y; }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: T
+                kind: Alias
+                location: "1:20"
+              - name: helper
+                kind: Function
+                location: "3:7"
+              - name: main
+                kind: Function
+                location: "4:10"
+            scopes:
+              - location: "3:7"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:17"
+              - location: "4:10"
+                symbols:
+                  - name: y
+                    kind: Variable
+                    location: "4:21"
+        "#
+        );
+    }
+
+    #[test]
+    fn processor_value_specialisation_param_is_visible_to_members() {
+        assert_resolution!(
+            indoc! {"
+                processor P (int N)
+                {
+                    void main() { int x = N; }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: N
+                kind: Variable
+                location: "1:18"
+              - name: main
+                kind: Function
+                location: "3:10"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: x
+                    kind: Variable
+                    location: "3:23"
+        "#
+        );
+    }
+
+    #[test]
+    fn function_generic_param_is_visible_to_signature_and_body() {
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    T id<T> (T x) { return x; }
+                    void main() {}
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: id
+                kind: Function
+                location: "3:7"
+              - name: main
+                kind: Function
+                location: "4:10"
+            scopes:
+              - location: "3:7"
+                symbols:
+                  - name: T
+                    kind: Generic
+                    location: "3:10"
+                  - name: x
+                    kind: Variable
+                    location: "3:16"
+              - location: "4:10"
+        "#
+        );
+    }
+
+    #[test]
+    fn local_using_alias_is_visible_after_its_declaration() {
+        assert_resolution!(
+            indoc! {"
+                processor P
+                {
+                    void main()
+                    {
+                        using T = int;
+                        T x = 1;
+                    }
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: main
+                kind: Function
+                location: "3:10"
+            scopes:
+              - location: "3:10"
+                symbols:
+                  - name: T
+                    kind: Alias
+                    location: "5:15"
+                  - name: x
+                    kind: Variable
+                    location: "6:11"
         "#
         );
     }

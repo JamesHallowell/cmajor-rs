@@ -4,7 +4,8 @@ use crate::{
         self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
         Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl,
         DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
-        ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, Graph, GraphDecl,
+        ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, GenericParam, Graph,
+        GraphDecl,
         HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
         InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
         Param, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
@@ -940,12 +941,17 @@ impl<'a> Parser<'a> {
         self.add_node(start, Stmt::DeclStmt(DeclStmt { decl }))
     }
 
-    fn parse_optional_generics(&mut self) -> Vec<TokenId> {
+    fn parse_optional_generics(&mut self) -> Vec<NodeId> {
         if self.at(token!(<)) {
-            list!(self, <>, self.expect(TokenKind::Identifier))
+            list!(self, <>, self.parse_generic_param())
         } else {
             Vec::new()
         }
+    }
+
+    fn parse_generic_param(&mut self) -> NodeId {
+        let name = self.expect(TokenKind::Identifier);
+        self.add_node(name, Decl::GenericParam(GenericParam { name }))
     }
 
     fn parse_param(&mut self) -> NodeId {
@@ -964,7 +970,7 @@ impl<'a> Parser<'a> {
         &mut self,
         returns: NodeId,
         name: TokenId,
-        generics: Vec<TokenId>,
+        generics: Vec<NodeId>,
     ) -> NodeId {
         let params = self.parse_params();
         let is_const = self.advance_if(token!(const)).is_some();

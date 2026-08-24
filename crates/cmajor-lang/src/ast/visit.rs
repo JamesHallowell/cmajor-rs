@@ -3,7 +3,8 @@ use crate::{
         Annotation, Annotations, Ast, Decl, EventHandlerDecl, Expr, Graph, Item, Node, NodeId,
         Stmt,
         decl::{
-            Alias, Declarator, EnumValue, External, Param, SpecialisationValue, TypedDecl, Var,
+            Alias, Declarator, EnumValue, External, GenericParam, Param, SpecialisationValue,
+            TypedDecl, Var,
         },
         expr::{
             Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
@@ -124,6 +125,11 @@ pub trait Visitor {
     fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
         let _ = id;
         alias.walk(ast, self);
+    }
+
+    fn visit_generic_param(&mut self, ast: &Ast, id: NodeId, generic_param: &GenericParam) {
+        let _ = id;
+        generic_param.walk(ast, self);
     }
 
     fn visit_external(&mut self, ast: &Ast, id: NodeId, external: &External) {
@@ -404,6 +410,7 @@ where
         Decl::External(external) => visitor.visit_external(ast, id, external),
         Decl::Declarator(declarator) => visitor.visit_declarator(ast, id, declarator),
         Decl::EnumValue(enum_value) => visitor.visit_enum_value(ast, id, enum_value),
+        Decl::GenericParam(generic_param) => visitor.visit_generic_param(ast, id, generic_param),
     }
 }
 
@@ -568,6 +575,9 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &generic in &self.generics {
+            visitor.visit(ast, generic);
+        }
         visitor.visit(ast, self.returns);
         for &param in &self.params {
             visitor.visit(ast, param);
@@ -582,6 +592,9 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
+        for &generic in &self.generics {
+            visitor.visit(ast, generic);
+        }
         for &param in &self.params {
             visitor.visit(ast, param);
         }
@@ -665,6 +678,13 @@ where
             visitor.visit(ast, init);
         }
     }
+}
+
+impl<V> Walk<V> for GenericParam
+where
+    V: Visitor + ?Sized,
+{
+    fn walk(&self, _ast: &Ast, _visitor: &mut V) {}
 }
 
 impl<V> Walk<V> for Declarator

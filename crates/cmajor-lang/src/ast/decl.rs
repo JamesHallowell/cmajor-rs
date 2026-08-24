@@ -73,6 +73,11 @@ pub struct EnumValue {
     pub name: TokenId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenericParam {
+    pub name: TokenId,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     Var(Var),
@@ -83,6 +88,7 @@ pub enum Decl {
     External(External),
     Declarator(Declarator),
     EnumValue(EnumValue),
+    GenericParam(GenericParam),
 }
 
 static_assert_size!(Decl, 24);

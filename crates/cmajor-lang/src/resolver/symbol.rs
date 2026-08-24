@@ -41,6 +41,7 @@ pub enum SymbolKind {
     Alias,
     Node,
     Endpoint,
+    Generic,
 }
 
 impl SymbolKind {

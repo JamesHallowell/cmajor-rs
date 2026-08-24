@@ -49,7 +49,7 @@ pub struct EnumDecl {
 pub struct FunctionDecl {
     pub returns: NodeId,
     pub name: TokenId,
-    pub generics: Vec<TokenId>,
+    pub generics: Vec<NodeId>,
     pub params: Vec<NodeId>,
     pub is_const: bool,
     pub annotations: Annotations,
@@ -59,7 +59,7 @@ pub struct FunctionDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventHandlerDecl {
     pub name: TokenId,
-    pub generics: Vec<TokenId>,
+    pub generics: Vec<NodeId>,
     pub params: Vec<NodeId>,
     pub is_const: bool,
     pub annotations: Annotations,

@@ -4,7 +4,8 @@ use {
             AliasKind, Annotation, Ast, Decl, EventHandlerDecl, Expr, Graph, HoistTarget,
             InterpolationKind, Item, NodeId, Stmt, VarKind,
             decl::{
-                Alias, Declarator, EnumValue, External, Param, SpecialisationValue, TypedDecl, Var,
+                Alias, Declarator, EnumValue, External, GenericParam, Param, SpecialisationValue,
+                TypedDecl, Var,
             },
             expr::{
                 Assign, Binary, Bracketed, Call, Field, Ident, Parentheses, PostfixUnary,
@@ -192,28 +193,14 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 annotations,
                 body,
             }) => {
-                let generics_suffix = if generics.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "<{}>",
-                        generics
-                            .iter()
-                            .map(|t| self.text(t))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
                 let const_suffix = if *is_const { " const" } else { "" };
-                let mut children = vec![self.child(*returns)];
+                let mut children: Vec<_> = generics.iter().map(|&id| self.child(id)).collect();
+                children.push(self.child(*returns));
                 children.extend(params.iter().map(|&id| self.child(id)));
                 children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.push(self.child(*body));
                 node(
-                    format!(
-                        "FunctionDecl {:?}{generics_suffix}{const_suffix}",
-                        self.text(name)
-                    ),
+                    format!("FunctionDecl {:?}{const_suffix}", self.text(name)),
                     children,
                 )
             }
@@ -225,28 +212,13 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 annotations,
                 body,
             }) => {
-                let generics_suffix = if generics.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "<{}>",
-                        generics
-                            .iter()
-                            .map(|t| self.text(t))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
                 let const_suffix = if *is_const { " const" } else { "" };
-                let mut children = vec![];
+                let mut children: Vec<_> = generics.iter().map(|&id| self.child(id)).collect();
                 children.extend(params.iter().map(|&id| self.child(id)));
                 children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
                 children.push(self.child(*body));
                 node(
-                    format!(
-                        "EventHandlerDecl {:?}{generics_suffix}{const_suffix}",
-                        self.text(name)
-                    ),
+                    format!("EventHandlerDecl {:?}{const_suffix}", self.text(name)),
                     children,
                 )
             }
@@ -328,6 +300,9 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 node(label, children)
             }
             Decl::EnumValue(EnumValue { name }) => leaf(format!("EnumValue {:?}", self.text(name))),
+            Decl::GenericParam(GenericParam { name }) => {
+                leaf(format!("GenericParam {:?}", self.text(name)))
+            }
         }
     }
 
