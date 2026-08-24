@@ -3,7 +3,10 @@ use {
         arena_key,
         ast::NodeId,
         lexer::TokenId,
-        resolver::{Scope, ScopeId},
+        resolver::{
+            Scope, ScopeId,
+            unit::{Anchor, UnitId},
+        },
         utils::arena::Arena,
     },
     std::assert_matches,
@@ -13,8 +16,14 @@ arena_key!(SymbolId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolOrigin {
-    Source { name: TokenId, node: NodeId },
-    Builtin { name: &'static str },
+    Source {
+        unit: UnitId,
+        name: TokenId,
+        node: NodeId,
+    },
+    Builtin {
+        name: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +89,7 @@ impl SymbolTable {
         &self.scopes[scope]
     }
 
-    pub fn new_scope(&mut self, parent: ScopeId, start: TokenId) -> ScopeId {
+    pub fn new_scope(&mut self, parent: ScopeId, start: Anchor) -> ScopeId {
         self.scopes.push(Scope::Child {
             parent,
             symbols: Vec::new(),

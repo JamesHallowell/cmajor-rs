@@ -30,7 +30,7 @@ impl<'a> ResolutionView<'a> {
         let location = table
             .scope(scope)
             .start()
-            .map(|start| self.location(self.tokens.span(start).start));
+            .map(|start| self.location(self.tokens.span(start.token).start));
 
         let symbols = table
             .symbols_in(scope)
@@ -61,7 +61,7 @@ impl<'a> ResolutionView<'a> {
                 let position = table
                     .scope(child)
                     .start()
-                    .map(|start| self.tokens.span(start).start)
+                    .map(|start| self.tokens.span(start.token).start)
                     .unwrap_or(0);
                 (position, self.scope_entry(child))
             })

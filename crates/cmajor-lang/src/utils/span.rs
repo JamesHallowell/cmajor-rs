@@ -55,6 +55,10 @@ impl Span<u32> {
             end: source.location(self.end),
         }
     }
+
+    pub fn to_range(&self) -> std::ops::Range<usize> {
+        self.start as usize..self.end as usize
+    }
 }
 
 impl Span<SourceLocation> {

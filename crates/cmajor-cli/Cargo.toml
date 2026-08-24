@@ -1,0 +1,15 @@
+[package]
+name = "cmajor-cli"
+description = "Command-line tools for cmajor-lang: parsing, tokenizing, and running .cmajtest files."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "cmjr"
+path = "src/main.rs"
+
+[dependencies]
+cmajor-lang = { path = "../cmajor-lang" }
+clap = { version = "4", features = ["derive"] }
+libtest-mimic = "0.8.2"

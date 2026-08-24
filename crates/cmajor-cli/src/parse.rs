@@ -1,58 +1,56 @@
 use {
-    cmajor_lang::{ast, parser},
-    std::{
-        path::{Path, PathBuf},
-        process::ExitCode,
-    },
+    crate::{io, stdlib},
+    cmajor_lang::{SourceFile, ast, compile, lexer, parser},
+    std::path::{Path, PathBuf},
 };
 
-fn main() -> ExitCode {
-    let mut path = None;
-    let mut verbose = false;
-
-    for arg in std::env::args().skip(1) {
-        match arg.as_str() {
-            "--verbose" | "-v" => verbose = true,
-            _ if path.is_none() => path = Some(PathBuf::from(arg)),
-            _ => usage_error(),
+pub fn run(path: &Path, stdlib_dir: Option<&Path>, verbose: bool) -> bool {
+    match (path.is_dir(), stdlib_dir) {
+        (true, Some(_)) => {
+            eprintln!("--stdlib is not supported together with a directory argument");
+            false
         }
-    }
-
-    let Some(path) = path else { usage_error() };
-
-    if path.is_dir() {
-        if parse_dir(&path, verbose) {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        }
-    } else {
-        let (success, output) = parse_file(&path);
-        print!("{output}");
-        if success {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
+        (true, None) => parse_dir(path, verbose),
+        (false, Some(stdlib_dir)) => compile_with_stdlib(stdlib_dir, path),
+        (false, None) => {
+            let (success, output) = parse_file(path);
+            print!("{output}");
+            success
         }
     }
 }
 
-fn usage_error() -> ! {
-    eprintln!("Usage: parse <file-or-directory> [--verbose]");
-    std::process::exit(1);
+fn compile_with_stdlib(stdlib_dir: &Path, path: &Path) -> bool {
+    let mut units: Vec<SourceFile> = stdlib::collect(stdlib_dir)
+        .map(|file| SourceFile {
+            name: file.name,
+            source: file.source,
+        })
+        .collect();
+
+    units.push(SourceFile {
+        name: path.display().to_string(),
+        source: io::read_file(path),
+    });
+
+    let program = compile::compile(units);
+
+    for diagnostic in &program.resolution.diagnostics {
+        let unit_name = &program.units[diagnostic.unit].source.name;
+        eprintln!(
+            "{unit_name}:{}: {}",
+            diagnostic.location.start, diagnostic.message
+        );
+    }
+
+    program.resolution.diagnostics.is_empty()
 }
 
 fn parse_file(path: &Path) -> (bool, String) {
-    let source = std::fs::read_to_string(path).unwrap_or_else(|err| {
-        eprintln!("failed to read {}: {err}", path.display());
-        std::process::exit(1);
-    });
+    let source = io::read_file(path);
+    let tokens = lexer::tokenize(&source);
 
-    let parser::Parse {
-        ast,
-        tokens,
-        diagnostics,
-    } = parser::parse(&source);
+    let (ast, diagnostics) = parser::parse(&source, &tokens);
 
     let mut output = format!("{} tokens, {} AST nodes\n\n", tokens.len(), ast.len());
     for &root in ast.roots() {

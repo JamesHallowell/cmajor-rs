@@ -11,9 +11,7 @@ use crate::{
         ScopeAccess, Slice, SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier,
         TypedDecl, Unary, Var, VarKind, VectorSizeSuffix, WhileStmt,
     },
-    lexer::{
-        Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream, tokenize,
-    },
+    lexer::{Literal, NonTrivialTokenStreamIterator, Token, TokenId, TokenKind, TokenStream},
     parser::precedence::{BindingPower, InfixBindingPower, PrecedenceLevel},
     skip_to_matching, token,
     utils::{
@@ -23,27 +21,19 @@ use crate::{
     },
 };
 
-pub struct Parse {
-    pub ast: Ast,
-    pub tokens: TokenStream,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-pub fn parse(source: &str) -> Parse {
-    let tokens = tokenize(source);
-    let mut parser = Parser::new(&tokens, source);
+pub fn parse(source: &str, tokens: &TokenStream) -> (Ast, Vec<Diagnostic>) {
+    let mut parser = Parser::new(tokens, source);
     parser.parse();
-    Parse {
-        ast: Ast::new(
+    (
+        Ast::new(
             parser.nodes,
             parser.roots,
             parser.spans,
             parser.child_pool,
             parser.labels,
         ),
-        diagnostics: parser.diagnostics,
-        tokens,
-    }
+        parser.diagnostics,
+    )
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1915,10 +1905,13 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::ast};
+    use {
+        super::*,
+        crate::{ast, lexer},
+    };
 
     fn dump(source: &str, parse_fn: Option<fn(&mut Parser) -> NodeId>) -> String {
-        let tokens = tokenize(source);
+        let tokens = lexer::tokenize(source);
         let mut parser = Parser::new(&tokens, source);
 
         let roots = match parse_fn {
@@ -1952,7 +1945,7 @@ mod tests {
     }
 
     fn has_diagnostics(source: &str, parse_fn: fn(&mut Parser) -> NodeId) -> bool {
-        let tokens = tokenize(source);
+        let tokens = lexer::tokenize(source);
         let mut parser = Parser::new(&tokens, source);
         parse_fn(&mut parser);
         !parser.diagnostics.is_empty()
@@ -2597,7 +2590,7 @@ mod tests {
     #[test]
     fn parse_error_at_end_of_input_reports_a_diagnostic_instead_of_panicking() {
         let source = "let x = 1";
-        let tokens = tokenize(source);
+        let tokens = lexer::tokenize(source);
         let mut parser = Parser::new(&tokens, source);
         parser.parse_statement();
 

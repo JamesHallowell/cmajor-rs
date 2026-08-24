@@ -1,4 +1,4 @@
-use crate::{arena_key, lexer::TokenId, resolver::SymbolId};
+use crate::{arena_key, resolver::SymbolId, resolver::unit::Anchor};
 
 arena_key!(ScopeId);
 
@@ -10,7 +10,7 @@ pub enum Scope {
     Child {
         parent: ScopeId,
         symbols: Vec<SymbolId>,
-        start: TokenId,
+        start: Anchor,
     },
 }
 
@@ -40,7 +40,7 @@ impl Scope {
         }
     }
 
-    pub fn start(&self) -> Option<TokenId> {
+    pub fn start(&self) -> Option<Anchor> {
         match self {
             Self::Global { .. } => None,
             Self::Child { start, .. } => Some(*start),
