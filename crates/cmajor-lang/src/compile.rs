@@ -7,11 +7,13 @@ use crate::{
     utils::arena::Arena,
 };
 
+#[derive(Debug, Clone)]
 pub struct SourceFile {
     pub name: String,
     pub source: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct CompilationUnit {
     pub source: SourceFile,
     pub tokens: TokenStream,

@@ -64,27 +64,85 @@ pub fn resolve(source: &str, tokens: &TokenStream, ast: &Ast) -> Resolution {
 
 pub fn resolve_all(units: &[Unit<'_>]) -> Resolution {
     let mut state = State::new(units);
-    let global_scope = state.symbols.global_scope();
     let unit_ids: Vec<UnitId> = (&state.units).into_iter().map(|(id, _)| id).collect();
 
-    for &unit_id in &unit_ids {
-        state.current_unit = Some(unit_id);
-        state.current_scope = global_scope;
-        let ast = state.ast();
-        ast.visit(&mut Declare { state: &mut state });
-    }
-
-    for &unit_id in &unit_ids {
-        state.current_unit = Some(unit_id);
-        state.current_scope = global_scope;
-        let ast = state.ast();
-        ast.visit(&mut Resolve { state: &mut state });
-    }
+    declare_units(&mut state, &unit_ids);
+    compute_intrinsics_scope(&mut state);
+    resolve_units(&mut state, &unit_ids);
 
     Resolution {
         symbols: state.symbols,
         diagnostics: state.diagnostics,
     }
+}
+
+pub struct StandardLibrary<'a> {
+    state: State<'a>,
+}
+
+pub fn declare_stdlib<'a>(units: &[Unit<'a>]) -> StandardLibrary<'a> {
+    let mut state = State::new(units);
+    let unit_ids: Vec<UnitId> = (&state.units).into_iter().map(|(id, _)| id).collect();
+
+    declare_units(&mut state, &unit_ids);
+    compute_intrinsics_scope(&mut state);
+
+    StandardLibrary { state }
+}
+
+pub fn resolve_against_baseline<'a>(baseline: &StandardLibrary<'a>, unit: Unit<'a>) -> Resolution {
+    let mut state = baseline.state.clone();
+    let unit_id = state.push_unit(unit);
+
+    declare_units(&mut state, &[unit_id]);
+    resolve_units(&mut state, &[unit_id]);
+
+    Resolution {
+        symbols: state.symbols,
+        diagnostics: state.diagnostics,
+    }
+}
+
+fn declare_units(state: &mut State<'_>, unit_ids: &[UnitId]) {
+    let global_scope = state.symbols.global_scope();
+
+    for &unit_id in unit_ids {
+        state.current_unit = Some(unit_id);
+        state.current_scope = global_scope;
+        let ast = state.ast();
+        ast.visit(&mut Declare { state });
+    }
+}
+
+fn resolve_units(state: &mut State<'_>, unit_ids: &[UnitId]) {
+    let global_scope = state.symbols.global_scope();
+
+    for &unit_id in unit_ids {
+        state.current_unit = Some(unit_id);
+        state.current_scope = global_scope;
+        let ast = state.ast();
+        ast.visit(&mut Resolve { state });
+    }
+}
+
+fn compute_intrinsics_scope(state: &mut State<'_>) {
+    let global_scope = state.symbols.global_scope();
+
+    let find_child_namespace = |state: &State, scope: ScopeId, name: &str| {
+        let symbol = state.symbols.find_local(scope, |symbol| {
+            symbol.kind == SymbolKind::Namespace
+                && match symbol.origin {
+                    SymbolOrigin::Builtin { name: symbol_name } => name == symbol_name,
+                    SymbolOrigin::Source {
+                        unit, name: token, ..
+                    } => name == state.text_in(unit, token),
+                }
+        })?;
+        state.symbols_scope.get(symbol).copied()
+    };
+
+    state.intrinsics_scope = find_child_namespace(state, global_scope, "std")
+        .and_then(|std_scope| find_child_namespace(state, std_scope, "intrinsics"));
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +165,7 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, (Span<SourceLocation>, Error)>;
 
+#[derive(Clone)]
 struct State<'a> {
     units: Arena<UnitId, Unit<'a>>,
     current_unit: Option<UnitId>,
@@ -116,6 +175,7 @@ struct State<'a> {
     symbols_scope: SparseSecondaryArena<SymbolId, ScopeId>,
     node_scope: SecondaryArena<UnitId, SparseSecondaryArena<NodeId, ScopeId>>,
     declared: SecondaryArena<UnitId, SparseSecondaryArena<NodeId, SymbolId>>,
+    intrinsics_scope: Option<ScopeId>,
 }
 
 impl<'a> State<'a> {
@@ -204,12 +264,22 @@ impl<'a> State<'a> {
             symbols_scope: SparseSecondaryArena::default(),
             node_scope,
             declared,
+            intrinsics_scope: None,
         }
     }
 
     fn current_unit(&self) -> UnitId {
         self.current_unit
             .expect("current_unit is set before any unit-scoped resolver operation runs")
+    }
+
+    fn push_unit(&mut self, unit: Unit<'a>) -> UnitId {
+        let unit_id = self.units.push(unit);
+        self.node_scope
+            .insert(unit_id, SparseSecondaryArena::default());
+        self.declared
+            .insert(unit_id, SparseSecondaryArena::default());
+        unit_id
     }
 
     fn ast(&self) -> &'a Ast {
@@ -691,6 +761,13 @@ impl<'s, 'a> Resolve<'s, 'a> {
             Node::Expr(Expr::ScopeAccess(scope_access)) => {
                 let base = self.resolve_scope_path(scope_access.base)?;
 
+                if matches!(
+                    self.state.symbols.symbol(base).kind,
+                    SymbolKind::Alias | SymbolKind::Generic
+                ) {
+                    return Ok(base);
+                }
+
                 let base_scope = *self.state.symbols_scope.get(base).ok_or_else(|| {
                     let base_location = self
                         .state
@@ -802,14 +879,16 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
 
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
         for (id, declarator) in var.declarators(ast) {
-            self.state.declare_local(declarator.name, SymbolKind::Variable, id);
+            self.state
+                .declare_local(declarator.name, SymbolKind::Variable, id);
         }
         var.walk(ast, self);
     }
 
     fn visit_typed_decl(&mut self, ast: &Ast, _id: NodeId, typed_decl: &TypedDecl) {
         for (id, declarator) in typed_decl.declarators(ast) {
-            self.state.declare_local(declarator.name, SymbolKind::Variable, id);
+            self.state
+                .declare_local(declarator.name, SymbolKind::Variable, id);
         }
         typed_decl.walk(ast, self);
     }
@@ -891,15 +970,22 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     }
 
     fn visit_ident(&mut self, _ast: &Ast, _id: NodeId, ident: &Ident) {
-        if self
+        let found = self
             .state
             .symbols
             .find_visible(
                 self.state.current_scope,
                 self.state.has_matching_name(ident.token),
             )
-            .is_none()
-        {
+            .is_some()
+            || self.state.intrinsics_scope.is_some_and(|scope| {
+                self.state
+                    .symbols
+                    .find_local(scope, self.state.has_matching_name(ident.token))
+                    .is_some()
+            });
+
+        if !found {
             self.state.error(
                 self.state.location(ident.token),
                 Error::UndeclaredIdentifier {
@@ -2160,6 +2246,33 @@ mod tests {
     }
 
     #[test]
+    fn scope_access_on_a_generic_specialisation_param_is_deferred() {
+        assert_resolution!(
+            indoc! {"
+                processor P (using SampleContent)
+                {
+                    output stream SampleContent::frames.elementType out;
+                }
+            "},
+            @r#"
+        symbols:
+          - name: P
+            kind: Processor
+            location: "1:11"
+        scopes:
+          - location: "1:1"
+            symbols:
+              - name: SampleContent
+                kind: Alias
+                location: "1:20"
+              - name: out
+                kind: Endpoint
+                location: "3:53"
+        "#
+        );
+    }
+
+    #[test]
     fn processor_value_specialisation_param_is_visible_to_members() {
         assert_resolution!(
             indoc! {"
@@ -2293,6 +2406,48 @@ mod tests {
             "};
             let b_src = indoc! {"
                 processor P { void main() { int x = std::math::square (4); } }
+            "};
+
+            let a_tokens = lexer::tokenize(a_src);
+            let b_tokens = lexer::tokenize(b_src);
+
+            let (a_ast, _) = parser::parse(a_src, &a_tokens);
+            let (b_ast, _) = parser::parse(b_src, &b_tokens);
+            assert!(!a_ast.has_errors());
+            assert!(!b_ast.has_errors());
+
+            let resolution = resolve_all(&[
+                Unit {
+                    name: "a.cmajor",
+                    source: a_src,
+                    tokens: &a_tokens,
+                    ast: &a_ast,
+                },
+                Unit {
+                    name: "b.cmajor",
+                    source: b_src,
+                    tokens: &b_tokens,
+                    ast: &b_ast,
+                },
+            ]);
+
+            assert!(
+                resolution.diagnostics.is_empty(),
+                "{:?}",
+                resolution.diagnostics
+            );
+        }
+
+        #[test]
+        fn unqualified_call_falls_back_to_std_intrinsics() {
+            let a_src = indoc! {"
+                namespace std::intrinsics
+                {
+                    T sum<T> (T value) { return value; }
+                }
+            "};
+            let b_src = indoc! {"
+                processor P { void main() { let total = sum (1); } }
             "};
 
             let a_tokens = lexer::tokenize(a_src);

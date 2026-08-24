@@ -57,7 +57,7 @@ pub struct Symbol {
     pub scope: ScopeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolTable {
     scopes: Arena<ScopeId, Scope>,
     symbols: Arena<SymbolId, Symbol>,

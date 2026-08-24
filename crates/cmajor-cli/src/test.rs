@@ -45,6 +45,7 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
             ast,
         })
         .collect();
+    let standard_library = cmajor_lang::resolver::declare_stdlib(&stdlib_units);
 
     let mut trials = Vec::new();
 
@@ -71,7 +72,7 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_path.to_string_lossy().into_owned());
 
-        for result in test_format::run(&file, &stdlib_units) {
+        for result in test_format::run(&file, &standard_library) {
             let name = format!("{location}:{}:{}", result.line, result.name);
             trials.push(Trial::ignorable_test(name, move || outcome_of(result)));
         }

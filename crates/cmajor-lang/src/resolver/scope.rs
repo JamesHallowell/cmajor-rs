@@ -2,7 +2,7 @@ use crate::{arena_key, resolver::SymbolId, resolver::unit::Anchor};
 
 arena_key!(ScopeId);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Scope {
     Global {
         symbols: Vec<SymbolId>,

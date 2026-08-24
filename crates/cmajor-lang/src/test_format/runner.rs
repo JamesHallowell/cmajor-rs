@@ -24,7 +24,7 @@ pub struct TestResult {
     pub actual_error: Option<String>,
 }
 
-pub fn run(file: &TestFile, stdlib: &[resolver::Unit<'_>]) -> Vec<TestResult> {
+pub fn run(file: &TestFile, baseline: &resolver::StandardLibrary<'_>) -> Vec<TestResult> {
     let global_code: String = file
         .sections
         .iter()
@@ -58,7 +58,7 @@ pub fn run(file: &TestFile, stdlib: &[resolver::Unit<'_>]) -> Vec<TestResult> {
                                 describe_parse_errors(&source, &tokens, &ast, &diagnostics);
                             Outcome::Fail(format!("parse error produced\n{detail}"))
                         } else {
-                            let resolution = resolve_with_stdlib(stdlib, &source, &tokens, &ast);
+                            let resolution = resolve_with_stdlib(baseline, &source, &tokens, &ast);
                             if !resolution.diagnostics.is_empty() {
                                 let detail = resolution
                                     .diagnostics
@@ -81,7 +81,7 @@ pub fn run(file: &TestFile, stdlib: &[resolver::Unit<'_>]) -> Vec<TestResult> {
                                 Some(describe_parse_errors(&source, &tokens, &ast, &diagnostics));
                             Outcome::Pass
                         } else {
-                            let resolution = resolve_with_stdlib(stdlib, &source, &tokens, &ast);
+                            let resolution = resolve_with_stdlib(baseline, &source, &tokens, &ast);
                             if !resolution.diagnostics.is_empty() {
                                 actual_error = Some(
                                     resolution
@@ -113,19 +113,20 @@ pub fn run(file: &TestFile, stdlib: &[resolver::Unit<'_>]) -> Vec<TestResult> {
 }
 
 fn resolve_with_stdlib<'a>(
-    stdlib: &[resolver::Unit<'a>],
+    baseline: &resolver::StandardLibrary<'a>,
     source: &'a str,
     tokens: &'a TokenStream,
     ast: &'a Ast,
 ) -> resolver::Resolution {
-    let mut units = stdlib.to_vec();
-    units.push(resolver::Unit {
-        name: "<test>",
-        source,
-        tokens,
-        ast,
-    });
-    resolver::resolve_all(&units)
+    resolver::resolve_against_baseline(
+        baseline,
+        resolver::Unit {
+            name: "<test>",
+            source,
+            tokens,
+            ast,
+        },
+    )
 }
 
 fn describe_parse_errors(
@@ -182,7 +183,7 @@ mod tests {
     #[test]
     fn test_compile_passes_on_clean_code() {
         let file = parse_test_file("## testCompile()\n\nvoid f() { int i = 1; }\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn test_compile_fails_on_syntax_error() {
         let file = parse_test_file("## testCompile()\n\nvoid f( { }\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -216,7 +217,7 @@ mod tests {
     #[test]
     fn test_compile_fails_on_a_recovered_parse_diagnostic() {
         let file = parse_test_file("## testCompile()\n\nenum Mode {}\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(results.len(), 1);
         assert!(matches!(results[0].outcome, Outcome::Fail(_)));
     }
@@ -224,7 +225,7 @@ mod tests {
     #[test]
     fn expect_error_passes_when_a_parse_error_occurs() {
         let file = parse_test_file("## expectError (\"2:9: error: nope\")\n\nvoid f( { }\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -240,7 +241,7 @@ mod tests {
     #[test]
     fn expect_error_fails_when_code_parses_cleanly() {
         let file = parse_test_file("## expectError (\"2:9: error: nope\")\n\nvoid f() {}\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -256,7 +257,7 @@ mod tests {
     #[test]
     fn disabled_section_is_skipped() {
         let file = parse_test_file("## disabled testCompile()\n\nvoid f( { }\n");
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -274,7 +275,7 @@ mod tests {
         let file = parse_test_file(
             "## testConsole (\"hello\")\n\nprocessor P { output stream int out; void main() { out <- -1; advance(); } }\n",
         );
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(
             results,
             vec![TestResult {
@@ -292,7 +293,7 @@ mod tests {
         let file = parse_test_file(
             "## global\n\nstruct S { int i; }\n\n## testCompile()\n\nvoid f() { S s; }\n",
         );
-        let results = run(&file, &[]);
+        let results = run(&file, &resolver::declare_stdlib(&[]));
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].outcome, Outcome::Pass);
     }
