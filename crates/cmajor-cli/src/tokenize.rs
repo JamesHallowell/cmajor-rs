@@ -1,17 +1,16 @@
 use {
     crate::io,
-    cmajor_lang::{lexer::tokenize, utils::source::Source},
+    cmajor_lang::{SourceFile, lexer::tokenize},
     std::path::Path,
 };
 
 pub fn run(path: &Path) -> bool {
-    let source = io::read_file(path);
+    let source = SourceFile::new(io::read_file(path));
 
-    let token_stream = tokenize(&source);
+    let token_stream = tokenize(source.contents());
     for (id, token) in token_stream.into_iter().ignore_trivia() {
         let span = token_stream.span(id);
-        let source_ref: Source<'_> = source.as_str().into();
-        let text = &source_ref[span];
+        let text = &source[span];
 
         println!(
             "{:>4}..{:<4} {:<15} {:?}",

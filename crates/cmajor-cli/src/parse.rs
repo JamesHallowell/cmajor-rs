@@ -1,6 +1,6 @@
 use {
     crate::{io, stdlib},
-    cmajor_lang::{SourceFile, ast, compile, lexer, parser},
+    cmajor_lang::{Program, SourceFile, ast, lexer, parser},
     std::path::{Path, PathBuf},
 };
 
@@ -21,29 +21,23 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>, verbose: bool) -> bool {
 }
 
 fn compile_with_stdlib(stdlib_dir: &Path, path: &Path) -> bool {
-    let mut units: Vec<SourceFile> = stdlib::collect(stdlib_dir)
-        .map(|file| SourceFile {
-            name: file.name,
-            source: file.source,
-        })
+    let program: Program = stdlib::collect(stdlib_dir)
+        .chain(std::iter::once(
+            SourceFile::new(io::read_file(path)).with_name(path.display().to_string()),
+        ))
         .collect();
 
-    units.push(SourceFile {
-        name: path.display().to_string(),
-        source: io::read_file(path),
-    });
+    let resolution = cmajor_lang::resolver::resolve(&program);
 
-    let program = compile::compile(units);
-
-    for diagnostic in &program.resolution.diagnostics {
-        let unit_name = &program.units[diagnostic.unit].source.name;
+    for diagnostic in &resolution.diagnostics {
+        let unit_name = program[diagnostic.unit].source.name().unwrap_or("<unknown>");
         eprintln!(
             "{unit_name}:{}: {}",
             diagnostic.location.start, diagnostic.message
         );
     }
 
-    program.resolution.diagnostics.is_empty()
+    resolution.diagnostics.is_empty()
 }
 
 fn parse_file(path: &Path) -> (bool, String) {

@@ -1,7 +1,7 @@
 use {
     crate::{
         lexer::{TokenId, TokenStream},
-        utils::source::{Source, SourceLocation},
+        utils::source::{SourceFile, SourceLocation},
     },
     std::range::Range,
 };
@@ -41,7 +41,7 @@ impl Span<TokenId> {
     pub fn to_source_location_span(
         self,
         token_stream: &TokenStream,
-        source: &Source<'_>,
+        source: &SourceFile,
     ) -> Span<SourceLocation> {
         self.to_position_span(token_stream)
             .to_source_location_span(source)
@@ -49,7 +49,7 @@ impl Span<TokenId> {
 }
 
 impl Span<u32> {
-    pub fn to_source_location_span(self, source: &Source<'_>) -> Span<SourceLocation> {
+    pub fn to_source_location_span(self, source: &SourceFile) -> Span<SourceLocation> {
         Span {
             start: source.location(self.start),
             end: source.location(self.end),
@@ -62,7 +62,7 @@ impl Span<u32> {
 }
 
 impl Span<SourceLocation> {
-    pub fn to_position_span(self, source: &Source<'_>) -> Span<u32> {
+    pub fn to_position_span(self, source: &SourceFile) -> Span<u32> {
         (source.index(self.start)..source.index(self.end)).into()
     }
 }

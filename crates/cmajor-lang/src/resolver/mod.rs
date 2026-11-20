@@ -18,11 +18,12 @@ use crate::{
         ScopeAccess, SpecialisationValue, Stmt, StructDecl, TypedDecl, Var, WhileStmt,
         visit::{Visitor, Walk},
     },
-    lexer::{TokenId, TokenStream},
+    compile::Program,
+    lexer::TokenId,
     resolver::unit::Anchor,
     utils::{
-        arena::{Arena, SecondaryArena, SparseSecondaryArena},
-        source::{Source, SourceLocation},
+        arena::{SecondaryArena, SparseSecondaryArena},
+        source::SourceLocation,
         span::Span,
     },
 };
@@ -45,30 +46,12 @@ impl std::fmt::Display for ResolvedDiagnostic {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Unit<'a> {
-    pub name: &'a str,
-    pub source: &'a str,
-    pub tokens: &'a TokenStream,
-    pub ast: &'a Ast,
-}
+pub fn resolve(program: &Program) -> Resolution {
+    let mut state = State::new(program);
 
-pub fn resolve(source: &str, tokens: &TokenStream, ast: &Ast) -> Resolution {
-    resolve_all(&[Unit {
-        name: "",
-        source,
-        tokens,
-        ast,
-    }])
-}
-
-pub fn resolve_all(units: &[Unit<'_>]) -> Resolution {
-    let mut state = State::new(units);
-    let unit_ids: Vec<UnitId> = (&state.units).into_iter().map(|(id, _)| id).collect();
-
-    declare_units(&mut state, &unit_ids);
-    compute_intrinsics_scope(&mut state);
-    resolve_units(&mut state, &unit_ids);
+    declare_units(&mut state, program);
+    compute_intrinsics_scope(&mut state, program);
+    resolve_units(&mut state, program);
 
     Resolution {
         symbols: state.symbols,
@@ -76,26 +59,34 @@ pub fn resolve_all(units: &[Unit<'_>]) -> Resolution {
     }
 }
 
-pub struct StandardLibrary<'a> {
-    state: State<'a>,
+pub struct StandardLibrary {
+    program: Program,
+    state: State,
 }
 
-pub fn declare_stdlib<'a>(units: &[Unit<'a>]) -> StandardLibrary<'a> {
-    let mut state = State::new(units);
-    let unit_ids: Vec<UnitId> = (&state.units).into_iter().map(|(id, _)| id).collect();
+pub fn declare_stdlib(program: &Program) -> StandardLibrary {
+    let mut state = State::new(program);
 
-    declare_units(&mut state, &unit_ids);
-    compute_intrinsics_scope(&mut state);
+    declare_units(&mut state, program);
+    compute_intrinsics_scope(&mut state, program);
 
-    StandardLibrary { state }
+    StandardLibrary {
+        program: program.clone(),
+        state,
+    }
 }
 
-pub fn resolve_against_baseline<'a>(baseline: &StandardLibrary<'a>, unit: Unit<'a>) -> Resolution {
+pub fn resolve_with_standard_library(program: &Program, baseline: &StandardLibrary) -> Resolution {
+    let mut combined = baseline.program.clone();
     let mut state = baseline.state.clone();
-    let unit_id = state.push_unit(unit);
 
-    declare_units(&mut state, &[unit_id]);
-    resolve_units(&mut state, &[unit_id]);
+    let new_units: Vec<UnitId> = program
+        .units()
+        .map(|unit| combined.add_parsed_unit(program[unit].clone()))
+        .collect();
+
+    declare_units_for(&mut state, &combined, new_units.iter().copied());
+    resolve_units_for(&mut state, &combined, new_units.iter().copied());
 
     Resolution {
         symbols: state.symbols,
@@ -103,46 +94,73 @@ pub fn resolve_against_baseline<'a>(baseline: &StandardLibrary<'a>, unit: Unit<'
     }
 }
 
-fn declare_units(state: &mut State<'_>, unit_ids: &[UnitId]) {
+fn declare_units(state: &mut State, program: &Program) {
+    declare_units_for(state, program, program.units());
+}
+
+fn declare_units_for(
+    state: &mut State,
+    program: &Program,
+    units: impl IntoIterator<Item = UnitId>,
+) {
     let global_scope = state.symbols.global_scope();
 
-    for &unit_id in unit_ids {
-        state.current_unit = Some(unit_id);
+    for unit in units {
+        state.ensure_unit(unit);
         state.current_scope = global_scope;
-        let ast = state.ast();
-        ast.visit(&mut Declare { state });
+        let ast = &program[unit].ast;
+        ast.visit(&mut Declare {
+            state,
+            program,
+            unit,
+        });
     }
 }
 
-fn resolve_units(state: &mut State<'_>, unit_ids: &[UnitId]) {
+fn resolve_units(state: &mut State, program: &Program) {
+    resolve_units_for(state, program, program.units());
+}
+
+fn resolve_units_for(
+    state: &mut State,
+    program: &Program,
+    units: impl IntoIterator<Item = UnitId>,
+) {
     let global_scope = state.symbols.global_scope();
 
-    for &unit_id in unit_ids {
-        state.current_unit = Some(unit_id);
+    for unit in units {
         state.current_scope = global_scope;
-        let ast = state.ast();
-        ast.visit(&mut Resolve { state });
+        let ast = &program[unit].ast;
+        ast.visit(&mut Resolve {
+            state,
+            program,
+            unit,
+        });
     }
 }
 
-fn compute_intrinsics_scope(state: &mut State<'_>) {
+fn compute_intrinsics_scope(state: &mut State, program: &Program) {
     let global_scope = state.symbols.global_scope();
 
-    let find_child_namespace = |state: &State, scope: ScopeId, name: &str| {
+    let find_child_namespace = |state: &State, program: &Program, scope: ScopeId, name: &str| {
         let symbol = state.symbols.find_local(scope, |symbol| {
             symbol.kind == SymbolKind::Namespace
                 && match symbol.origin {
                     SymbolOrigin::Builtin { name: symbol_name } => name == symbol_name,
                     SymbolOrigin::Source {
                         unit, name: token, ..
-                    } => name == state.text_in(unit, token),
+                    } => name == program[unit].text(token),
                 }
         })?;
         state.symbols_scope.get(symbol).copied()
     };
 
-    state.intrinsics_scope = find_child_namespace(state, global_scope, "std")
-        .and_then(|std_scope| find_child_namespace(state, std_scope, "intrinsics"));
+    let scope = find_child_namespace(state, program, global_scope, "std")
+        .and_then(|std_scope| find_child_namespace(state, program, std_scope, "intrinsics"));
+
+    if let Some(scope) = scope {
+        state.intrinsics_scope.replace(scope);
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -150,7 +168,8 @@ pub enum Error {
     #[error("undeclared identifier '{name}'")]
     UndeclaredIdentifier { name: String },
 
-    #[error("redefinition of '{name}' (previously declared at {})", location.map_or_else(|| "<builtin>".to_string(), |location| location.to_string()))]
+    #[error("redefinition of '{name}' (previously declared at {})", location.map_or_else(|| "<builtin>".to_string(), |location| location.to_string())
+    )]
     RedefinedIdentifier {
         name: String,
         location: Option<SourceLocation>,
@@ -166,9 +185,7 @@ pub enum Error {
 type Result<T> = std::result::Result<T, (Span<SourceLocation>, Error)>;
 
 #[derive(Clone)]
-struct State<'a> {
-    units: Arena<UnitId, Unit<'a>>,
-    current_unit: Option<UnitId>,
+struct State {
     symbols: SymbolTable,
     diagnostics: Vec<ResolvedDiagnostic>,
     current_scope: ScopeId,
@@ -178,8 +195,8 @@ struct State<'a> {
     intrinsics_scope: Option<ScopeId>,
 }
 
-impl<'a> State<'a> {
-    pub fn new(units: &[Unit<'a>]) -> Self {
+impl State {
+    pub fn new(program: &Program) -> Self {
         let mut symbols = SymbolTable::new();
         let global_scope = symbols.global_scope();
 
@@ -238,26 +255,17 @@ impl<'a> State<'a> {
             symbols.declare(SymbolOrigin::Builtin { name }, kind, global_scope);
         }
 
-        let units: Arena<UnitId, Unit<'a>> = units.iter().copied().collect();
-
-        let node_scope: SecondaryArena<UnitId, _> = units
-            .into_iter()
-            .map(|(id, _)| (id, SparseSecondaryArena::default()))
-            .collect();
-        let declared: SecondaryArena<UnitId, _> = units
-            .into_iter()
-            .map(|(id, _)| (id, SparseSecondaryArena::default()))
+        let node_scope: SecondaryArena<UnitId, _> = program
+            .units()
+            .map(|id| (id, SparseSecondaryArena::default()))
             .collect();
 
-        let current_unit = if units.is_empty() {
-            None
-        } else {
-            Some(units.first().0)
-        };
+        let declared = program
+            .units()
+            .map(|id| (id, SparseSecondaryArena::default()))
+            .collect();
 
         State {
-            units,
-            current_unit,
             symbols,
             diagnostics: Vec::new(),
             current_scope: global_scope,
@@ -268,108 +276,76 @@ impl<'a> State<'a> {
         }
     }
 
-    fn current_unit(&self) -> UnitId {
-        self.current_unit
-            .expect("current_unit is set before any unit-scoped resolver operation runs")
-    }
-
-    fn push_unit(&mut self, unit: Unit<'a>) -> UnitId {
-        let unit_id = self.units.push(unit);
-        self.node_scope
-            .insert(unit_id, SparseSecondaryArena::default());
-        self.declared
-            .insert(unit_id, SparseSecondaryArena::default());
-        unit_id
-    }
-
-    fn ast(&self) -> &'a Ast {
-        self.units[self.current_unit()].ast
-    }
-
-    fn source(&self) -> Source<'a> {
-        Source::new(self.units[self.current_unit()].source)
-    }
-
-    fn anchor(&self, token: TokenId) -> Anchor {
-        Anchor {
-            unit: self.current_unit(),
-            token,
+    fn ensure_unit(&mut self, unit: UnitId) {
+        if self.node_scope.get(unit).is_none() {
+            self.node_scope
+                .insert(unit, SparseSecondaryArena::default());
+        }
+        if self.declared.get(unit).is_none() {
+            self.declared.insert(unit, SparseSecondaryArena::default());
         }
     }
 
-    fn error(&mut self, location: Span<SourceLocation>, err: Error) {
+    fn error(&mut self, unit: UnitId, location: Span<SourceLocation>, err: Error) {
         self.diagnostics.push(ResolvedDiagnostic {
-            unit: self.current_unit(),
+            unit,
             location,
             message: err.to_string(),
         });
     }
 
-    fn text_in(&self, unit: UnitId, token: TokenId) -> &str {
-        let data = &self.units[unit];
-        let span = data.tokens.span(token);
-        &data.source[span.to_range()]
-    }
-
-    fn text(&self, token: TokenId) -> &str {
-        self.text_in(self.current_unit(), token)
-    }
-
-    fn location_in(&self, unit: UnitId, token: TokenId) -> Span<SourceLocation> {
-        let data = &self.units[unit];
-        data.tokens
-            .span(token)
-            .to_source_location_span(&Source::new(data.source))
-    }
-
-    fn location(&self, token: TokenId) -> Span<SourceLocation> {
-        self.location_in(self.current_unit(), token)
-    }
-
-    fn symbol_location(&self, symbol: SymbolId) -> Option<Span<SourceLocation>> {
+    fn symbol_location(&self, symbol: SymbolId) -> Option<Anchor> {
         let symbol = self.symbols.symbol(symbol);
         match symbol.origin {
             SymbolOrigin::Builtin { name: _ } => None,
-            SymbolOrigin::Source { unit, name, .. } => Some(self.location_in(unit, name)),
+            SymbolOrigin::Source { unit, name, .. } => Some(Anchor { unit, token: name }),
         }
     }
 
-    fn has_matching_name(&self, name: TokenId) -> impl FnMut(&Symbol) -> bool {
-        let query = self.text(name).to_string();
+    fn has_matching_name(
+        &self,
+        program: &Program,
+        unit: UnitId,
+        name: TokenId,
+    ) -> impl FnMut(&Symbol) -> bool {
+        let query = program[unit].text(name).to_string();
         move |symbol: &Symbol| match symbol.origin {
             SymbolOrigin::Builtin { name: symbol_name } => query == *symbol_name,
             SymbolOrigin::Source {
                 unit,
                 name: symbol_name,
                 ..
-            } => query == self.text_in(unit, symbol_name),
+            } => query == program[unit].text(symbol_name),
         }
     }
 
     fn declare(
         &mut self,
+        program: &Program,
+        unit: UnitId,
         scope: ScopeId,
         name: TokenId,
         kind: SymbolKind,
         node: NodeId,
     ) -> SymbolId {
-        let unit = self.current_unit();
-
         if let Some(&symbol) = self.declared[unit].get(node) {
             return symbol;
         }
 
         if !kind.allows_duplicates()
-            && let Some(existing) = self.symbols.find_local(scope, self.has_matching_name(name))
+            && let Some(existing) = self
+                .symbols
+                .find_local(scope, self.has_matching_name(program, unit, name))
         {
             let existing_location = self
                 .symbol_location(existing)
-                .map(|location| location.start);
+                .map(|anchor| program[anchor.unit].location(anchor.token).start);
 
             self.error(
-                self.location(name),
+                unit,
+                program[unit].location(name),
                 Error::RedefinedIdentifier {
-                    name: self.text(name).to_string(),
+                    name: program[unit].text(name).to_string(),
                     location: existing_location,
                 },
             );
@@ -382,9 +358,13 @@ impl<'a> State<'a> {
         symbol
     }
 
-    fn declare_local(&mut self, name: TokenId, kind: SymbolKind, node: NodeId) -> SymbolId {
-        let unit = self.current_unit();
-
+    fn declare_local(
+        &mut self,
+        unit: UnitId,
+        name: TokenId,
+        kind: SymbolKind,
+        node: NodeId,
+    ) -> SymbolId {
         if let Some(&symbol) = self.declared[unit].get(node) {
             return symbol;
         }
@@ -399,11 +379,13 @@ impl<'a> State<'a> {
     }
 }
 
-struct Declare<'s, 'a> {
-    state: &'s mut State<'a>,
+struct Declare<'s, 'p> {
+    state: &'s mut State,
+    program: &'p Program,
+    unit: UnitId,
 }
 
-impl<'s, 'a> Declare<'s, 'a> {
+impl<'s, 'p> Declare<'s, 'p> {
     fn with_scope<R>(&mut self, inner: ScopeId, f: impl FnOnce(&mut Self) -> R) -> R {
         let parent = self.state.current_scope;
         self.state.current_scope = inner;
@@ -414,6 +396,8 @@ impl<'s, 'a> Declare<'s, 'a> {
 
     fn declare_container(
         &mut self,
+        program: &Program,
+        unit: UnitId,
         ast: &Ast,
         name: TokenId,
         kind: SymbolKind,
@@ -424,16 +408,19 @@ impl<'s, 'a> Declare<'s, 'a> {
     ) -> SymbolId {
         let symbol = self
             .state
-            .declare(self.state.current_scope, name, kind, node);
+            .declare(program, unit, self.state.current_scope, name, kind, node);
 
-        let scope_start = self.state.anchor(self.state.ast().span(node).start);
+        let scope_start = Anchor {
+            unit,
+            token: program[unit].ast.span(node).start,
+        };
 
         let container_scope = self
             .state
             .symbols
             .new_scope(self.state.current_scope, scope_start);
         self.state.symbols_scope.insert(symbol, container_scope);
-        let unit = self.state.current_unit();
+
         self.state.node_scope[unit].insert(node, container_scope);
 
         self.with_scope(container_scope, |this| {
@@ -459,6 +446,8 @@ impl<'s, 'a> Declare<'s, 'a> {
 
     fn declare_or_reuse_namespace(
         &mut self,
+        program: &Program,
+        unit: UnitId,
         scope: ScopeId,
         name: TokenId,
         node: NodeId,
@@ -466,7 +455,7 @@ impl<'s, 'a> Declare<'s, 'a> {
         if let Some(existing_id) = self
             .state
             .symbols
-            .find_local(scope, self.state.has_matching_name(name))
+            .find_local(scope, self.state.has_matching_name(program, unit, name))
         {
             let existing = self.state.symbols.symbol(existing_id);
             if existing.kind == SymbolKind::Namespace {
@@ -478,30 +467,30 @@ impl<'s, 'a> Declare<'s, 'a> {
                     .expect("namespace symbol always has an inner scope");
             }
 
-            let error_location = self.state.location(name);
+            let error_location = program[unit].location(name);
 
             self.state.error(
+                unit,
                 error_location,
                 Error::RedefinedIdentifier {
-                    name: self.state.text(name).to_string(),
+                    name: program[unit].text(name).to_string(),
                     location: self
                         .state
                         .symbol_location(existing_id)
-                        .map(|location| location.start),
+                        .map(|anchor| program[anchor.unit].location(anchor.token).start),
                 },
             );
         }
 
         let symbol = self.state.symbols.declare(
-            SymbolOrigin::Source {
-                unit: self.state.current_unit(),
-                name,
-                node,
-            },
+            SymbolOrigin::Source { unit, name, node },
             SymbolKind::Namespace,
             scope,
         );
-        let scope_start = self.state.anchor(self.state.ast().span(node).start);
+        let scope_start = Anchor {
+            unit,
+            token: program[unit].ast.span(node).start,
+        };
 
         let inner = self.state.symbols.new_scope(scope, scope_start);
         self.state.symbols_scope.insert(symbol, inner);
@@ -516,10 +505,10 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
             .segments
             .iter()
             .fold(scope, |scope, &segment| {
-                self.declare_or_reuse_namespace(scope, segment, id)
+                self.declare_or_reuse_namespace(self.program, self.unit, scope, segment, id)
             });
-        let unit = self.state.current_unit();
-        self.state.node_scope[unit].insert(id, inner);
+
+        self.state.node_scope[self.unit].insert(id, inner);
 
         self.with_scope(inner, |this| {
             for &param in &namespace_decl.params {
@@ -534,6 +523,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_processor_decl(&mut self, ast: &Ast, id: NodeId, processor_decl: &ProcessorDecl) {
         self.declare_container(
+            self.program,
+            self.unit,
             ast,
             processor_decl.name,
             SymbolKind::Processor,
@@ -550,6 +541,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_graph_decl(&mut self, ast: &Ast, id: NodeId, graph_decl: &GraphDecl) {
         self.declare_container(
+            self.program,
+            self.unit,
             ast,
             graph_decl.name,
             SymbolKind::Graph,
@@ -562,6 +555,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_struct_decl(&mut self, ast: &Ast, id: NodeId, struct_decl: &StructDecl) {
         self.declare_container(
+            self.program,
+            self.unit,
             ast,
             struct_decl.name,
             SymbolKind::Struct,
@@ -574,6 +569,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_enum_decl(&mut self, ast: &Ast, id: NodeId, enum_decl: &EnumDecl) {
         self.declare_container(
+            self.program,
+            self.unit,
             ast,
             enum_decl.name,
             SymbolKind::Enum,
@@ -586,6 +583,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_enum_value(&mut self, _ast: &Ast, id: NodeId, enum_value: &EnumValue) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             enum_value.name,
             SymbolKind::EnumValue,
@@ -595,6 +594,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
 
     fn visit_function_decl(&mut self, _ast: &Ast, id: NodeId, function_decl: &FunctionDecl) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             function_decl.name,
             SymbolKind::Function,
@@ -610,22 +611,10 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     ) {
     }
 
-    fn visit_specialisation_value(
-        &mut self,
-        _ast: &Ast,
-        id: NodeId,
-        specialisation_value: &SpecialisationValue,
-    ) {
-        self.state.declare(
-            self.state.current_scope,
-            specialisation_value.name,
-            SymbolKind::Variable,
-            id,
-        );
-    }
-
     fn visit_module_alias(&mut self, _ast: &Ast, id: NodeId, module_alias: &ModuleAlias) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             module_alias.name,
             SymbolKind::Alias,
@@ -636,6 +625,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
         for (id, declarator) in var.declarators(ast) {
             self.state.declare(
+                self.program,
+                self.unit,
                 self.state.current_scope,
                 declarator.name,
                 SymbolKind::Variable,
@@ -647,6 +638,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     fn visit_typed_decl(&mut self, ast: &Ast, _id: NodeId, typed_decl: &TypedDecl) {
         for (id, declarator) in typed_decl.declarators(ast) {
             self.state.declare(
+                self.program,
+                self.unit,
                 self.state.current_scope,
                 declarator.name,
                 SymbolKind::Variable,
@@ -655,9 +648,31 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
         }
     }
 
+    fn visit_specialisation_value(
+        &mut self,
+        _ast: &Ast,
+        id: NodeId,
+        specialisation_value: &SpecialisationValue,
+    ) {
+        self.state.declare(
+            self.program,
+            self.unit,
+            self.state.current_scope,
+            specialisation_value.name,
+            SymbolKind::Variable,
+            id,
+        );
+    }
+
     fn visit_alias(&mut self, _ast: &Ast, id: NodeId, alias: &Alias) {
-        self.state
-            .declare(self.state.current_scope, alias.name, SymbolKind::Alias, id);
+        self.state.declare(
+            self.program,
+            self.unit,
+            self.state.current_scope,
+            alias.name,
+            SymbolKind::Alias,
+            id,
+        );
     }
 
     fn visit_endpoint_declaration(
@@ -667,6 +682,8 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
         endpoint_declaration: &EndpointDeclaration,
     ) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             endpoint_declaration.name,
             SymbolKind::Endpoint,
@@ -681,13 +698,21 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
         hoisted_endpoint_declaration: &HoistedEndpointDeclaration,
     ) {
         if let Some(name) = hoisted_endpoint_declaration.name {
-            self.state
-                .declare(self.state.current_scope, name, SymbolKind::Endpoint, id);
+            self.state.declare(
+                self.program,
+                self.unit,
+                self.state.current_scope,
+                name,
+                SymbolKind::Endpoint,
+                id,
+            );
         }
     }
 
     fn visit_node_decl(&mut self, _ast: &Ast, id: NodeId, node_decl: &NodeDecl) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             node_decl.name,
             SymbolKind::Node,
@@ -696,8 +721,10 @@ impl<'s, 'a> Visitor for Declare<'s, 'a> {
     }
 }
 
-struct Resolve<'s, 'a> {
-    state: &'s mut State<'a>,
+struct Resolve<'s, 'p> {
+    state: &'s mut State,
+    program: &'p Program,
+    unit: UnitId,
 }
 
 impl<'s, 'a> Resolve<'s, 'a> {
@@ -706,7 +733,10 @@ impl<'s, 'a> Resolve<'s, 'a> {
         anchor: TokenId,
         f: impl FnOnce(&mut Self, ScopeId) -> R,
     ) -> R {
-        let anchor = self.state.anchor(anchor);
+        let anchor = Anchor {
+            unit: self.unit,
+            token: anchor,
+        };
         let inner = self
             .state
             .symbols
@@ -723,8 +753,7 @@ impl<'s, 'a> Resolve<'s, 'a> {
     }
 
     fn resolve_container(&mut self, ast: &Ast, id: NodeId, params: &[NodeId], items: &[NodeId]) {
-        let unit = self.state.current_unit();
-        let inner = *self.state.node_scope[unit]
+        let inner = *self.state.node_scope[self.unit]
             .get(id)
             .expect("container scope is created during the declare pass");
 
@@ -740,19 +769,22 @@ impl<'s, 'a> Resolve<'s, 'a> {
     }
 
     fn resolve_scope_path(&self, node: NodeId) -> Result<SymbolId> {
-        match self.state.ast().get(node) {
+        let unit = &self.program[self.unit];
+
+        match unit.ast.get(node) {
             Node::Expr(Expr::Ident(ident)) => {
                 let symbol = self
                     .state
                     .symbols
                     .find_visible(
                         self.state.current_scope,
-                        self.state.has_matching_name(ident.token),
+                        self.state
+                            .has_matching_name(self.program, self.unit, ident.token),
                     )
                     .ok_or((
-                        self.state.location(ident.token),
+                        unit.location(ident.token),
                         Error::UndeclaredIdentifier {
-                            name: self.state.text(ident.token).to_owned(),
+                            name: unit.text(ident.token).to_owned(),
                         },
                     ))?;
 
@@ -769,22 +801,20 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 }
 
                 let base_scope = *self.state.symbols_scope.get(base).ok_or_else(|| {
-                    let base_location = self
-                        .state
-                        .location(self.state.ast().span(scope_access.base).start);
+                    let base_location = self.program[self.unit]
+                        .location(self.program[self.unit].ast.span(scope_access.base).start);
 
                     (
                         base_location,
                         Error::NotAScope {
-                            name: self.state.source()[base_location].to_owned(),
+                            name: self.program[self.unit].source[base_location].to_owned(),
                         },
                     )
                 })?;
 
-                let Node::Expr(Expr::Ident(name)) = self.state.ast().get(scope_access.name) else {
+                let Node::Expr(Expr::Ident(name)) = unit.ast.get(scope_access.name) else {
                     return Err((
-                        self.state
-                            .location(self.state.ast().span(scope_access.name).start),
+                        self.program[self.unit].location(unit.ast.span(scope_access.name).start),
                         Error::UnexpectedNode,
                     ));
                 };
@@ -792,11 +822,15 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 let member = self
                     .state
                     .symbols
-                    .find_local(base_scope, self.state.has_matching_name(name.token))
+                    .find_local(
+                        base_scope,
+                        self.state
+                            .has_matching_name(self.program, self.unit, name.token),
+                    )
                     .ok_or((
-                        self.state.location(name.token),
+                        unit.location(name.token),
                         Error::UndeclaredIdentifier {
-                            name: self.state.text(name.token).to_owned(),
+                            name: unit.text(name.token).to_owned(),
                         },
                     ))?;
 
@@ -804,7 +838,7 @@ impl<'s, 'a> Resolve<'s, 'a> {
             }
             Node::Expr(Expr::Call(call)) => self.resolve_scope_path(call.callee),
             _ => {
-                let location = self.state.location(self.state.ast().span(node).start);
+                let location = unit.location(unit.ast.span(node).start);
                 Err((location, Error::UnexpectedNode))
             }
         }
@@ -868,19 +902,10 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         });
     }
 
-    fn visit_generic_param(&mut self, _ast: &Ast, id: NodeId, generic_param: &GenericParam) {
-        self.state.declare(
-            self.state.current_scope,
-            generic_param.name,
-            SymbolKind::Generic,
-            id,
-        );
-    }
-
     fn visit_var(&mut self, ast: &Ast, _id: NodeId, var: &Var) {
         for (id, declarator) in var.declarators(ast) {
             self.state
-                .declare_local(declarator.name, SymbolKind::Variable, id);
+                .declare_local(self.unit, declarator.name, SymbolKind::Variable, id);
         }
         var.walk(ast, self);
     }
@@ -888,13 +913,15 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     fn visit_typed_decl(&mut self, ast: &Ast, _id: NodeId, typed_decl: &TypedDecl) {
         for (id, declarator) in typed_decl.declarators(ast) {
             self.state
-                .declare_local(declarator.name, SymbolKind::Variable, id);
+                .declare_local(self.unit, declarator.name, SymbolKind::Variable, id);
         }
         typed_decl.walk(ast, self);
     }
 
     fn visit_param(&mut self, ast: &Ast, id: NodeId, param: &Param) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             param.name,
             SymbolKind::Variable,
@@ -911,6 +938,8 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
         specialisation_value: &SpecialisationValue,
     ) {
         self.state.declare(
+            self.program,
+            self.unit,
             self.state.current_scope,
             specialisation_value.name,
             SymbolKind::Variable,
@@ -921,10 +950,27 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
     }
 
     fn visit_alias(&mut self, ast: &Ast, id: NodeId, alias: &Alias) {
-        self.state
-            .declare(self.state.current_scope, alias.name, SymbolKind::Alias, id);
+        self.state.declare(
+            self.program,
+            self.unit,
+            self.state.current_scope,
+            alias.name,
+            SymbolKind::Alias,
+            id,
+        );
 
         alias.walk(ast, self);
+    }
+
+    fn visit_generic_param(&mut self, _ast: &Ast, id: NodeId, generic_param: &GenericParam) {
+        self.state.declare(
+            self.program,
+            self.unit,
+            self.state.current_scope,
+            generic_param.name,
+            SymbolKind::Generic,
+            id,
+        );
     }
 
     fn visit_block(&mut self, ast: &Ast, id: NodeId, block: &Block) {
@@ -975,21 +1021,27 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
             .symbols
             .find_visible(
                 self.state.current_scope,
-                self.state.has_matching_name(ident.token),
+                self.state
+                    .has_matching_name(self.program, self.unit, ident.token),
             )
             .is_some()
             || self.state.intrinsics_scope.is_some_and(|scope| {
                 self.state
                     .symbols
-                    .find_local(scope, self.state.has_matching_name(ident.token))
+                    .find_local(
+                        scope,
+                        self.state
+                            .has_matching_name(self.program, self.unit, ident.token),
+                    )
                     .is_some()
             });
 
         if !found {
             self.state.error(
-                self.state.location(ident.token),
+                self.unit,
+                self.program[self.unit].location(ident.token),
                 Error::UndeclaredIdentifier {
-                    name: self.state.text(ident.token).to_owned(),
+                    name: self.program[self.unit].text(ident.token).to_owned(),
                 },
             );
         }
@@ -997,27 +1049,25 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
 
     fn visit_scope_access(&mut self, _ast: &Ast, id: NodeId, _scope_access: &ScopeAccess) {
         if let Err((location, err)) = self.resolve_scope_path(id) {
-            self.state.error(location, err);
+            self.state.error(self.unit, location, err);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{lexer, parser},
-        indoc::indoc,
-        view::ResolutionView,
-    };
+    use {super::*, crate::SourceFile, indoc::indoc, view::ResolutionView};
 
-    fn expect_resolution(source: &'_ str) -> ResolutionView<'_> {
-        let tokens = lexer::tokenize(source);
-        let (ast, _) = parser::parse(source, &tokens);
-        assert!(!ast.has_errors(), "source failed to parse: {source}");
-        let resolution = resolve(source, &tokens, &ast);
-        let source = Source::new(source);
-        ResolutionView::new(resolution, tokens, source)
+    fn expect_resolution(source: &'_ str) -> ResolutionView {
+        let mut program = Program::new();
+        let unit = program.add_source_file(SourceFile::new(source));
+
+        assert!(
+            !program[unit].ast.has_errors(),
+            "source failed to parse: {source}"
+        );
+        let resolution = resolve(&program);
+        ResolutionView::new(program, resolution)
     }
 
     macro_rules! assert_resolution {
@@ -2381,11 +2431,12 @@ mod tests {
     }
 
     mod multi_unit {
-        use super::*;
+        use {super::*, crate::SourceFile};
 
         #[test]
         fn resolving_zero_units_does_not_panic() {
-            let resolution = resolve_all(&[]);
+            let program = Program::new();
+            let resolution = resolve(&program);
             assert!(resolution.diagnostics.is_empty());
             assert!(
                 resolution
@@ -2398,38 +2449,19 @@ mod tests {
 
         #[test]
         fn resolves_namespaced_function_across_units() {
-            let a_src = indoc! {"
-                namespace std::math
-                {
-                    int square (int x) { return x * x; }
-                }
-            "};
-            let b_src = indoc! {"
-                processor P { void main() { int x = std::math::square (4); } }
-            "};
+            let program = Program::new()
+                .with_source_file(SourceFile::new(
+                    "namespace std::math { int square (int x) { return x * x; } }",
+                ))
+                .with_source_file(SourceFile::new(
+                    "processor P { void main() { int x = std::math::square (4); } }",
+                ));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
+            for unit in program.units() {
+                assert!(!program[unit].ast.has_errors());
+            }
 
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-            assert!(!a_ast.has_errors());
-            assert!(!b_ast.has_errors());
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
 
             assert!(
                 resolution.diagnostics.is_empty(),
@@ -2440,38 +2472,19 @@ mod tests {
 
         #[test]
         fn unqualified_call_falls_back_to_std_intrinsics() {
-            let a_src = indoc! {"
-                namespace std::intrinsics
-                {
-                    T sum<T> (T value) { return value; }
-                }
-            "};
-            let b_src = indoc! {"
-                processor P { void main() { let total = sum (1); } }
-            "};
+            let program = Program::new()
+                .with_source_file(SourceFile::new(
+                    "namespace std::intrinsics { T sum<T> (T value) { return value; } }",
+                ))
+                .with_source_file(SourceFile::new(
+                    "processor P { void main() { let total = sum (1); } }",
+                ));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
+            for unit in program.units() {
+                assert!(!program[unit].ast.has_errors());
+            }
 
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-            assert!(!a_ast.has_errors());
-            assert!(!b_ast.has_errors());
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
 
             assert!(
                 resolution.diagnostics.is_empty(),
@@ -2482,29 +2495,15 @@ mod tests {
 
         #[test]
         fn namespace_reopened_across_units_shares_a_scope() {
-            let a_src = "namespace n { processor A { output stream int out; } }\n";
-            let b_src = "namespace n { processor B { output stream int out; } }\n";
+            let program = Program::new()
+                .with_source_file(SourceFile::new(
+                    "namespace n { processor A { output stream int out; } }",
+                ))
+                .with_source_file(SourceFile::new(
+                    "namespace n { processor B { output stream int out; } }",
+                ));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
-
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
             assert!(
                 resolution.diagnostics.is_empty(),
                 "{:?}",
@@ -2529,29 +2528,11 @@ mod tests {
 
         #[test]
         fn earlier_unit_can_forward_reference_a_later_units_symbol() {
-            let a_src = "namespace n { int f() { return g(); } }\n";
-            let b_src = "namespace n { int g() { return 1; } }\n";
+            let program = Program::new()
+                .with_source_file(SourceFile::new("namespace n { int f() { return g(); } }"))
+                .with_source_file(SourceFile::new("namespace n { int g() { return 1; } }"));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
-
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
 
             assert!(
                 resolution.diagnostics.is_empty(),
@@ -2562,29 +2543,11 @@ mod tests {
 
         #[test]
         fn redefinition_across_units_is_reported_against_the_second_unit() {
-            let a_src = "processor P { output stream int out; }\n";
-            let b_src = "processor P { output stream int out; }\n";
+            let program = Program::new()
+                .with_source_file(SourceFile::new("processor P { output stream int out; }"))
+                .with_source_file(SourceFile::new("processor P { output stream int out; }"));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
-
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
 
             assert_eq!(resolution.diagnostics.len(), 1);
             let diagnostic = &resolution.diagnostics[0];
@@ -2602,29 +2565,13 @@ mod tests {
 
         #[test]
         fn diagnostic_reports_the_unit_it_occurred_in() {
-            let a_src = "namespace n {}\n";
-            let b_src = "processor P { void main() { int x = qty; } }\n";
+            let program = Program::new()
+                .with_source_file(SourceFile::new("namespace n {}"))
+                .with_source_file(SourceFile::new(
+                    "processor P { void main() { int x = qty; } }",
+                ));
 
-            let a_tokens = lexer::tokenize(a_src);
-            let b_tokens = lexer::tokenize(b_src);
-
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
-            let (b_ast, _) = parser::parse(b_src, &b_tokens);
-
-            let resolution = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src,
-                    tokens: &b_tokens,
-                    ast: &b_ast,
-                },
-            ]);
+            let resolution = resolve(&program);
 
             assert_eq!(resolution.diagnostics.len(), 1);
 
@@ -2647,50 +2594,26 @@ mod tests {
 
         #[test]
         fn reparsing_only_the_edited_unit_still_resolves_correctly() {
-            let a_src = "namespace n { int helper() { return 1; } }\n";
-            let a_tokens = lexer::tokenize(a_src);
-            let (a_ast, _) = parser::parse(a_src, &a_tokens);
+            let a_src = "namespace n { int helper() { return 1; } }";
 
-            let b_src_v1 = "processor P { void main() { int x = 1; } }\n";
-            let b_tokens_v1 = lexer::tokenize(b_src_v1);
-            let (b_ast_v1, _) = parser::parse(b_src_v1, &b_tokens_v1);
-            let resolution_v1 = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src_v1,
-                    tokens: &b_tokens_v1,
-                    ast: &b_ast_v1,
-                },
-            ]);
+            let program_v1 = Program::new()
+                .with_source_file(SourceFile::new(a_src))
+                .with_source_file(SourceFile::new(
+                    "processor P { void main() { int x = 1; } }",
+                ));
+            let resolution_v1 = resolve(&program_v1);
             assert!(
                 resolution_v1.diagnostics.is_empty(),
                 "{:?}",
                 resolution_v1.diagnostics
             );
 
-            let b_src_v2 = "processor P { void main() { int x = n::helper(); } }\n";
-            let b_tokens_v2 = lexer::tokenize(b_src_v2);
-            let (b_ast_v2, _) = parser::parse(b_src_v2, &b_tokens_v2);
-            let resolution_v2 = resolve_all(&[
-                Unit {
-                    name: "a.cmajor",
-                    source: a_src,
-                    tokens: &a_tokens,
-                    ast: &a_ast,
-                },
-                Unit {
-                    name: "b.cmajor",
-                    source: b_src_v2,
-                    tokens: &b_tokens_v2,
-                    ast: &b_ast_v2,
-                },
-            ]);
+            let program_v2 = Program::new()
+                .with_source_file(SourceFile::new(a_src))
+                .with_source_file(SourceFile::new(
+                    "processor P { void main() { int x = n::helper(); } }",
+                ));
+            let resolution_v2 = resolve(&program_v2);
             assert!(
                 resolution_v2.diagnostics.is_empty(),
                 "{:?}",

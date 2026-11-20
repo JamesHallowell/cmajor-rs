@@ -1,10 +1,8 @@
-use cmajor_lang::SourceFile;
+use cmajor_lang::{Program, SourceFile};
 
-fn stdlib_units() -> Vec<SourceFile> {
-    vec![
-        SourceFile {
-            name: "oscillator.cmajor".to_string(),
-            source: indoc::indoc! {"
+fn stdlib_units() -> impl IntoIterator<Item = SourceFile> {
+    [
+        SourceFile::new(indoc::indoc! {"
                 namespace teststd::osc
                 {
                     float sine (float phase)
@@ -12,12 +10,9 @@ fn stdlib_units() -> Vec<SourceFile> {
                         return phase;
                     }
                 }
-            "}
-            .to_string(),
-        },
-        SourceFile {
-            name: "envelope.cmajor".to_string(),
-            source: indoc::indoc! {"
+            "})
+        .with_name("oscillator.cmajor"),
+        SourceFile::new(indoc::indoc! {"
                 namespace teststd::env
                 {
                     float attack (float level)
@@ -25,18 +20,17 @@ fn stdlib_units() -> Vec<SourceFile> {
                         return level;
                     }
                 }
-            "}
-            .to_string(),
-        },
+            "})
+        .with_name("envelope.cmajor"),
     ]
 }
 
 #[test]
 fn compiles_a_program_against_a_synthetic_standard_library() {
-    let mut units = stdlib_units();
-    units.push(SourceFile {
-        name: "main.cmajor".to_string(),
-        source: indoc::indoc! {"
+    let program: Program = stdlib_units()
+        .into_iter()
+        .chain(std::iter::once(
+            SourceFile::new(indoc::indoc! {"
             processor P
             {
                 output stream float out;
@@ -46,47 +40,46 @@ fn compiles_a_program_against_a_synthetic_standard_library() {
                     let y = teststd::env::attack (1.0f);
                 }
             }
-        "}
-        .to_string(),
-    });
+        "})
+            .with_name("main.cmajor"),
+        ))
+        .collect();
 
-    let program = cmajor_lang::compile::compile(units);
-
-    assert!(
-        program.resolution.diagnostics.is_empty(),
+    assert_eq!(
+        program.diagnostics().count(),
+        0,
         "expected no diagnostics, got: {:?}",
         program
-            .resolution
-            .diagnostics
-            .iter()
-            .map(ToString::to_string)
+            .diagnostics()
+            .map(|(_, diagnostic)| diagnostic.message.to_string())
             .collect::<Vec<_>>()
     );
 }
 
 #[test]
 fn undeclared_stdlib_reference_is_reported() {
-    let mut units = stdlib_units();
-    units.push(SourceFile {
-        name: "main.cmajor".to_string(),
-        source: indoc::indoc! {"
-            processor P
-            {
-                output stream float out;
-                void main()
+    let program: Program = stdlib_units()
+        .into_iter()
+        .chain(std::iter::once(
+            SourceFile::new(indoc::indoc! {"
+                processor P
                 {
-                    let x = teststd::osc::bogus (1.0f);
+                    output stream float out;
+                    void main()
+                    {
+                        let x = teststd::osc::bogus (1.0f);
+                    }
                 }
-            }
-        "}
-        .to_string(),
-    });
+            "})
+            .with_name("main.cmajor"),
+        ))
+        .collect();
 
-    let program = cmajor_lang::compile::compile(units);
+    let resolution = cmajor_lang::resolver::resolve(&program);
 
-    assert_eq!(program.resolution.diagnostics.len(), 1);
+    assert_eq!(resolution.diagnostics.len(), 1);
     assert!(
-        program.resolution.diagnostics[0]
+        resolution.diagnostics[0]
             .message
             .contains("undeclared identifier 'bogus'")
     );
@@ -94,12 +87,13 @@ fn undeclared_stdlib_reference_is_reported() {
 
 #[test]
 fn compiling_with_no_standard_library_units_still_works() {
-    let units = [SourceFile {
-        name: "main.cmajor".to_string(),
-        source: "processor P { output stream int out; void main() {} }\n".to_string(),
-    }];
+    let program: Program = std::iter::once(
+        SourceFile::new("processor P { output stream int out; void main() {} }\n")
+            .with_name("main.cmajor"),
+    )
+    .collect();
 
-    let program = cmajor_lang::compile::compile(units);
+    let resolution = cmajor_lang::resolver::resolve(&program);
 
-    assert!(program.resolution.diagnostics.is_empty());
+    assert!(resolution.diagnostics.is_empty());
 }

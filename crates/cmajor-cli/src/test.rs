@@ -1,11 +1,7 @@
 use {
     crate::{io, stdlib},
     cmajor_lang::{
-        Diagnostic,
-        ast::Ast,
-        lexer::{self, TokenStream},
-        parser,
-        resolver::Unit,
+        Program,
         test_format::{self, Directive, Outcome, Section, TestFile, TestResult},
     },
     libtest_mimic::{Arguments, Completion, Failed, Trial},
@@ -23,29 +19,10 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
         std::process::exit(1);
     }
 
-    let stdlib_files = stdlib_dir
-        .map(stdlib::collect)
-        .map(|files| files.collect::<Vec<_>>())
-        .unwrap_or_default();
-    let stdlib_parses: Vec<(TokenStream, Ast, Vec<Diagnostic>)> = stdlib_files
-        .iter()
-        .map(|file| {
-            let tokens = lexer::tokenize(&file.source);
-            let (ast, diagnostics) = parser::parse(&file.source, &tokens);
-            (tokens, ast, diagnostics)
-        })
-        .collect();
-    let stdlib_units: Vec<Unit<'_>> = stdlib_files
-        .iter()
-        .zip(&stdlib_parses)
-        .map(|(file, (tokens, ast, _))| Unit {
-            name: &file.name,
-            source: &file.source,
-            tokens,
-            ast,
-        })
-        .collect();
-    let standard_library = cmajor_lang::resolver::declare_stdlib(&stdlib_units);
+    let standard_library = stdlib_dir.map(|dir| {
+        let program: Program = stdlib::collect(dir).collect();
+        cmajor_lang::resolver::declare_stdlib(&program)
+    });
 
     let mut trials = Vec::new();
 
@@ -72,7 +49,7 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_path.to_string_lossy().into_owned());
 
-        for result in test_format::run(&file, &standard_library) {
+        for result in test_format::run(&file, standard_library.as_ref()) {
             let name = format!("{location}:{}:{}", result.line, result.name);
             trials.push(Trial::ignorable_test(name, move || outcome_of(result)));
         }

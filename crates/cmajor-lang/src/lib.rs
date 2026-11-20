@@ -8,6 +8,7 @@ pub mod test_format;
 pub mod utils;
 
 pub use {
-    compile::{CompilationUnit, Program, SourceFile},
+    compile::{ParsedUnit, Program},
     diagnostic::Diagnostic,
+    utils::source::SourceFile,
 };

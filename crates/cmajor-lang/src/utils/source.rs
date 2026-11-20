@@ -1,8 +1,9 @@
 use {crate::utils::span::Span, std::str::FromStr};
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Source<'a> {
-    source: &'a str,
+#[derive(Debug, Clone)]
+pub struct SourceFile {
+    name: Option<String>,
+    contents: String,
     line_starts: Vec<usize>,
 }
 
@@ -18,24 +19,35 @@ pub struct SourceLocation {
     pub column: Column,
 }
 
-impl<'a> Source<'a> {
-    pub fn new(source: &'a str) -> Self {
+impl SourceFile {
+    pub fn new(source: impl Into<String>) -> Self {
+        let contents = source.into();
         let line_starts = std::iter::once(0)
             .chain(
-                source
+                contents
                     .char_indices()
                     .filter_map(|(i, c)| if c == '\n' { Some(i + 1) } else { None }),
             )
             .collect::<Vec<_>>();
 
         Self {
-            source,
+            name: None,
+            contents,
             line_starts,
         }
     }
 
-    pub fn as_str(&self) -> &str {
-        self.source
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn contents(&self) -> &str {
+        &self.contents
     }
 
     pub fn location(&self, index: u32) -> SourceLocation {
@@ -75,46 +87,40 @@ impl FromStr for SourceLocation {
     }
 }
 
-impl<'a> From<&'a str> for Source<'a> {
-    fn from(source: &'a str) -> Self {
+impl From<&str> for SourceFile {
+    fn from(source: &str) -> Self {
         Self::new(source)
     }
 }
 
-impl<'a> From<Source<'a>> for &'a str {
-    fn from(source: Source<'a>) -> Self {
-        source.source
+impl std::ops::Index<Span<u32>> for SourceFile {
+    type Output = str;
+
+    fn index(&self, index: Span<u32>) -> &Self::Output {
+        &self.contents[index.start as usize..index.end as usize]
     }
 }
 
-impl<'a> std::ops::Index<Span<u32>> for Source<'a> {
+impl std::ops::Index<Span<SourceLocation>> for SourceFile {
     type Output = str;
 
-    fn index(&self, index: Span<u32>) -> &'a Self::Output {
-        &self.source[index.start as usize..index.end as usize]
-    }
-}
-
-impl<'a> std::ops::Index<Span<SourceLocation>> for Source<'a> {
-    type Output = str;
-
-    fn index(&self, span: Span<SourceLocation>) -> &'a Self::Output {
+    fn index(&self, span: Span<SourceLocation>) -> &Self::Output {
         let span = span.to_position_span(self);
-        &self.source[span.start as usize..span.end as usize]
+        &self.contents[span.start as usize..span.end as usize]
     }
 }
 
-impl<'a> std::ops::Index<std::ops::Range<SourceLocation>> for Source<'a> {
+impl std::ops::Index<std::ops::Range<SourceLocation>> for SourceFile {
     type Output = str;
 
-    fn index(&self, span: std::ops::Range<SourceLocation>) -> &'a Self::Output {
+    fn index(&self, span: std::ops::Range<SourceLocation>) -> &Self::Output {
         let span: Span<SourceLocation> = span.into();
         let span = span.to_position_span(self);
-        &self.source[span.start as usize..span.end as usize]
+        &self.contents[span.start as usize..span.end as usize]
     }
 }
 
-impl<'a> std::ops::Index<Line> for Source<'a> {
+impl std::ops::Index<Line> for SourceFile {
     type Output = str;
 
     fn index(&self, line: Line) -> &Self::Output {
@@ -272,7 +278,7 @@ mod tests {
 
     #[test]
     fn fetching_source_locations() {
-        let source: Source = CODE.into();
+        let source: SourceFile = CODE.into();
 
         assert_eq!(&source[location!(1:1)..location!(1:6)], "let x");
         assert_eq!(&source[location!(2:1)..location!(3:6)], "let y = 2;\nlet z");
@@ -284,7 +290,7 @@ mod tests {
 
     #[test]
     fn mapping_locations_to_index() {
-        let source: Source = CODE.into();
+        let source: SourceFile = CODE.into();
         let assert_index = |location: SourceLocation, index: u32| {
             assert_eq!(index, source.index(location));
             assert_eq!(location, source.location(index));

@@ -5,8 +5,7 @@ use crate::{
         Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl,
         DeclStmt, Declarator, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
         ExprStmt, External, Field, ForStmt, ForwardBranchStmt, FunctionDecl, GenericParam, Graph,
-        GraphDecl,
-        HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
+        GraphDecl, HoistTarget, HoistedEndpointDeclaration, Ident, IfConstStmt, IfStmt, Import,
         InterpolationKind, Item, LoopStmt, ModuleAlias, NamespaceDecl, Node, NodeDecl, NodeId,
         Param, Parentheses, PostfixUnary, ProcessorDecl, ProcessorProperty, ReturnStmt,
         ScopeAccess, Slice, SpecialisationValue, Stmt, StructDecl, Ternary, TypeModifier,
@@ -17,7 +16,7 @@ use crate::{
     skip_to_matching, token,
     utils::{
         arena::{Arena, SecondaryArena, SparseSecondaryArena},
-        source::Source,
+        source::SourceFile,
         span::Span,
     },
 };
@@ -210,7 +209,7 @@ impl Infix {
 struct Parser<'a> {
     tokens: &'a TokenStream,
     iter: NonTrivialTokenStreamIterator<'a>,
-    source: Source<'a>,
+    source: SourceFile,
     nodes: Arena<NodeId, Node>,
     roots: Vec<NodeId>,
     spans: SecondaryArena<NodeId, Span<TokenId>>,

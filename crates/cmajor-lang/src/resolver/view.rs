@@ -1,47 +1,43 @@
 use crate::{
-    lexer::TokenStream,
+    Program,
     resolver::{Resolution, ScopeId, SymbolKind, symbol::SymbolOrigin},
-    utils::source::{Source, SourceLocation},
 };
 
-pub struct ResolutionView<'a> {
+pub struct ResolutionView {
+    program: Program,
     resolution: Resolution,
-    tokens: TokenStream,
-    source: Source<'a>,
 }
 
-impl<'a> ResolutionView<'a> {
-    pub fn new(resolution: Resolution, tokens: TokenStream, source: Source<'a>) -> Self {
+impl ResolutionView {
+    pub fn new(program: Program, resolution: Resolution) -> Self {
         Self {
+            program,
             resolution,
-            tokens,
-            source,
         }
-    }
-
-    fn location(&self, position: u32) -> String {
-        let SourceLocation { line, column } = self.source.location(position);
-        format!("{line}:{column}")
     }
 
     fn scope_entry(&self, scope: ScopeId) -> ScopeEntry {
         let table = &self.resolution.symbols;
 
-        let location = table
-            .scope(scope)
-            .start()
-            .map(|start| self.location(self.tokens.span(start.token).start));
+        let location = table.scope(scope).start().map(|start| {
+            self.program[start.unit]
+                .location(start.token)
+                .start
+                .to_string()
+        });
 
         let symbols = table
             .symbols_in(scope)
             .filter(|symbol| matches!(symbol.origin, SymbolOrigin::Source { .. }))
             .map(|symbol| {
                 let (name, location) = match symbol.origin {
-                    SymbolOrigin::Source { name, .. } => {
-                        let span = self.tokens.span(name);
+                    SymbolOrigin::Source { unit, name, .. } => {
+                        let unit = &self.program[unit];
+
+                        let span = unit.tokens.span(name);
                         (
-                            self.source[span].to_string(),
-                            Some(self.location(span.start)),
+                            unit.source[span].to_string(),
+                            Some(unit.source.location(span.start).to_string()),
                         )
                     }
                     SymbolOrigin::Builtin { name } => (name.to_string(), None),
@@ -61,7 +57,7 @@ impl<'a> ResolutionView<'a> {
                 let position = table
                     .scope(child)
                     .start()
-                    .map(|start| self.tokens.span(start.token).start)
+                    .map(|start| self.program[start.unit].tokens.span(start.token).start)
                     .unwrap_or(0);
                 (position, self.scope_entry(child))
             })
@@ -76,7 +72,7 @@ impl<'a> ResolutionView<'a> {
     }
 }
 
-impl serde::Serialize for ResolutionView<'_> {
+impl serde::Serialize for ResolutionView {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         #[derive(serde::Serialize)]
         struct View {

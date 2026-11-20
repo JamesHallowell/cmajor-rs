@@ -27,7 +27,7 @@ use {
             visit::ExhaustiveVisitor,
         },
         lexer::{TokenId, TokenStream},
-        utils::source::Source,
+        utils::source::SourceFile,
     },
     std::fmt::Write as _,
 };
@@ -78,7 +78,7 @@ fn node(label: String, children: Vec<DumpNode>) -> DumpNode {
 struct Dumper<'a> {
     ast: &'a Ast,
     tokens: &'a TokenStream,
-    source: Source<'a>,
+    source: SourceFile,
 }
 
 impl<'a> Dumper<'a> {

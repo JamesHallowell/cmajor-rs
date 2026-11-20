@@ -80,7 +80,7 @@ impl Ast {
             .any(|node| matches!(node, Node::Error { .. }))
     }
 
-    pub fn error_tokens(&self) -> Vec<TokenId> {
+    pub fn error_tokens(&self) -> impl Iterator<Item = TokenId> {
         self.nodes
             .values()
             .filter_map(|node| match node {
@@ -88,7 +88,6 @@ impl Ast {
                 _ => None,
             })
             .copied()
-            .collect()
     }
 
     pub fn visit<V>(&self, visitor: &mut V)

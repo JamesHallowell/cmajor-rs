@@ -1,6 +1,6 @@
 use {
     crate::io,
-    cmajor_lang::compile::SourceFile,
+    cmajor_lang::SourceFile,
     std::path::{Path, PathBuf},
 };
 
@@ -11,10 +11,7 @@ pub fn collect(dir: &Path) -> impl Iterator<Item = SourceFile> {
 
     files.into_iter().map(|path| {
         let source = io::read_file(&path);
-        SourceFile {
-            name: path.display().to_string(),
-            source,
-        }
+        SourceFile::new(source).with_name(path.display().to_string())
     })
 }
 
