@@ -1,7 +1,11 @@
 use cmajor::{
+    endpoint::EndpointInfo,
     engine::{Engine, Loaded},
     json,
-    performer::{EndpointError, InputStream, InputValue, OutputEvent, OutputValue, Performer},
+    performer::{
+        Endpoint, EndpointError, InputEvent, InputStream, InputValue, OutputEvent, OutputValue,
+        Performer, TypeMismatch,
+    },
     value::{
         types::{Object, Type},
         Complex32, Complex64, Value, ValueRef,
@@ -27,6 +31,10 @@ fn setup<E>(program: &str, endpoints: impl FnOnce(&mut Engine<Loaded>) -> E) -> 
     performer.set_block_size(128);
 
     (performer, endpoints)
+}
+
+fn endpoint_info(engine: &Engine<Loaded>, id: &str) -> EndpointInfo {
+    engine.program_details().endpoint(id).unwrap().clone()
 }
 
 #[test]
@@ -60,13 +68,13 @@ fn can_read_and_write_to_value_endpoint() {
         )
     });
 
-    performer.set(int_in, 2);
-    performer.set(bool_in, true);
+    performer.set(&int_in, 2);
+    performer.set(&bool_in, true);
 
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(int_out), 4);
-    assert!(performer.get::<bool>(bool_out));
+    assert_eq!(performer.get::<i32>(&int_out), 4);
+    assert!(performer.get::<bool>(&bool_out));
 }
 
 #[test]
@@ -93,8 +101,8 @@ fn cant_access_endpoints_with_wrong_type() {
     });
 
     assert!(matches!(
-        performer.set(input, Value::Int32(5)),
-        Err(EndpointError::DataTypeMismatch)
+        performer.set(&input, Value::Int32(5)),
+        Err(TypeMismatch)
     ));
 
     assert!(matches!(output, Err(EndpointError::EndpointTypeMismatch)));
@@ -123,24 +131,15 @@ fn can_read_and_write_complex32_numbers() {
         )
     });
 
-    let value: Value = Complex32 {
+    let value = Complex32 {
         real: 2.0,
         imag: 1.0,
-    }
-    .into();
-    performer.set(input, value).unwrap();
+    };
+    performer.set(&input, value);
 
     performer.advance();
 
-    let result: Complex32 = performer.get::<Value>(output).try_into().unwrap();
-
-    assert_eq!(
-        result,
-        Complex32 {
-            real: 2.0,
-            imag: 1.0
-        }
-    );
+    assert_eq!(performer.get::<Complex32>(&output), value);
 }
 
 #[test]
@@ -166,24 +165,15 @@ fn can_read_and_write_complex64_numbers() {
         )
     });
 
-    let value: Value = Complex64 {
+    let value = Complex64 {
         real: 2.0,
         imag: 1.0,
-    }
-    .into();
-    performer.set(input, value).unwrap();
+    };
+    performer.set(&input, value);
 
     performer.advance();
 
-    let result: Complex64 = performer.get::<Value>(output).try_into().unwrap();
-
-    assert_eq!(
-        result,
-        Complex64 {
-            real: 2.0,
-            imag: 1.0
-        }
-    );
+    assert_eq!(performer.get::<Complex64>(&output), value);
 }
 
 #[test]
@@ -212,7 +202,7 @@ fn can_read_structs() {
 
     performer.advance();
 
-    let value = performer.get::<Value>(output);
+    let value = performer.get::<Value>(&output);
     let object = value.as_object().unwrap();
 
     assert_eq!(object.field("a").unwrap(), ValueRef::Bool(true));
@@ -243,11 +233,11 @@ fn can_read_and_write_arrays() {
         )
     });
 
-    performer.set::<Value>(input, [1, 2, 3, 4].into()).unwrap();
+    performer.set::<Value>(&input, [1, 2, 3, 4].into()).unwrap();
 
     performer.advance();
 
-    let value = performer.get::<Value>(output);
+    let value = performer.get::<Value>(&output);
     let array = value.as_array().unwrap();
 
     assert_eq!(array.len(), 4);
@@ -283,22 +273,66 @@ fn can_post_events() {
         }
     "#;
 
-    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+    let (mut performer, (int_input, bool_input, output)) = setup(PROGRAM, |engine| {
         (
-            engine.endpoint("in").unwrap(),
+            engine.endpoint::<InputEvent<i32>>("in").unwrap(),
+            engine.endpoint::<InputEvent<bool>>("in").unwrap(),
             engine.endpoint("out").unwrap(),
         )
     });
 
-    performer.post(input, 4).unwrap();
+    performer.post(&int_input, 4);
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(output), 16);
+    assert_eq!(performer.get::<i32>(&output), 16);
 
-    performer.post(input, true).unwrap();
+    performer.post(&bool_input, true);
     performer.advance();
 
-    assert_eq!(performer.get(output), 42);
+    assert_eq!(performer.get(&output), 42);
+}
+
+#[test]
+fn a_value_placeholder_posts_events_of_any_type_the_endpoint_carries() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            input event (int, bool) in;
+            output value int out;
+
+            event in (int x)
+            {
+                out <- x * x;
+            }
+
+            event in (bool x)
+            {
+                out <- x ? 42 : 0;
+            }
+
+            void main()
+            {
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint::<InputEvent>("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
+
+    performer.post(&input, 4.into()).unwrap();
+    performer.advance();
+    assert_eq!(performer.get::<i32>(&output), 16);
+
+    performer.post(&input, true.into()).unwrap();
+    performer.advance();
+    assert_eq!(performer.get::<i32>(&output), 42);
+
+    assert_eq!(performer.post(&input, 1.5_f32.into()), Err(TypeMismatch));
 }
 
 #[test]
@@ -328,32 +362,28 @@ fn can_read_events() {
 
     let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
         (
-            engine.endpoint("in").unwrap(),
-            engine.endpoint("out").unwrap(),
+            engine.endpoint::<InputEvent>("in").unwrap(),
+            engine.endpoint::<OutputEvent>("out").unwrap(),
         )
     });
 
-    performer.post(input, 5).unwrap();
+    performer.post(&input, 5.into()).unwrap();
     performer.advance();
 
     let mut events = vec![];
-    performer
-        .fetch(output, |frame, event| {
-            events.push((frame, event.to_owned()));
-        })
-        .unwrap();
+    performer.fetch(&output, |frame, event| {
+        events.push((frame, event.to_owned()));
+    });
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0], (0, Value::Int32(5)));
 
-    performer.post(input, true).unwrap();
+    performer.post(&input, true.into()).unwrap();
     performer.advance();
 
-    performer
-        .fetch(output, |frame, event| {
-            events.push((frame, event.to_owned()));
-        })
-        .unwrap();
+    performer.fetch(&output, |frame, event| {
+        events.push((frame, event.to_owned()));
+    });
 
     assert_eq!(events.len(), 2);
     assert_eq!(events[1], (0, Value::Bool(true)));
@@ -386,12 +416,12 @@ fn can_read_streams() {
 
     let mut buffer = [0_i32; 8];
 
-    performer.read(stream, buffer.as_mut_slice());
+    performer.read(&stream, buffer.as_mut_slice());
     assert_eq!(buffer, [0, 1, 2, 3, 4, 5, 6, 7]);
 
     performer.advance();
 
-    performer.read(stream, buffer.as_mut_slice());
+    performer.read(&stream, buffer.as_mut_slice());
     assert_eq!(buffer, [8, 9, 10, 11, 12, 13, 14, 15]);
 
     assert_eq!(performer.get_xruns(), 0);
@@ -417,28 +447,25 @@ fn can_query_endpoint_information() {
         }
     "#;
 
-    let (performer, (a, b, c)) = setup(PROGRAM, |engine| {
+    let (_, (a, b, c)) = setup(PROGRAM, |engine| {
         (
-            engine.endpoint::<InputStream<i32>>("a").unwrap(),
-            engine.endpoint::<InputValue<f32>>("b").unwrap(),
-            engine.endpoint::<OutputEvent>("c").unwrap(),
+            endpoint_info(engine, "a"),
+            endpoint_info(engine, "b"),
+            endpoint_info(engine, "c"),
         )
     });
 
-    let a = performer.endpoint_info(a).unwrap();
-    let a = a.as_stream().expect("expected stream");
+    let a = a.as_stream().unwrap();
 
     assert_eq!(a.id(), "a");
     assert!(a.ty().is::<i32>());
 
-    let b = performer.endpoint_info(b).unwrap();
-    let b = b.as_value().expect("expected value");
+    let b = b.as_value().unwrap();
 
     assert_eq!(b.id(), "b");
     assert!(b.ty().is::<f32>());
 
-    let c = performer.endpoint_info(c).unwrap();
-    let c = c.as_event().expect("expected event");
+    let c = c.as_event().unwrap();
 
     assert_eq!(c.id(), "c");
     assert!(c.types()[0].is::<i32>());
@@ -476,9 +503,9 @@ fn can_write_streams() {
     let mut buffer = [1, 2, 3, 4, 5, 6, 7, 8];
     performer.set_block_size(buffer.len() as u32);
 
-    performer.write(input, buffer.as_mut_slice());
+    performer.write(&input, buffer.as_mut_slice());
     performer.advance();
-    performer.read(output, buffer.as_mut_slice());
+    performer.read(&output, buffer.as_mut_slice());
 
     assert_eq!(buffer, [2, 4, 6, 8, 10, 12, 14, 16]);
 }
@@ -508,10 +535,10 @@ fn read_and_write_vectors() {
         )
     });
 
-    performer.set::<Value>(input, [1, 2, 3, 4].into()).unwrap();
+    performer.set::<Value>(&input, [1, 2, 3, 4].into()).unwrap();
     performer.advance();
 
-    let value = performer.get::<Value>(output);
+    let value = performer.get::<Value>(&output);
     let array = value.as_array().unwrap();
 
     let elems: Vec<_> = array.elems().collect();
@@ -541,14 +568,9 @@ fn endpoints_with_annotations() {
         }
     "#;
 
-    let (performer, (a, b)) = setup(PROGRAM, |engine| {
-        (
-            engine.endpoint::<InputValue<f32>>("a").unwrap(),
-            engine.endpoint::<OutputValue<i32>>("b").unwrap(),
-        )
+    let (_, (a, b)) = setup(PROGRAM, |engine| {
+        (endpoint_info(engine, "a"), endpoint_info(engine, "b"))
     });
-
-    let a = performer.endpoint_info(a).unwrap();
 
     assert_eq!(
         a.annotation().get("name").and_then(json::Value::as_str),
@@ -567,7 +589,6 @@ fn endpoints_with_annotations() {
         Some(true)
     );
 
-    let b = performer.endpoint_info(b).unwrap();
     assert_eq!(
         b.annotation().get("name").and_then(json::Value::as_str),
         Some("bar")
@@ -608,15 +629,15 @@ fn multiple_handles_to_the_same_input_value_endpoint() {
         (engine.endpoint("a").unwrap(), engine.endpoint("b").unwrap())
     });
 
-    performer.set(input, 42);
+    performer.set(&input, 42);
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(output), 42);
+    assert_eq!(performer.get::<i32>(&output), 42);
 
-    performer.set(input, 24);
+    performer.set(&input, 24);
     performer.advance();
 
-    assert_eq!(performer.get(output), 24);
+    assert_eq!(performer.get(&output), 24);
 }
 
 #[test]
@@ -645,12 +666,12 @@ fn multiple_handles_to_the_same_output_value_endpoint() {
         )
     });
 
-    performer.set(a, 42);
+    performer.set(&a, 42);
 
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(b), 42);
-    assert_eq!(performer.get::<i32>(c), 42);
+    assert_eq!(performer.get::<i32>(&b), 42);
+    assert_eq!(performer.get::<i32>(&c), 42);
 }
 
 #[test]
@@ -680,20 +701,20 @@ fn void_events() {
 
     let (mut performer, (increment, current_count)) = setup(PROGRAM, |engine| {
         (
-            engine.endpoint("increment").unwrap(),
+            engine.endpoint::<InputEvent<()>>("increment").unwrap(),
             engine.endpoint("currentCount").unwrap(),
         )
     });
 
-    performer.post(increment, ()).unwrap();
+    performer.post(&increment, ());
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(current_count), 1);
+    assert_eq!(performer.get::<i32>(&current_count), 1);
 
-    performer.post(increment, ()).unwrap();
+    performer.post(&increment, ());
     performer.advance();
 
-    assert_eq!(performer.get::<i32>(current_count), 2);
+    assert_eq!(performer.get::<i32>(&current_count), 2);
 }
 
 #[test]
@@ -726,9 +747,9 @@ fn vector_stream_endpoints() {
 
     performer.set_block_size(4);
 
-    performer.write(input, &input_buffer);
+    performer.write(&input, &input_buffer);
     performer.advance();
-    performer.read(output, &mut output_buffer);
+    performer.read(&output, &mut output_buffer);
 
     assert_eq!(output_buffer, [[2., 1.], [2., 1.], [2., 1.], [2., 1.]]);
 }
@@ -770,11 +791,87 @@ fn string_endpoints() {
 
     performer.advance();
 
-    let value = if let ValueRef::String(string) = performer.get::<Value>(out) {
+    let value = if let ValueRef::String(string) = performer.get::<Value>(&out) {
         string
     } else {
         panic!("expected string");
     };
 
     assert_eq!(performer.get_string(value), Some("Cool 🫘!"));
+}
+
+#[test]
+fn typed_output_events_yield_only_events_of_their_type() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            output event (int, bool) out;
+
+            void main()
+            {
+                out <- 1 <- true <- 2;
+                advance();
+            }
+        }
+    "#;
+
+    let (mut performer, (ints, bools)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint::<OutputEvent<i32>>("out").unwrap(),
+            engine.endpoint::<OutputEvent<bool>>("out").unwrap(),
+        )
+    });
+
+    performer.advance();
+
+    let mut received_ints = vec![];
+    performer.fetch(&ints, |_, value| received_ints.push(value));
+
+    let mut received_bools = vec![];
+    performer.fetch(&bools, |_, value| received_bools.push(value));
+
+    assert_eq!(received_ints, [1, 2]);
+    assert_eq!(received_bools, [true]);
+}
+
+#[test]
+fn arrays_can_be_read_and_written_as_typed_values() {
+    const PROGRAM: &str = r#"
+        processor P
+        {
+            input value int[3] in;
+            output value int[3] out;
+
+            void main()
+            {
+                loop {
+                    out <- int[3] (in[2], in[1], in[0]);
+                    advance();
+                }
+            }
+        }
+    "#;
+
+    let (mut performer, (input, output)) = setup(PROGRAM, |engine| {
+        (
+            engine.endpoint("in").unwrap(),
+            engine.endpoint("out").unwrap(),
+        )
+    });
+
+    performer.set(&input, [1, 2, 3]);
+    performer.advance();
+
+    assert_eq!(performer.get::<[i32; 3]>(&output), [3, 2, 1]);
+}
+
+#[test]
+fn typed_endpoints_are_copy() {
+    fn assert_copy<T: Copy>() {}
+
+    assert_copy::<Endpoint<InputValue<f32>>>();
+    assert_copy::<Endpoint<OutputValue<[i32; 4]>>>();
+    assert_copy::<Endpoint<InputEvent<Complex32>>>();
+    assert_copy::<Endpoint<OutputEvent<bool>>>();
+    assert_copy::<Endpoint<InputStream<[f32; 2]>>>();
 }

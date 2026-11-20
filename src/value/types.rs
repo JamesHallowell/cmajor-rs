@@ -1,10 +1,10 @@
 //! Types of Cmajor values.
 
 use {
+    crate::value::StaticType,
     bytes::BufMut,
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
-    std::any::TypeId,
 };
 
 /// A Cmajor type.
@@ -155,28 +155,12 @@ impl Type {
         }
     }
 
-    /// Returns the corresponding [`TypeId`] for the type (if any).
-    pub(crate) fn type_id(&self) -> Option<TypeId> {
-        match self {
-            Type::Void => Some(TypeId::of::<()>()),
-            Type::Bool => Some(TypeId::of::<bool>()),
-            Type::Int32 => Some(TypeId::of::<i32>()),
-            Type::Int64 => Some(TypeId::of::<i64>()),
-            Type::Float32 => Some(TypeId::of::<f32>()),
-            Type::Float64 => Some(TypeId::of::<f64>()),
-            _ => None,
-        }
-    }
-
-    /// Check whether the type is a given primitive.
+    /// Check whether this is the Cmajor type of `T`.
     pub fn is<T>(&self) -> bool
     where
-        T: IsPrimitive + 'static,
+        T: StaticType,
     {
-        TypeId::of::<T>()
-            == self
-                .type_id()
-                .expect("primitive types always have a type id")
+        *self == T::ty()
     }
 }
 
@@ -366,38 +350,9 @@ impl Field {
 
 mod private {
     pub trait Sealed {}
-    impl Sealed for bool {}
-    impl Sealed for i32 {}
-    impl Sealed for i64 {}
     impl Sealed for f32 {}
     impl Sealed for f64 {}
 }
-
-/// Implemented for primitive types.
-pub trait IsPrimitive: private::Sealed {}
-
-macro_rules! impl_is_primitive {
-    ($($ty:ty),*) => {
-        $(
-            impl IsPrimitive for $ty {}
-        )*
-    };
-}
-
-impl_is_primitive!(bool, i32, i64, f32, f64);
-
-/// Implemented for scalar types.
-pub trait IsScalar: IsPrimitive {}
-
-macro_rules! impl_is_scalar {
-    ($($ty:ty),*) => {
-        $(
-            impl IsScalar for $ty {}
-        )*
-    };
-}
-
-impl_is_scalar!(i32, i64, f32, f64);
 
 /// Implemented for floating point types.
 pub trait IsFloatingPoint: private::Sealed {}

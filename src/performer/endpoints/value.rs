@@ -1,172 +1,121 @@
 use {
     crate::{
-        endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-        performer::{endpoints::Endpoint, EndpointError, GetHandle, MakeEndpoint, Performer},
-        value::{Value, ValueRef},
+        endpoint::{EndpointDirection, EndpointInfo, ValueEndpoint},
+        performer::{
+            endpoints::{sealed::Sealed, EndpointKind},
+            Endpoint, EndpointError, Performer, TypeMismatch,
+        },
+        value::{types::Type, StaticType, Value, ValueRef},
     },
-    std::{any::TypeId, marker::PhantomData},
+    std::{fmt, marker::PhantomData, sync::Arc},
 };
 
-/// An endpoint for input values.
-#[derive(Debug, Copy, Clone)]
-pub struct InputValue<T = Value> {
-    handle: EndpointHandle,
-    _marker: PhantomData<fn(T)>,
-}
+/// An endpoint for input values of type `T`.
+pub struct InputValue<T = Value>(PhantomData<fn(T)>);
 
-/// An endpoint for output values.
-#[derive(Debug, Copy, Clone)]
-pub struct OutputValue<T = Value> {
-    handle: EndpointHandle,
-    _marker: PhantomData<T>,
-}
+/// An endpoint for output values of type `T`.
+pub struct OutputValue<T = Value>(PhantomData<fn() -> T>);
 
-impl<T> MakeEndpoint for InputValue<T>
-where
-    T: 'static,
-{
-    fn make(
-        handle: EndpointHandle,
-        endpoint: EndpointInfo,
-    ) -> Result<Endpoint<Self>, EndpointError> {
-        validate_value_endpoint::<T>(&endpoint, EndpointDirection::Input)?;
+impl<T> Sealed for InputValue<T> {}
+impl<T> Sealed for OutputValue<T> {}
 
-        Ok(Endpoint(InputValue {
-            handle,
-            _marker: PhantomData,
-        }))
+impl<T: ValueType> EndpointKind for InputValue<T> {
+    type RuntimeType = T::RuntimeType;
+
+    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+        T::bind(value_endpoint(info, EndpointDirection::Input)?)
     }
 }
 
-impl<T> GetHandle for InputValue<T> {
-    fn handle(&self) -> EndpointHandle {
-        self.handle
+impl<T: ValueType> EndpointKind for OutputValue<T> {
+    type RuntimeType = T::RuntimeType;
+
+    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+        T::bind(value_endpoint(info, EndpointDirection::Output)?)
     }
 }
 
-impl<T> MakeEndpoint for OutputValue<T>
-where
-    T: 'static,
-{
-    fn make(
-        handle: EndpointHandle,
-        endpoint: EndpointInfo,
-    ) -> Result<Endpoint<Self>, EndpointError> {
-        validate_value_endpoint::<T>(&endpoint, EndpointDirection::Output)?;
-
-        Ok(Endpoint(OutputValue {
-            handle,
-            _marker: PhantomData,
-        }))
-    }
-}
-
-impl<T> GetHandle for OutputValue<T> {
-    fn handle(&self) -> EndpointHandle {
-        self.handle
-    }
-}
-
-fn validate_value_endpoint<T>(
-    endpoint: &EndpointInfo,
+fn value_endpoint(
+    info: &EndpointInfo,
     expected_direction: EndpointDirection,
-) -> Result<(), EndpointError>
-where
-    T: 'static,
-{
-    if endpoint.direction() != expected_direction {
+) -> Result<&ValueEndpoint, EndpointError> {
+    if info.direction() != expected_direction {
         return Err(EndpointError::DirectionMismatch);
     }
 
-    let endpoint = endpoint
-        .as_value()
-        .ok_or(EndpointError::EndpointTypeMismatch)?;
-
-    let user_type = TypeId::of::<T>();
-    if user_type != TypeId::of::<Value>() {
-        if let Some(endpoint_type) = endpoint.ty().type_id() {
-            if user_type != endpoint_type {
-                return Err(EndpointError::DataTypeMismatch);
-            }
-        } else {
-            return Err(EndpointError::DataTypeMismatch);
-        }
-    }
-
-    Ok(())
+    info.as_value().ok_or(EndpointError::EndpointTypeMismatch)
 }
 
 #[doc(hidden)]
-pub trait SetInputValue: Sized {
-    type Output;
+pub trait ValueType: Sized {
+    type RuntimeType: Clone + fmt::Debug;
+    type SetResult;
+    type Value<'a>
+    where
+        Self: 'a;
 
-    fn set_input_value(
+    fn bind(endpoint: &ValueEndpoint) -> Result<Self::RuntimeType, EndpointError>;
+
+    fn set(
         performer: &mut Performer,
-        endpoint: Endpoint<InputValue<Self>>,
+        endpoint: &Endpoint<InputValue<Self>>,
         value: Self,
-    ) -> Self::Output;
+    ) -> Self::SetResult;
+
+    fn get<'a>(
+        performer: &'a mut Performer,
+        endpoint: &'a Endpoint<OutputValue<Self>>,
+    ) -> Self::Value<'a>;
 }
 
-macro_rules! set_input_value_for {
-    ($ty:ty) => {
-        impl SetInputValue for $ty {
-            type Output = ();
+impl<T: StaticType> ValueType for T {
+    type RuntimeType = ();
+    type SetResult = ();
+    type Value<'a>
+        = T
+    where
+        T: 'a;
 
-            fn set_input_value(
-                performer: &mut Performer,
-                Endpoint(endpoint): Endpoint<InputValue<Self>>,
-                value: Self,
-            ) -> Self::Output {
-                unsafe {
-                    performer
-                        .ptr
-                        .set_input_value(endpoint.handle, value.to_ne_bytes().as_ptr(), 0);
-                }
-            }
+    fn bind(endpoint: &ValueEndpoint) -> Result<(), EndpointError> {
+        if !endpoint.ty().is::<T>() {
+            return Err(EndpointError::DataTypeMismatch);
         }
-    };
-}
 
-set_input_value_for! {i32}
-set_input_value_for! {i64}
-set_input_value_for! {f32}
-set_input_value_for! {f64}
+        Ok(())
+    }
 
-impl SetInputValue for bool {
-    type Output = ();
+    fn set(performer: &mut Performer, endpoint: &Endpoint<InputValue<T>>, value: T) {
+        let Performer { ptr, buffer, .. } = performer;
+        let bytes = &mut buffer[..T::SIZE];
 
-    fn set_input_value(
-        performer: &mut Performer,
-        Endpoint(endpoint): Endpoint<InputValue<Self>>,
-        value: Self,
-    ) -> Self::Output {
-        let value: i32 = if value { 1 } else { 0 };
-        unsafe {
-            performer
-                .ptr
-                .set_input_value(endpoint.handle, value.to_ne_bytes().as_ptr(), 0);
-        }
+        value.write(bytes);
+        unsafe { ptr.set_input_value(endpoint.handle, bytes.as_ptr(), 0) };
+    }
+
+    fn get(performer: &mut Performer, endpoint: &Endpoint<OutputValue<T>>) -> T {
+        let Performer { ptr, buffer, .. } = performer;
+
+        ptr.copy_output_value(endpoint.handle, buffer);
+        T::read(buffer)
     }
 }
 
-impl SetInputValue for Value {
-    type Output = Result<(), EndpointError>;
+impl ValueType for Value {
+    type RuntimeType = Arc<Type>;
+    type SetResult = Result<(), TypeMismatch>;
+    type Value<'a> = ValueRef<'a>;
 
-    fn set_input_value(
+    fn bind(endpoint: &ValueEndpoint) -> Result<Arc<Type>, EndpointError> {
+        Ok(Arc::new(endpoint.ty().clone()))
+    }
+
+    fn set(
         performer: &mut Performer,
-        Endpoint(endpoint): Endpoint<InputValue<Self>>,
-        value: Self,
-    ) -> Self::Output {
-        let ty = performer
-            .endpoints
-            .get(&endpoint.handle)
-            .ok_or(EndpointError::EndpointDoesNotExist)?
-            .as_value()
-            .ok_or(EndpointError::EndpointTypeMismatch)?
-            .ty();
-
-        if ty.as_ref() != value.ty() {
-            return Err(EndpointError::DataTypeMismatch);
+        endpoint: &Endpoint<InputValue<Value>>,
+        value: Value,
+    ) -> Result<(), TypeMismatch> {
+        if endpoint.runtime_type.as_ref().as_ref() != value.ty() {
+            return Err(TypeMismatch);
         }
 
         value.with_bytes(|bytes| unsafe {
@@ -177,80 +126,74 @@ impl SetInputValue for Value {
 
         Ok(())
     }
-}
 
-#[doc(hidden)]
-pub trait GetOutputValue: Sized {
-    type Output<'a>;
+    fn get<'a>(
+        performer: &'a mut Performer,
+        endpoint: &'a Endpoint<OutputValue<Value>>,
+    ) -> ValueRef<'a> {
+        let Performer { ptr, buffer, .. } = performer;
+        let ty = endpoint.runtime_type.as_ref().as_ref();
 
-    fn get_output_value(
-        performer: &mut Performer,
-        endpoint: Endpoint<OutputValue<Self>>,
-    ) -> Self::Output<'_>;
-}
-
-macro_rules! get_output_value_for {
-    ($ty:ty) => {
-        impl GetOutputValue for $ty {
-            type Output<'a> = Self;
-
-            fn get_output_value(
-                performer: &mut Performer,
-                Endpoint(endpoint): Endpoint<OutputValue<Self>>,
-            ) -> Self::Output<'_> {
-                let mut buffer = [0u8; std::mem::size_of::<Self>()];
-                performer
-                    .ptr
-                    .copy_output_value(endpoint.handle, &mut buffer);
-                Self::from_ne_bytes(buffer)
-            }
-        }
-    };
-}
-
-get_output_value_for! {i32}
-get_output_value_for! {i64}
-get_output_value_for! {f32}
-get_output_value_for! {f64}
-
-impl GetOutputValue for bool {
-    type Output<'a> = Self;
-
-    fn get_output_value(
-        performer: &mut Performer,
-        Endpoint(endpoint): Endpoint<OutputValue<Self>>,
-    ) -> Self::Output<'_> {
-        let mut buffer = [0u8; size_of::<u32>()];
-        performer
-            .ptr
-            .copy_output_value(endpoint.handle, &mut buffer);
-        u32::from_ne_bytes(buffer) != 0
+        ptr.copy_output_value(endpoint.handle, buffer);
+        ValueRef::new_from_slice(ty, &buffer[..ty.size()])
     }
 }
 
-impl GetOutputValue for Value {
-    type Output<'a> = ValueRef<'a>;
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        crate::{performer::endpoints::test, value::types::Array},
+    };
 
-    fn get_output_value(
-        performer: &mut Performer,
-        Endpoint(endpoint): Endpoint<OutputValue<Self>>,
-    ) -> Self::Output<'_> {
-        let Performer { ptr, buffer, .. } = performer;
+    fn value_endpoint(direction: EndpointDirection, ty: impl Into<Type>) -> EndpointInfo {
+        ValueEndpoint::new(test::id("v"), direction, ty.into(), Default::default()).into()
+    }
 
-        let ty = performer
-            .endpoints
-            .get(&endpoint.handle)
-            .and_then(|endpoint| endpoint.as_value())
-            .map(|value_endpoint| value_endpoint.ty().as_ref());
+    #[test]
+    fn a_typed_input_value_binds_to_an_endpoint_of_its_type() {
+        let info = value_endpoint(EndpointDirection::Input, Type::Float32);
 
-        debug_assert!(ty.is_some(), "endpoint should exist and be a value type");
+        assert!(InputValue::<f32>::bind(&info).is_ok());
+    }
 
-        match ty {
-            Some(ty) => {
-                ptr.copy_output_value(endpoint.handle, buffer);
-                ValueRef::new_from_slice(ty, &buffer[..ty.size()])
-            }
-            None => ValueRef::Void,
-        }
+    #[test]
+    fn a_typed_input_value_rejects_an_endpoint_of_another_type() {
+        let info = value_endpoint(EndpointDirection::Input, Type::Int32);
+
+        assert!(matches!(
+            InputValue::<f32>::bind(&info),
+            Err(EndpointError::DataTypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn an_array_value_binds_to_an_array_endpoint_of_the_same_shape() {
+        let info = value_endpoint(EndpointDirection::Output, Array::new(Type::Int32, 4));
+
+        assert!(OutputValue::<[i32; 4]>::bind(&info).is_ok());
+        assert!(matches!(
+            OutputValue::<[i32; 3]>::bind(&info),
+            Err(EndpointError::DataTypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn a_value_placeholder_binds_to_any_value_endpoint_type() {
+        let info = value_endpoint(EndpointDirection::Input, Type::String);
+
+        let runtime_type = InputValue::<Value>::bind(&info).unwrap();
+
+        assert_eq!(*runtime_type, Type::String);
+    }
+
+    #[test]
+    fn an_output_value_cannot_bind_to_an_input_endpoint() {
+        let info = value_endpoint(EndpointDirection::Input, Type::Int32);
+
+        assert!(matches!(
+            OutputValue::<i32>::bind(&info),
+            Err(EndpointError::DirectionMismatch)
+        ));
     }
 }

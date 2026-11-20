@@ -10,7 +10,7 @@ use {
 };
 
 type HandleOutputEventCallback =
-    unsafe extern "system" fn(*mut c_void, u32, u32, u32, *const c_void, u32);
+    unsafe extern "system" fn(*mut c_void, u32, u32, u32, *const c_void, u32) -> bool;
 
 #[repr(C)]
 struct PerformerVTable {
@@ -141,10 +141,11 @@ impl PerformerPtr {
             frame_offset: u32,
             value_data: *const c_void,
             value_data_size: u32,
-        ) where
+        ) -> bool
+        where
             F: FnMut(usize, EndpointHandle, EndpointTypeIndex, &[u8]),
         {
-            let _result = std::panic::catch_unwind(|| {
+            std::panic::catch_unwind(|| {
                 let callback: *mut F = context.cast();
                 let callback: &mut F = unsafe { &mut *callback };
 
@@ -157,7 +158,8 @@ impl PerformerPtr {
                     (type_index as usize).into(),
                     data,
                 );
-            });
+            })
+            .is_ok()
         }
 
         let callback = std::ptr::addr_of_mut!(callback).cast();

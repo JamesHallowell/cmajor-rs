@@ -6,14 +6,12 @@ mod program_details;
 
 use {
     crate::{
-        endpoint::{EndpointHandle, EndpointInfo},
         ffi::EnginePtr,
-        performer::{Endpoint, EndpointError, MakeEndpoint, OutputEvent, Performer},
+        performer::{Endpoint, EndpointError, EndpointKind, OutputEvent, Performer},
         program::Program,
     },
     std::{
         borrow::Cow,
-        collections::HashMap,
         ffi::{CStr, CString},
         slice::Split,
     },
@@ -134,14 +132,13 @@ pub struct Idle;
 #[derive(Debug)]
 pub struct Loaded {
     program_details: ProgramDetails,
-    endpoints: HashMap<EndpointHandle, EndpointInfo>,
     console: Option<Endpoint<OutputEvent>>,
 }
 
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
-    endpoints: HashMap<EndpointHandle, EndpointInfo>,
+    program_details: ProgramDetails,
     console: Option<Endpoint<OutputEvent>>,
 }
 
@@ -178,7 +175,6 @@ impl Engine<Idle> {
                     inner: self.inner,
                     state: Loaded {
                         program_details,
-                        endpoints: HashMap::default(),
                         console: None,
                     },
                 };
@@ -191,28 +187,27 @@ impl Engine<Idle> {
 }
 
 impl Engine<Loaded> {
-    /// Returns an endpoint handle.
-    pub fn endpoint<T>(&mut self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
+    /// Binds an endpoint of the loaded program as the given kind of endpoint.
+    pub fn endpoint<T>(&self, id: impl AsRef<str>) -> Result<Endpoint<T>, EndpointError>
     where
-        T: MakeEndpoint,
+        T: EndpointKind,
     {
         let id = id.as_ref();
 
         let info = self
             .state
             .program_details
-            .endpoints()
-            .find(|endpoint| endpoint.id() == id)
+            .endpoint(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
+
+        let runtime_type = T::bind(info)?;
 
         let handle = self
             .inner
             .get_endpoint_handle(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        self.state.endpoints.insert(handle, info.clone());
-
-        MakeEndpoint::make(handle, info)
+        Ok(Endpoint::new(handle, runtime_type))
     }
 
     /// Returns the details of the program loaded into the engine.
@@ -225,7 +220,7 @@ impl Engine<Loaded> {
         match self.inner.link() {
             Ok(_) => {
                 let linked = Linked {
-                    endpoints: self.state.endpoints,
+                    program_details: self.state.program_details,
                     console: self.state.console,
                 };
                 Ok(Engine {
@@ -243,8 +238,8 @@ impl Engine<Linked> {
     pub fn performer(&self) -> Performer {
         Performer::new(
             self.inner.create_performer(),
-            self.state.endpoints.clone(),
-            self.state.console,
+            &self.state.program_details,
+            self.state.console.clone(),
         )
     }
 }

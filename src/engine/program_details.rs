@@ -17,13 +17,10 @@ use {
 
 /// Details about a Cmajor program.
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "RawProgramDetails")]
 pub struct ProgramDetails {
-    inputs: Vec<EndpointDetails>,
-    outputs: Vec<EndpointDetails>,
-    #[serde(rename = "mainProcessor")]
+    endpoints: Vec<EndpointInfo>,
     main_processor: String,
-    #[serde(flatten)]
-    _extra: JsonMap<String, JsonValue>,
 }
 
 impl ProgramDetails {
@@ -32,19 +29,47 @@ impl ProgramDetails {
         &self.main_processor
     }
 
-    /// Returns an iterator over all the endpoints in the program.
-    pub fn endpoints(&self) -> impl Iterator<Item = EndpointInfo> + '_ {
-        let inputs = self.inputs.iter().zip(repeat(EndpointDirection::Input));
-        let outputs = self.outputs.iter().zip(repeat(EndpointDirection::Output));
+    /// Returns the endpoint with the given id.
+    pub fn endpoint(&self, id: impl AsRef<str>) -> Option<&EndpointInfo> {
+        let id = id.as_ref();
+        self.endpoints.iter().find(|endpoint| endpoint.id() == id)
+    }
 
-        inputs.chain(outputs).filter_map(|(details, direction)| {
-            match try_make_endpoint(details, direction) {
-                Ok(endpoint) => Some(endpoint),
-                Err(err) => {
-                    eprintln!("failed to parse endpoint: {:?}", err);
-                    None
-                }
-            }
+    /// Returns an iterator over all the endpoints in the program, inputs first.
+    pub fn endpoints(&self) -> impl Iterator<Item = &EndpointInfo> {
+        self.endpoints.iter()
+    }
+}
+
+#[derive(Deserialize)]
+struct RawProgramDetails {
+    inputs: Vec<EndpointDetails>,
+    outputs: Vec<EndpointDetails>,
+    #[serde(rename = "mainProcessor")]
+    main_processor: String,
+}
+
+impl TryFrom<RawProgramDetails> for ProgramDetails {
+    type Error = TypeDescriptionError;
+
+    fn try_from(
+        RawProgramDetails {
+            inputs,
+            outputs,
+            main_processor,
+        }: RawProgramDetails,
+    ) -> Result<Self, Self::Error> {
+        let inputs = inputs.iter().zip(repeat(EndpointDirection::Input));
+        let outputs = outputs.iter().zip(repeat(EndpointDirection::Output));
+
+        let endpoints = inputs
+            .chain(outputs)
+            .map(|(details, direction)| try_make_endpoint(details, direction))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Self {
+            endpoints,
+            main_processor,
         })
     }
 }
@@ -203,5 +228,55 @@ mod test {
         assert_eq!(details.id.as_ref(), "out");
         assert_eq!(details.endpoint_type, EndpointVariant::Event);
         assert_eq!(details.value_type, vec![Type::Float32, Type::Int32]);
+    }
+
+    #[test]
+    fn endpoints_are_listed_inputs_then_outputs_with_their_direction() {
+        let json = r#"
+            {
+                "mainProcessor": "P",
+                "inputs": [
+                    { "endpointID": "in", "endpointType": "value", "dataType": { "type": "int32" } }
+                ],
+                "outputs": [
+                    { "endpointID": "out", "endpointType": "stream", "dataType": { "type": "float32" } }
+                ]
+            }
+        "#;
+
+        let details: ProgramDetails = serde_json::from_str(json).unwrap();
+        let endpoints: Vec<_> = details
+            .endpoints()
+            .map(|endpoint| (endpoint.id().as_ref(), endpoint.direction()))
+            .collect();
+
+        assert_eq!(
+            endpoints,
+            [
+                ("in", EndpointDirection::Input),
+                ("out", EndpointDirection::Output)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stream_endpoint_with_two_data_types_fails_to_parse() {
+        let json = r#"
+            {
+                "mainProcessor": "P",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "endpointID": "out",
+                        "endpointType": "stream",
+                        "dataTypes": [ { "type": "float32" }, { "type": "int32" } ]
+                    }
+                ]
+            }
+        "#;
+
+        let details = serde_json::from_str::<ProgramDetails>(json);
+
+        assert!(details.is_err());
     }
 }

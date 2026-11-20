@@ -2,30 +2,24 @@
 
 mod endpoints;
 
+#[doc(hidden)]
+pub use endpoints::{event::EventType, value::ValueType, EndpointKind};
 pub use endpoints::{
     event::{InputEvent, OutputEvent},
-    stream::{InputStream, OutputStream},
+    stream::{InputStream, OutputStream, StreamType},
     value::{InputValue, OutputValue},
     Endpoint,
 };
-use {
-    crate::{
-        endpoint::{EndpointHandle, EndpointInfo},
-        ffi::PerformerPtr,
-        performer::endpoints::{
-            event::{fetch_events, post_event},
-            stream::{read_stream, write_stream, StreamType},
-            value::{GetOutputValue, SetInputValue},
-        },
-        value::{StringHandle, ValueRef},
-    },
-    std::collections::HashMap,
+
+use crate::{
+    engine::ProgramDetails,
+    ffi::PerformerPtr,
+    value::{StringHandle, ValueRef},
 };
 
 /// A Cmajor performer.
 pub struct Performer {
     ptr: PerformerPtr,
-    endpoints: HashMap<EndpointHandle, EndpointInfo>,
     buffer: Vec<u8>,
     console: Option<Endpoint<OutputEvent>>,
 }
@@ -33,18 +27,17 @@ pub struct Performer {
 impl Performer {
     pub(crate) fn new(
         performer: PerformerPtr,
-        endpoints: HashMap<EndpointHandle, EndpointInfo>,
+        program_details: &ProgramDetails,
         console: Option<Endpoint<OutputEvent>>,
     ) -> Self {
-        let size_of_largest_type = endpoints
-            .values()
+        let size_of_largest_type = program_details
+            .endpoints()
             .flat_map(|endpoint| endpoint.types().iter().map(|ty| ty.size()).max())
             .max()
             .unwrap_or(0);
 
         Performer {
             ptr: performer,
-            endpoints,
             buffer: vec![0; size_of_largest_type],
             console,
         }
@@ -61,8 +54,8 @@ impl Performer {
     pub fn advance(&mut self) {
         self.ptr.advance();
 
-        if let Some(console) = self.console {
-            let _ = fetch_events(self, console, |_, value| match value {
+        if let Some(console) = &self.console {
+            self.fetch(console, |_, value| match value {
                 ValueRef::String(StringHandle(handle)) => {
                     println!("{}", self.ptr.get_string_for_handle(handle).unwrap_or("?"));
                 }
@@ -71,62 +64,59 @@ impl Performer {
         }
     }
 
-    /// Returns information about a given endpoint.
-    pub fn endpoint_info<T>(&self, Endpoint(endpoint): Endpoint<T>) -> Option<&EndpointInfo>
-    where
-        T: GetHandle,
-    {
-        self.endpoints.get(&endpoint.handle())
-    }
-
     /// Set the value of an endpoint.
-    pub fn set<T>(&mut self, endpoint: Endpoint<InputValue<T>>, value: T) -> T::Output
+    pub fn set<T>(&mut self, endpoint: &Endpoint<InputValue<T>>, value: T) -> T::SetResult
     where
-        T: SetInputValue,
+        T: ValueType,
     {
-        SetInputValue::set_input_value(self, endpoint, value)
+        T::set(self, endpoint, value)
     }
 
     /// Get the value of an endpoint.
-    pub fn get<T>(&mut self, endpoint: Endpoint<OutputValue<T>>) -> T::Output<'_>
+    pub fn get<'a, T>(&'a mut self, endpoint: &'a Endpoint<OutputValue<T>>) -> T::Value<'a>
     where
-        T: GetOutputValue,
+        T: ValueType,
     {
-        T::get_output_value(self, endpoint)
+        T::get(self, endpoint)
     }
 
     /// Post an event to an endpoint.
-    pub fn post<'a>(
+    pub fn post<T>(
         &mut self,
-        endpoint: Endpoint<InputEvent>,
-        event: impl Into<ValueRef<'a>>,
-    ) -> Result<(), EndpointError> {
-        post_event(self, endpoint, event.into())
+        endpoint: &Endpoint<InputEvent<T>>,
+        event: T::Event<'_>,
+    ) -> T::PostResult
+    where
+        T: EventType,
+    {
+        T::post(self, endpoint, event)
     }
 
     /// Fetch the events received from an endpoint.
-    pub fn fetch(
-        &mut self,
-        endpoint: Endpoint<OutputEvent>,
-        callback: impl FnMut(usize, ValueRef<'_>),
-    ) -> Result<(), EndpointError> {
-        fetch_events(self, endpoint, callback)
+    pub fn fetch<T>(
+        &self,
+        endpoint: &Endpoint<OutputEvent<T>>,
+        callback: impl FnMut(usize, T::Event<'_>),
+    ) where
+        T: EventType,
+    {
+        T::fetch(self, endpoint, callback)
     }
 
-    /// Read frames from an input stream.
-    pub fn read<T>(&self, endpoint: Endpoint<OutputStream<T>>, buffer: &mut [T])
+    /// Read frames from an output stream.
+    pub fn read<T>(&self, endpoint: &Endpoint<OutputStream<T>>, buffer: &mut [T])
     where
         T: StreamType,
     {
-        read_stream(self, endpoint, buffer)
+        endpoint.read(self, buffer)
     }
 
-    /// Write frames to an output stream.
-    pub fn write<T>(&self, endpoint: Endpoint<InputStream<T>>, buffer: &[T])
+    /// Write frames to an input stream.
+    pub fn write<T>(&self, endpoint: &Endpoint<InputStream<T>>, buffer: &[T])
     where
         T: StreamType,
     {
-        write_stream(self, endpoint, buffer)
+        endpoint.write(self, buffer)
     }
 
     /// Returns the number of times the performer has over/under-run.
@@ -150,7 +140,7 @@ impl Performer {
     }
 }
 
-/// An error that can occur when interacting with performer endpoints.
+/// An error that can occur when binding an endpoint.
 #[derive(Debug, thiserror::Error)]
 pub enum EndpointError {
     /// The endpoint does not exist.
@@ -170,30 +160,7 @@ pub enum EndpointError {
     DataTypeMismatch,
 }
 
-#[doc(hidden)]
-pub trait MakeEndpoint: sealed::Sealed {
-    fn make(
-        handle: EndpointHandle,
-        endpoint: EndpointInfo,
-    ) -> Result<Endpoint<Self>, EndpointError>
-    where
-        Self: Sized;
-}
-
-#[doc(hidden)]
-pub trait GetHandle: sealed::Sealed {
-    fn handle(&self) -> EndpointHandle;
-}
-
-mod sealed {
-    use super::*;
-
-    pub trait Sealed {}
-
-    impl Sealed for InputEvent {}
-    impl Sealed for OutputEvent {}
-    impl<T> Sealed for InputStream<T> where T: StreamType {}
-    impl<T> Sealed for OutputStream<T> where T: StreamType {}
-    impl<T> Sealed for InputValue<T> {}
-    impl<T> Sealed for OutputValue<T> {}
-}
+/// A runtime type mismatch when interacting with an endpoint.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("value type does not match endpoint type")]
+pub struct TypeMismatch;
