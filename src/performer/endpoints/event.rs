@@ -1,112 +1,225 @@
-use crate::{
-    endpoint::{EndpointDirection, EndpointHandle, EndpointInfo},
-    performer::{Endpoint, EndpointError, GetHandle, MakeEndpoint, Performer},
-    value::ValueRef,
+use {
+    crate::{
+        endpoint::{EndpointDirection, EndpointInfo, EndpointTypeIndex, EventEndpoint},
+        performer::{
+            endpoints::{sealed::Sealed, EndpointKind},
+            Endpoint, EndpointError, Performer, TypeMismatch,
+        },
+        value::{types::Type, StaticType, Value, ValueRef},
+    },
+    std::{fmt, marker::PhantomData, sync::Arc},
 };
 
-/// An endpoint for input events.
-#[derive(Debug, Copy, Clone)]
-pub struct InputEvent {
-    handle: EndpointHandle,
-}
+/// An endpoint for input events of type `T`.
+pub struct InputEvent<T = Value>(PhantomData<fn(T)>);
 
-/// An endpoint for output events.
-#[derive(Debug, Copy, Clone)]
-pub struct OutputEvent {
-    handle: EndpointHandle,
-}
+/// An endpoint for output events of type `T`.
+pub struct OutputEvent<T = Value>(PhantomData<fn() -> T>);
 
-impl MakeEndpoint for InputEvent {
-    fn make(
-        handle: EndpointHandle,
-        endpoint: EndpointInfo,
-    ) -> Result<Endpoint<Self>, EndpointError> {
-        if endpoint.direction() != EndpointDirection::Input {
-            return Err(EndpointError::DirectionMismatch);
-        }
+impl<T> Sealed for InputEvent<T> {}
+impl<T> Sealed for OutputEvent<T> {}
 
-        if endpoint.as_event().is_none() {
-            return Err(EndpointError::EndpointTypeMismatch);
-        }
+impl<T: EventType> EndpointKind for InputEvent<T> {
+    type RuntimeType = T::RuntimeType;
 
-        Ok(Endpoint(InputEvent { handle }))
+    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+        T::bind(event_endpoint(info, EndpointDirection::Input)?)
     }
 }
 
-impl GetHandle for InputEvent {
-    fn handle(&self) -> EndpointHandle {
-        self.handle
+impl<T: EventType> EndpointKind for OutputEvent<T> {
+    type RuntimeType = T::RuntimeType;
+
+    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+        T::bind(event_endpoint(info, EndpointDirection::Output)?)
     }
 }
 
-impl MakeEndpoint for OutputEvent {
-    fn make(handle: EndpointHandle, endpoint: EndpointInfo) -> Result<Endpoint<Self>, EndpointError>
-    where
-        Self: Sized,
-    {
-        if endpoint.direction() != crate::endpoint::EndpointDirection::Output {
-            return Err(EndpointError::DirectionMismatch);
-        }
+fn event_endpoint(
+    info: &EndpointInfo,
+    expected_direction: EndpointDirection,
+) -> Result<&EventEndpoint, EndpointError> {
+    if info.direction() != expected_direction {
+        return Err(EndpointError::DirectionMismatch);
+    }
 
-        if endpoint.as_event().is_none() {
-            return Err(EndpointError::EndpointTypeMismatch);
-        }
+    info.as_event().ok_or(EndpointError::EndpointTypeMismatch)
+}
 
-        Ok(Endpoint(Self { handle }))
+/// The type of an event endpoint.
+#[doc(hidden)]
+pub trait EventType: Sized {
+    type RuntimeType: Clone + fmt::Debug;
+    type Event<'a>;
+    type PostResult;
+
+    fn bind(endpoint: &EventEndpoint) -> Result<Self::RuntimeType, EndpointError>;
+
+    fn post(
+        performer: &mut Performer,
+        endpoint: &Endpoint<InputEvent<Self>>,
+        event: Self::Event<'_>,
+    ) -> Self::PostResult;
+
+    fn fetch(
+        performer: &Performer,
+        endpoint: &Endpoint<OutputEvent<Self>>,
+        callback: impl FnMut(usize, Self::Event<'_>),
+    );
+}
+
+impl<T: StaticType> EventType for T {
+    type RuntimeType = EndpointTypeIndex;
+    type Event<'a> = T;
+    type PostResult = ();
+
+    fn bind(endpoint: &EventEndpoint) -> Result<EndpointTypeIndex, EndpointError> {
+        endpoint
+            .type_index(T::ty().as_ref())
+            .ok_or(EndpointError::DataTypeMismatch)
+    }
+
+    fn post(performer: &mut Performer, endpoint: &Endpoint<InputEvent<T>>, event: T) {
+        let Performer { ptr, buffer, .. } = performer;
+        let bytes = &mut buffer[..T::SIZE];
+
+        event.write(bytes);
+        ptr.add_input_event(endpoint.handle, endpoint.runtime_type, bytes);
+    }
+
+    fn fetch(
+        performer: &Performer,
+        endpoint: &Endpoint<OutputEvent<T>>,
+        mut callback: impl FnMut(usize, T),
+    ) {
+        performer.ptr.iterate_output_events(
+            endpoint.handle,
+            |frame_offset, _, type_index, data| {
+                if type_index == endpoint.runtime_type {
+                    callback(frame_offset, T::read(data));
+                }
+            },
+        );
     }
 }
 
-impl GetHandle for OutputEvent {
-    fn handle(&self) -> EndpointHandle {
-        self.handle
+impl EventType for Value {
+    type RuntimeType = Arc<[Type]>;
+    type Event<'a> = ValueRef<'a>;
+    type PostResult = Result<(), TypeMismatch>;
+
+    fn bind(endpoint: &EventEndpoint) -> Result<Arc<[Type]>, EndpointError> {
+        Ok(endpoint.types().into())
     }
-}
 
-pub fn post_event(
-    performer: &mut Performer,
-    Endpoint(endpoint): Endpoint<InputEvent>,
-    event: ValueRef<'_>,
-) -> Result<(), EndpointError> {
-    let type_index = performer
-        .endpoints
-        .get(&endpoint.handle)
-        .ok_or(EndpointError::EndpointDoesNotExist)?
-        .as_event()
-        .ok_or(EndpointError::EndpointTypeMismatch)?
-        .type_index(event.ty())
-        .ok_or(EndpointError::DataTypeMismatch)?;
+    fn post(
+        performer: &mut Performer,
+        endpoint: &Endpoint<InputEvent<Value>>,
+        event: ValueRef<'_>,
+    ) -> Result<(), TypeMismatch> {
+        let type_index = endpoint
+            .runtime_type
+            .iter()
+            .position(|ty| ty.as_ref() == event.ty())
+            .ok_or(TypeMismatch)?;
 
-    event.with_bytes(|bytes| {
-        performer
-            .ptr
-            .add_input_event(endpoint.handle, type_index, bytes);
-    });
-
-    Ok(())
-}
-
-pub fn fetch_events(
-    performer: &Performer,
-    Endpoint(endpoint): Endpoint<OutputEvent>,
-    mut callback: impl FnMut(usize, ValueRef<'_>),
-) -> Result<(), EndpointError> {
-    let types = performer
-        .endpoints
-        .get(&endpoint.handle)
-        .and_then(|endpoint| endpoint.as_event())
-        .map(|endpoint| endpoint.types())
-        .expect("endpoint should exist and be an event endpoint");
-
-    performer
-        .ptr
-        .iterate_output_events(endpoint.handle, |frame_offset, _, type_index, data| {
-            let ty = types.get(usize::from(type_index));
-            debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
-
-            if let Some(ty) = ty {
-                callback(frame_offset, ValueRef::new_from_slice(ty.as_ref(), data));
-            }
+        event.with_bytes(|bytes| {
+            performer
+                .ptr
+                .add_input_event(endpoint.handle, type_index.into(), bytes);
         });
 
-    Ok(())
+        Ok(())
+    }
+
+    fn fetch(
+        performer: &Performer,
+        endpoint: &Endpoint<OutputEvent<Value>>,
+        mut callback: impl FnMut(usize, ValueRef<'_>),
+    ) {
+        let types = &endpoint.runtime_type;
+
+        performer.ptr.iterate_output_events(
+            endpoint.handle,
+            |frame_offset, _, type_index, data| {
+                let ty = types.get(usize::from(type_index));
+                debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
+
+                if let Some(ty) = ty {
+                    callback(frame_offset, ValueRef::new_from_slice(ty.as_ref(), data));
+                }
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        crate::{endpoint::ValueEndpoint, performer::endpoints::test},
+    };
+
+    fn event_endpoint(direction: EndpointDirection, types: Vec<Type>) -> EndpointInfo {
+        EventEndpoint::new(test::id("e"), direction, types, Default::default()).into()
+    }
+
+    #[test]
+    fn a_typed_input_event_binds_to_the_position_of_its_type() {
+        let info = event_endpoint(EndpointDirection::Input, vec![Type::Int32, Type::Bool]);
+
+        assert_eq!(
+            InputEvent::<i32>::bind(&info).unwrap(),
+            EndpointTypeIndex::from(0)
+        );
+        assert_eq!(
+            InputEvent::<bool>::bind(&info).unwrap(),
+            EndpointTypeIndex::from(1)
+        );
+    }
+
+    #[test]
+    fn a_typed_input_event_rejects_a_type_the_endpoint_does_not_carry() {
+        let info = event_endpoint(EndpointDirection::Input, vec![Type::Int32, Type::Bool]);
+
+        assert!(matches!(
+            InputEvent::<f32>::bind(&info),
+            Err(EndpointError::DataTypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn an_input_event_cannot_bind_to_an_output_endpoint() {
+        let info = event_endpoint(EndpointDirection::Output, vec![Type::Int32]);
+
+        assert!(matches!(
+            InputEvent::<i32>::bind(&info),
+            Err(EndpointError::DirectionMismatch)
+        ));
+    }
+
+    #[test]
+    fn an_input_event_cannot_bind_to_a_value_endpoint() {
+        let info = ValueEndpoint::new(
+            test::id("v"),
+            EndpointDirection::Input,
+            Type::Int32,
+            Default::default(),
+        )
+        .into();
+
+        assert!(matches!(
+            InputEvent::<i32>::bind(&info),
+            Err(EndpointError::EndpointTypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn an_event_placeholder_binds_to_every_type_of_the_endpoint() {
+        let info = event_endpoint(EndpointDirection::Output, vec![Type::Int32, Type::Bool]);
+
+        let runtime_type = OutputEvent::<Value>::bind(&info).unwrap();
+
+        assert_eq!(*runtime_type, [Type::Int32, Type::Bool]);
+    }
 }

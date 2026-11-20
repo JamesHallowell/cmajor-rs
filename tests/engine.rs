@@ -90,7 +90,7 @@ fn loading_external_variables_i32() {
     .unwrap();
 
     performer.advance();
-    assert_eq!(performer.get::<i32>(out), 42);
+    assert_eq!(performer.get::<i32>(&out), 42);
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn loading_external_variables_i64() {
     .unwrap();
 
     performer.advance();
-    assert_eq!(performer.get::<i64>(out), 42);
+    assert_eq!(performer.get::<i64>(&out), 42);
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn loading_external_variables_f32() {
     .unwrap();
 
     performer.advance();
-    assert_eq!(performer.get::<f32>(out), 42_f32);
+    assert_eq!(performer.get::<f32>(&out), 42_f32);
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn loading_external_variables_f64() {
     .unwrap();
 
     performer.advance();
-    assert_eq!(performer.get::<f64>(out), 42_f64);
+    assert_eq!(performer.get::<f64>(&out), 42_f64);
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn loading_external_variables_bool() {
     .unwrap();
 
     performer.advance();
-    assert!(performer.get::<bool>(out));
+    assert!(performer.get::<bool>(&out));
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn loading_external_variables_struct() {
 
     performer.advance();
 
-    let result: Complex32 = performer.get(out).try_into().unwrap();
+    let result: Complex32 = performer.get(&out).try_into().unwrap();
     assert_eq!(result.real, 42.0);
     assert_eq!(result.imag, 21.0);
 }
@@ -262,7 +262,7 @@ fn loading_external_variables_array() {
 
     performer.advance();
 
-    let value = performer.get(out);
+    let value = performer.get(&out);
     let array = value.as_array().unwrap();
 
     assert_eq!(array.get(0), Some(ValueRef::Int32(1)));

@@ -1,5 +1,8 @@
 use {
-    crate::value::types::{Array, IsFloatingPoint, Object, Type, TypeRef},
+    crate::value::{
+        types::{Array, IsFloatingPoint, Object, Type, TypeRef},
+        StaticType,
+    },
     bytes::{Buf, BufMut},
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
@@ -151,11 +154,11 @@ impl<'a> ValueRef<'a> {
     {
         match ty {
             TypeRef::Void => Self::Void,
-            TypeRef::Bool => Self::Bool(data.get_u32_ne() != 0),
-            TypeRef::Int32 => Self::Int32(data.get_i32_ne()),
-            TypeRef::Int64 => Self::Int64(data.get_i64_ne()),
-            TypeRef::Float32 => Self::Float32(data.get_f32_ne()),
-            TypeRef::Float64 => Self::Float64(data.get_f64_ne()),
+            TypeRef::Bool => Self::Bool(bool::read(data)),
+            TypeRef::Int32 => Self::Int32(i32::read(data)),
+            TypeRef::Int64 => Self::Int64(i64::read(data)),
+            TypeRef::Float32 => Self::Float32(f32::read(data)),
+            TypeRef::Float64 => Self::Float64(f64::read(data)),
             TypeRef::String => Self::String(StringHandle(data.get_u32_ne())),
             TypeRef::Array(array) => Self::Array(ArrayValueRef::new_from_slice(array, data)),
             TypeRef::Object(object) => Self::Object(ObjectValueRef::new_from_slice(object, data)),
@@ -209,13 +212,21 @@ impl<'a> ValueRef<'a> {
     }
 
     pub(crate) fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
+        macro_rules! encoded {
+            ($value:expr, $ty:ty) => {{
+                let mut bytes = [0; <$ty as StaticType>::SIZE];
+                $value.write(&mut bytes);
+                callback(&bytes)
+            }};
+        }
+
         match *self {
             Self::Void => callback(&[]),
-            Self::Bool(value) => callback(u32::from(value).to_ne_bytes().as_slice()),
-            Self::Int32(value) => callback(value.to_ne_bytes().as_slice()),
-            Self::Int64(value) => callback(value.to_ne_bytes().as_slice()),
-            Self::Float32(value) => callback(value.to_ne_bytes().as_slice()),
-            Self::Float64(value) => callback(value.to_ne_bytes().as_slice()),
+            Self::Bool(value) => encoded!(value, bool),
+            Self::Int32(value) => encoded!(value, i32),
+            Self::Int64(value) => encoded!(value, i64),
+            Self::Float32(value) => encoded!(value, f32),
+            Self::Float64(value) => encoded!(value, f64),
             Self::String(StringHandle(value)) => callback(value.to_ne_bytes().as_slice()),
             Self::Array(array) => callback(array.data),
             Self::Object(object) => callback(object.data),
@@ -494,77 +505,70 @@ pub type Complex32 = Complex<f32>;
 /// A 64-bit complex number.
 pub type Complex64 = Complex<f64>;
 
-impl From<Complex32> for ObjectValue {
-    fn from(Complex { real, imag }: Complex32) -> Self {
-        let object = Object::new("complex32")
-            .with_field("real", Type::Float32)
-            .with_field("imag", Type::Float32);
+macro_rules! complex {
+    ($complex:ty, $class:literal, $part:ty) => {
+        impl StaticType for $complex {
+            const SIZE: usize = 2 * <$part>::SIZE;
 
-        let mut data = SmallVec::new();
-        data.extend_from_slice(&real.to_ne_bytes());
-        data.extend_from_slice(&imag.to_ne_bytes());
+            fn ty() -> Type {
+                Self::object_ty().into()
+            }
 
-        ObjectValue { ty: object, data }
-    }
-}
+            fn write(&self, bytes: &mut [u8]) {
+                self.real.write(bytes);
+                self.imag.write(&mut bytes[<$part>::SIZE..]);
+            }
 
-impl From<Complex32> for Value {
-    fn from(value: Complex32) -> Self {
-        ObjectValue::from(value).into()
-    }
-}
-
-impl TryFrom<ValueRef<'_>> for Complex32 {
-    type Error = ();
-
-    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
-        match value {
-            ValueRef::Object(object) => match (object.field("real"), object.field("imag")) {
-                (Some(ValueRef::Float32(real)), Some(ValueRef::Float32(imag))) => {
-                    Ok(Self { real, imag })
+            fn read(bytes: &[u8]) -> Self {
+                Self {
+                    real: <$part>::read(bytes),
+                    imag: <$part>::read(&bytes[<$part>::SIZE..]),
                 }
-                _ => Err(()),
-            },
-            _ => Err(()),
+            }
         }
-    }
-}
 
-impl From<Complex64> for ObjectValue {
-    fn from(Complex { real, imag }: Complex64) -> Self {
-        let object = Object::new("complex64")
-            .with_field("real", Type::Float64)
-            .with_field("imag", Type::Float64);
+        impl $complex {
+            fn object_ty() -> Object {
+                Object::new($class)
+                    .with_field("real", <$part>::ty())
+                    .with_field("imag", <$part>::ty())
+            }
+        }
 
-        let mut data = SmallVec::new();
-        data.extend_from_slice(&real.to_ne_bytes());
-        data.extend_from_slice(&imag.to_ne_bytes());
-
-        ObjectValue { ty: object, data }
-    }
-}
-
-impl From<Complex64> for Value {
-    fn from(value: Complex64) -> Self {
-        ObjectValue::from(value).into()
-    }
-}
-
-impl TryFrom<ValueRef<'_>> for Complex64 {
-    type Error = ();
-
-    fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
-        match value {
-            ValueRef::Object(object) => match (object.field("real"), object.field("imag")) {
-                (Some(ValueRef::Float64(real)), Some(ValueRef::Float64(imag))) => {
-                    Ok(Self { real, imag })
+        impl From<$complex> for ObjectValue {
+            fn from(value: $complex) -> Self {
+                let mut data = SmallVec::from_elem(0, <$complex>::SIZE);
+                value.write(&mut data);
+                ObjectValue {
+                    ty: <$complex>::object_ty(),
+                    data,
                 }
-                _ => Err(()),
-            },
-            _ => Err(()),
+            }
         }
-    }
+
+        impl From<$complex> for Value {
+            fn from(value: $complex) -> Self {
+                ObjectValue::from(value).into()
+            }
+        }
+
+        impl TryFrom<ValueRef<'_>> for $complex {
+            type Error = ();
+
+            fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
+                match value {
+                    ValueRef::Object(object) if *object.ty == Self::object_ty() => {
+                        Ok(Self::read(object.data))
+                    }
+                    _ => Err(()),
+                }
+            }
+        }
+    };
 }
+
+complex!(Complex32, "complex32", f32);
+complex!(Complex64, "complex64", f64);
 
 impl<T, const N: usize> From<[T; N]> for ArrayValue
 where

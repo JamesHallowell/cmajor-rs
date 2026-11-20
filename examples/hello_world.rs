@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let program = cmajor.parse(PLAY_A_TUNE)?;
 
-    let mut engine = engine.load(&program)?;
+    let engine = engine.load(&program)?;
 
     let output_stream = engine.endpoint::<OutputStream<f32>>("out")?;
 
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 performer.set_block_size(data.len() as u32);
                 performer.advance();
-                performer.read(output_stream, data);
+                performer.read(&output_stream, data);
             },
             |err| eprintln!("an error occurred on stream: {}", err),
             None,

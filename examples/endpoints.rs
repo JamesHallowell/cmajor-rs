@@ -1,4 +1,5 @@
 use cmajor::{
+    performer::InputEvent,
     value::{Value, ValueRef},
     Cmajor,
 };
@@ -46,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let program = cmajor.parse(PROGRAM)?;
-    let mut engine = engine.load(&program)?;
+    let engine = engine.load(&program)?;
 
     let value_in = engine.endpoint("valueIn")?;
     let value_out = engine.endpoint("valueOut")?;
@@ -54,7 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let value_in_dynamic = engine.endpoint("valueIn")?;
     let value_out_dynamic = engine.endpoint("valueOut")?;
 
-    let event_in = engine.endpoint("eventIn")?;
+    let int_event_in = engine.endpoint::<InputEvent<i32>>("eventIn")?;
+    let bool_event_in = engine.endpoint::<InputEvent<bool>>("eventIn")?;
+    let event_in_dynamic = engine.endpoint::<InputEvent>("eventIn")?;
 
     let stream_in = engine.endpoint("streamIn")?;
     let stream_out = engine.endpoint("streamOut")?;
@@ -67,29 +70,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
        If you know the types of your endpoints at compile-time, then you can use the strongly-typed
        endpoints and avoid run-time type checking when reading and writing to that endpoint.
     */
-    performer.set(value_in, 21);
+    performer.set(&value_in, 21);
     performer.advance();
-    assert_eq!(performer.get::<i32>(value_out), 42);
+    assert_eq!(performer.get::<i32>(&value_out), 42);
 
     /*
         However, if you don't know the type at compile time, then you can use the generic [`Value`]
         placeholder and the types will get checked when reading and writing to the endpoint.
     */
-    performer.set(value_in_dynamic, Value::Int32(7))?;
+    performer.set(&value_in_dynamic, Value::Int32(7))?;
     performer.advance();
     assert_eq!(
-        performer.get::<Value>(value_out_dynamic),
+        performer.get::<Value>(&value_out_dynamic),
         ValueRef::Int32(14)
     );
 
     /*
-       You can also use the generic [`Value`] placeholder for the event endpoints. The endpoints
-       will reject types that don't match the expected type.
+       An event endpoint can carry several types. Bind it once for each type you want to post.
     */
-    performer.post(event_in, true)?;
-    performer.post(event_in, 42)?;
+    performer.post(&int_event_in, 42);
+    performer.post(&bool_event_in, true);
 
-    assert!(performer.post(event_in, 12.0).is_err());
+    /*
+       The [`Value`] placeholder accepts any of the endpoint's types, and rejects the rest at
+       run time.
+    */
+    performer.post(&event_in_dynamic, 42.into())?;
+    assert!(performer.post(&event_in_dynamic, 12.0.into()).is_err());
 
     performer.advance();
 
@@ -98,9 +105,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     */
     let mut buffer = [1., 2., 3., 4.];
 
-    performer.write(stream_in, &buffer);
+    performer.write(&stream_in, &buffer);
     performer.advance();
-    performer.read(stream_out, &mut buffer);
+    performer.read(&stream_out, &mut buffer);
 
     assert_eq!(buffer, [0.5, 1., 1.5, 2.]);
 
