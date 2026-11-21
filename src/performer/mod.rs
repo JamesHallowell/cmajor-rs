@@ -12,13 +12,14 @@ pub use endpoints::{
 };
 
 use crate::{
-    engine::ProgramDetails,
+    engine::{ProgramDetails, ProgramId},
     ffi::PerformerPtr,
     value::{StringHandle, ValueRef},
 };
 
 /// A Cmajor performer.
 pub struct Performer {
+    program: ProgramId,
     ptr: PerformerPtr,
     buffer: Vec<u8>,
     console: Option<Endpoint<OutputEvent>>,
@@ -26,6 +27,7 @@ pub struct Performer {
 
 impl Performer {
     pub(crate) fn new(
+        program: ProgramId,
         performer: PerformerPtr,
         program_details: &ProgramDetails,
         console: Option<Endpoint<OutputEvent>>,
@@ -37,6 +39,7 @@ impl Performer {
             .unwrap_or(0);
 
         Performer {
+            program,
             ptr: performer,
             buffer: vec![0; size_of_largest_type],
             console,

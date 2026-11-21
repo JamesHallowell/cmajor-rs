@@ -3,7 +3,9 @@
 mod annotation;
 mod externals;
 mod program_details;
+mod program_id;
 
+pub(crate) use program_id::ProgramId;
 use {
     crate::{
         ffi::EnginePtr,
@@ -131,6 +133,7 @@ pub struct Idle;
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Loaded {
+    program: ProgramId,
     program_details: ProgramDetails,
     console: Option<Endpoint<OutputEvent>>,
 }
@@ -138,6 +141,7 @@ pub struct Loaded {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Linked {
+    program: ProgramId,
     program_details: ProgramDetails,
     console: Option<Endpoint<OutputEvent>>,
 }
@@ -174,6 +178,7 @@ impl Engine<Idle> {
                 let mut loaded = Engine {
                     inner: self.inner,
                     state: Loaded {
+                        program: ProgramId::next(),
                         program_details,
                         console: None,
                     },
@@ -200,14 +205,14 @@ impl Engine<Loaded> {
             .endpoint(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        let runtime_type = T::bind(info)?;
+        let binding = T::bind(info)?;
 
         let handle = self
             .inner
             .get_endpoint_handle(id)
             .ok_or(EndpointError::EndpointDoesNotExist)?;
 
-        Ok(Endpoint::new(handle, runtime_type))
+        Ok(Endpoint::new(self.state.program, handle, binding))
     }
 
     /// Returns the details of the program loaded into the engine.
@@ -220,6 +225,7 @@ impl Engine<Loaded> {
         match self.inner.link() {
             Ok(_) => {
                 let linked = Linked {
+                    program: self.state.program,
                     program_details: self.state.program_details,
                     console: self.state.console,
                 };
@@ -237,6 +243,7 @@ impl Engine<Linked> {
     /// Create a performer for the linked program.
     pub fn performer(&self) -> Performer {
         Performer::new(
+            self.state.program,
             self.inner.create_performer(),
             &self.state.program_details,
             self.state.console.clone(),

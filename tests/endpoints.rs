@@ -875,3 +875,147 @@ fn typed_endpoints_are_copy() {
     assert_copy::<Endpoint<OutputEvent<bool>>>();
     assert_copy::<Endpoint<InputStream<[f32; 2]>>>();
 }
+
+const CONSTANT_OUTPUT: &str = r#"
+    processor ConstantOutput
+    {
+        output value int out;
+
+        void main()
+        {
+            loop {
+                out <- 1;
+                advance();
+            }
+        }
+    }
+"#;
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_endpoint_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(CONSTANT_OUTPUT, |engine| {
+        engine.endpoint::<OutputValue<i32>>("out").unwrap()
+    });
+    let (mut performer, _) = setup(CONSTANT_OUTPUT, |_| ());
+
+    performer.get(&endpoint);
+}
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_endpoint_bound_before_the_engine_was_reloaded_is_rejected() {
+    let cmajor = Cmajor::new();
+    let program = cmajor.parse(CONSTANT_OUTPUT).unwrap();
+    let engine = cmajor
+        .create_default_engine()
+        .with_sample_rate(44_100.0)
+        .build()
+        .load(&program)
+        .unwrap();
+    let stale = engine.endpoint::<OutputValue<i32>>("out").unwrap();
+
+    let mut performer = engine
+        .link()
+        .unwrap()
+        .unload()
+        .load(&program)
+        .unwrap()
+        .link()
+        .unwrap()
+        .performer();
+
+    performer.get(&stale);
+}
+
+const STREAM_AND_EVENT_INPUTS: &str = r#"
+    processor StreamAndEventInputs
+    {
+        input stream float in;
+        input event int trigger;
+        output stream float out;
+
+        event trigger (int value) {}
+
+        void main()
+        {
+            loop {
+                out <- in;
+                advance();
+            }
+        }
+    }
+"#;
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_input_stream_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(STREAM_AND_EVENT_INPUTS, |engine| {
+        engine.endpoint::<InputStream<f32>>("in").unwrap()
+    });
+    let (performer, _) = setup(STREAM_AND_EVENT_INPUTS, |_| ());
+
+    performer.write(&endpoint, &[0.0; 4]);
+}
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_input_event_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(STREAM_AND_EVENT_INPUTS, |engine| {
+        engine.endpoint::<InputEvent<i32>>("trigger").unwrap()
+    });
+    let (mut performer, _) = setup(STREAM_AND_EVENT_INPUTS, |_| ());
+
+    performer.post(&endpoint, 1);
+}
+
+const DYNAMIC_ENDPOINTS: &str = r#"
+    processor DynamicEndpoints
+    {
+        input value int in;
+        output value int out;
+        output event int changed;
+
+        void main()
+        {
+            loop {
+                out <- in;
+                changed <- in;
+                advance();
+            }
+        }
+    }
+"#;
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_input_value_placeholder_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(DYNAMIC_ENDPOINTS, |engine| {
+        engine.endpoint::<InputValue<Value>>("in").unwrap()
+    });
+    let (mut performer, _) = setup(DYNAMIC_ENDPOINTS, |_| ());
+
+    let _ = performer.set(&endpoint, Value::Int32(1));
+}
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_output_value_placeholder_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(DYNAMIC_ENDPOINTS, |engine| {
+        engine.endpoint::<OutputValue<Value>>("out").unwrap()
+    });
+    let (mut performer, _) = setup(DYNAMIC_ENDPOINTS, |_| ());
+
+    let _ = performer.get(&endpoint);
+}
+
+#[test]
+#[should_panic(expected = "different program")]
+fn an_output_event_placeholder_bound_against_another_program_is_rejected() {
+    let (_, endpoint) = setup(DYNAMIC_ENDPOINTS, |engine| {
+        engine.endpoint::<OutputEvent<Value>>("changed").unwrap()
+    });
+    let (performer, _) = setup(DYNAMIC_ENDPOINTS, |_| ());
+
+    performer.fetch(&endpoint, |_, _| {});
+}

@@ -20,17 +20,17 @@ impl<T> Sealed for InputEvent<T> {}
 impl<T> Sealed for OutputEvent<T> {}
 
 impl<T: EventType> EndpointKind for InputEvent<T> {
-    type RuntimeType = T::RuntimeType;
+    type Binding = T::Binding;
 
-    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+    fn bind(info: &EndpointInfo) -> Result<T::Binding, EndpointError> {
         T::bind(event_endpoint(info, EndpointDirection::Input)?)
     }
 }
 
 impl<T: EventType> EndpointKind for OutputEvent<T> {
-    type RuntimeType = T::RuntimeType;
+    type Binding = T::Binding;
 
-    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+    fn bind(info: &EndpointInfo) -> Result<T::Binding, EndpointError> {
         T::bind(event_endpoint(info, EndpointDirection::Output)?)
     }
 }
@@ -49,11 +49,11 @@ fn event_endpoint(
 /// The type of an event endpoint.
 #[doc(hidden)]
 pub trait EventType: Sized {
-    type RuntimeType: Clone + fmt::Debug;
+    type Binding: Clone + fmt::Debug;
     type Event<'a>;
     type PostResult;
 
-    fn bind(endpoint: &EventEndpoint) -> Result<Self::RuntimeType, EndpointError>;
+    fn bind(endpoint: &EventEndpoint) -> Result<Self::Binding, EndpointError>;
 
     fn post(
         performer: &mut Performer,
@@ -68,23 +68,39 @@ pub trait EventType: Sized {
     );
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct BoundStaticEventType {
+    index: EndpointTypeIndex,
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct BoundDynamicEventType {
+    types: Arc<[Type]>,
+}
+
 impl<T: StaticType> EventType for T {
-    type RuntimeType = EndpointTypeIndex;
+    type Binding = BoundStaticEventType;
     type Event<'a> = T;
     type PostResult = ();
 
-    fn bind(endpoint: &EventEndpoint) -> Result<EndpointTypeIndex, EndpointError> {
-        endpoint
+    fn bind(endpoint: &EventEndpoint) -> Result<BoundStaticEventType, EndpointError> {
+        let index = endpoint
             .type_index(T::ty().as_ref())
-            .ok_or(EndpointError::DataTypeMismatch)
+            .ok_or(EndpointError::DataTypeMismatch)?;
+
+        Ok(BoundStaticEventType { index })
     }
 
     fn post(performer: &mut Performer, endpoint: &Endpoint<InputEvent<T>>, event: T) {
+        let handle = endpoint.handle_on(performer);
+        let BoundStaticEventType { index } = *endpoint.binding();
         let Performer { ptr, buffer, .. } = performer;
-        let bytes = &mut buffer[..T::SIZE];
 
-        event.write(bytes);
-        ptr.add_input_event(endpoint.handle, endpoint.runtime_type, bytes);
+        let bytes = event.write(buffer);
+
+        ptr.add_input_event(handle, index, bytes);
     }
 
     fn fetch(
@@ -93,10 +109,11 @@ impl<T: StaticType> EventType for T {
         mut callback: impl FnMut(usize, T),
     ) {
         performer.ptr.iterate_output_events(
-            endpoint.handle,
+            endpoint.handle_on(performer),
             |frame_offset, _, type_index, data| {
-                if type_index == endpoint.runtime_type {
-                    callback(frame_offset, T::read(data));
+                let &BoundStaticEventType { index } = endpoint.binding();
+                if type_index == index {
+                    callback(frame_offset, T::read(data).0);
                 }
             },
         );
@@ -104,12 +121,14 @@ impl<T: StaticType> EventType for T {
 }
 
 impl EventType for Value {
-    type RuntimeType = Arc<[Type]>;
+    type Binding = BoundDynamicEventType;
     type Event<'a> = ValueRef<'a>;
     type PostResult = Result<(), TypeMismatch>;
 
-    fn bind(endpoint: &EventEndpoint) -> Result<Arc<[Type]>, EndpointError> {
-        Ok(endpoint.types().into())
+    fn bind(endpoint: &EventEndpoint) -> Result<BoundDynamicEventType, EndpointError> {
+        Ok(BoundDynamicEventType {
+            types: endpoint.types().into(),
+        })
     }
 
     fn post(
@@ -117,8 +136,10 @@ impl EventType for Value {
         endpoint: &Endpoint<InputEvent<Value>>,
         event: ValueRef<'_>,
     ) -> Result<(), TypeMismatch> {
+        let handle = endpoint.handle_on(performer);
         let type_index = endpoint
-            .runtime_type
+            .binding()
+            .types
             .iter()
             .position(|ty| ty.as_ref() == event.ty())
             .ok_or(TypeMismatch)?;
@@ -126,7 +147,7 @@ impl EventType for Value {
         event.with_bytes(|bytes| {
             performer
                 .ptr
-                .add_input_event(endpoint.handle, type_index.into(), bytes);
+                .add_input_event(handle, type_index.into(), bytes);
         });
 
         Ok(())
@@ -137,12 +158,10 @@ impl EventType for Value {
         endpoint: &Endpoint<OutputEvent<Value>>,
         mut callback: impl FnMut(usize, ValueRef<'_>),
     ) {
-        let types = &endpoint.runtime_type;
-
         performer.ptr.iterate_output_events(
-            endpoint.handle,
+            endpoint.handle_on(performer),
             |frame_offset, _, type_index, data| {
-                let ty = types.get(usize::from(type_index));
+                let ty = endpoint.binding().types.get(usize::from(type_index));
                 debug_assert!(ty.is_some(), "Invalid type index from Cmajor");
 
                 if let Some(ty) = ty {
@@ -169,11 +188,11 @@ mod test {
         let info = event_endpoint(EndpointDirection::Input, vec![Type::Int32, Type::Bool]);
 
         assert_eq!(
-            InputEvent::<i32>::bind(&info).unwrap(),
+            InputEvent::<i32>::bind(&info).unwrap().index,
             EndpointTypeIndex::from(0)
         );
         assert_eq!(
-            InputEvent::<bool>::bind(&info).unwrap(),
+            InputEvent::<bool>::bind(&info).unwrap().index,
             EndpointTypeIndex::from(1)
         );
     }
@@ -218,8 +237,8 @@ mod test {
     fn an_event_placeholder_binds_to_every_type_of_the_endpoint() {
         let info = event_endpoint(EndpointDirection::Output, vec![Type::Int32, Type::Bool]);
 
-        let runtime_type = OutputEvent::<Value>::bind(&info).unwrap();
+        let binding = OutputEvent::<Value>::bind(&info).unwrap();
 
-        assert_eq!(*runtime_type, [Type::Int32, Type::Bool]);
+        assert_eq!(*binding.types, [Type::Int32, Type::Bool]);
     }
 }
