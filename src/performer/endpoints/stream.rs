@@ -27,7 +27,7 @@ impl<T> EndpointKind for InputStream<T>
 where
     T: StreamType,
 {
-    type RuntimeType = ();
+    type Binding = ();
 
     fn bind(info: &EndpointInfo) -> Result<(), EndpointError> {
         bind_stream_endpoint::<T>(info, EndpointDirection::Input)
@@ -38,7 +38,7 @@ impl<T> EndpointKind for OutputStream<T>
 where
     T: StreamType,
 {
-    type RuntimeType = ();
+    type Binding = ();
 
     fn bind(info: &EndpointInfo) -> Result<(), EndpointError> {
         bind_stream_endpoint::<T>(info, EndpointDirection::Output)
@@ -72,7 +72,11 @@ where
     T: StreamType,
 {
     pub(crate) fn write(&self, performer: &Performer, buffer: &[T]) {
-        unsafe { performer.ptr.set_input_frames(self.handle, buffer) }
+        unsafe {
+            performer
+                .ptr
+                .set_input_frames(self.handle_on(performer), buffer)
+        }
     }
 }
 
@@ -81,7 +85,11 @@ where
     T: StreamType,
 {
     pub(crate) fn read(&self, performer: &Performer, buffer: &mut [T]) {
-        unsafe { performer.ptr.copy_output_frames(self.handle, buffer) }
+        unsafe {
+            performer
+                .ptr
+                .copy_output_frames(self.handle_on(performer), buffer)
+        }
     }
 }
 

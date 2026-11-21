@@ -7,7 +7,7 @@ use {
         },
         value::{types::Type, StaticType, Value, ValueRef},
     },
-    std::{fmt, marker::PhantomData, sync::Arc},
+    std::{fmt, marker::PhantomData},
 };
 
 /// An endpoint for input values of type `T`.
@@ -20,17 +20,17 @@ impl<T> Sealed for InputValue<T> {}
 impl<T> Sealed for OutputValue<T> {}
 
 impl<T: ValueType> EndpointKind for InputValue<T> {
-    type RuntimeType = T::RuntimeType;
+    type Binding = T::Binding;
 
-    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+    fn bind(info: &EndpointInfo) -> Result<T::Binding, EndpointError> {
         T::bind(value_endpoint(info, EndpointDirection::Input)?)
     }
 }
 
 impl<T: ValueType> EndpointKind for OutputValue<T> {
-    type RuntimeType = T::RuntimeType;
+    type Binding = T::Binding;
 
-    fn bind(info: &EndpointInfo) -> Result<T::RuntimeType, EndpointError> {
+    fn bind(info: &EndpointInfo) -> Result<T::Binding, EndpointError> {
         T::bind(value_endpoint(info, EndpointDirection::Output)?)
     }
 }
@@ -48,13 +48,13 @@ fn value_endpoint(
 
 #[doc(hidden)]
 pub trait ValueType: Sized {
-    type RuntimeType: Clone + fmt::Debug;
+    type Binding: Clone + fmt::Debug;
     type SetResult;
     type Value<'a>
     where
         Self: 'a;
 
-    fn bind(endpoint: &ValueEndpoint) -> Result<Self::RuntimeType, EndpointError>;
+    fn bind(endpoint: &ValueEndpoint) -> Result<Self::Binding, EndpointError>;
 
     fn set(
         performer: &mut Performer,
@@ -68,8 +68,14 @@ pub trait ValueType: Sized {
     ) -> Self::Value<'a>;
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct BoundDynamicValueType {
+    ty: Type,
+}
+
 impl<T: StaticType> ValueType for T {
-    type RuntimeType = ();
+    type Binding = ();
     type SetResult = ();
     type Value<'a>
         = T
@@ -85,28 +91,31 @@ impl<T: StaticType> ValueType for T {
     }
 
     fn set(performer: &mut Performer, endpoint: &Endpoint<InputValue<T>>, value: T) {
+        let handle = endpoint.handle_on(performer);
         let Performer { ptr, buffer, .. } = performer;
-        let bytes = &mut buffer[..T::SIZE];
 
-        value.write(bytes);
-        unsafe { ptr.set_input_value(endpoint.handle, bytes.as_ptr(), 0) };
+        let bytes = value.write(buffer);
+        unsafe { ptr.set_input_value(handle, bytes.as_ptr(), 0) };
     }
 
     fn get(performer: &mut Performer, endpoint: &Endpoint<OutputValue<T>>) -> T {
+        let handle = endpoint.handle_on(performer);
         let Performer { ptr, buffer, .. } = performer;
 
-        ptr.copy_output_value(endpoint.handle, buffer);
-        T::read(buffer)
+        ptr.copy_output_value(handle, buffer);
+        T::read(buffer).0
     }
 }
 
 impl ValueType for Value {
-    type RuntimeType = Arc<Type>;
+    type Binding = BoundDynamicValueType;
     type SetResult = Result<(), TypeMismatch>;
     type Value<'a> = ValueRef<'a>;
 
-    fn bind(endpoint: &ValueEndpoint) -> Result<Arc<Type>, EndpointError> {
-        Ok(Arc::new(endpoint.ty().clone()))
+    fn bind(endpoint: &ValueEndpoint) -> Result<BoundDynamicValueType, EndpointError> {
+        Ok(BoundDynamicValueType {
+            ty: endpoint.ty().clone(),
+        })
     }
 
     fn set(
@@ -114,14 +123,13 @@ impl ValueType for Value {
         endpoint: &Endpoint<InputValue<Value>>,
         value: Value,
     ) -> Result<(), TypeMismatch> {
-        if endpoint.runtime_type.as_ref().as_ref() != value.ty() {
+        let handle = endpoint.handle_on(performer);
+        if endpoint.binding().ty.as_ref() != value.ty() {
             return Err(TypeMismatch);
         }
 
         value.with_bytes(|bytes| unsafe {
-            performer
-                .ptr
-                .set_input_value(endpoint.handle, bytes.as_ptr(), 0);
+            performer.ptr.set_input_value(handle, bytes.as_ptr(), 0);
         });
 
         Ok(())
@@ -131,11 +139,12 @@ impl ValueType for Value {
         performer: &'a mut Performer,
         endpoint: &'a Endpoint<OutputValue<Value>>,
     ) -> ValueRef<'a> {
+        let handle = endpoint.handle_on(performer);
         let Performer { ptr, buffer, .. } = performer;
-        let ty = endpoint.runtime_type.as_ref().as_ref();
+        let ty = endpoint.binding().ty.as_ref();
 
-        ptr.copy_output_value(endpoint.handle, buffer);
-        ValueRef::new_from_slice(ty, &buffer[..ty.size()])
+        ptr.copy_output_value(handle, buffer);
+        ValueRef::new_from_slice(ty, buffer)
     }
 }
 
@@ -182,9 +191,9 @@ mod test {
     fn a_value_placeholder_binds_to_any_value_endpoint_type() {
         let info = value_endpoint(EndpointDirection::Input, Type::String);
 
-        let runtime_type = InputValue::<Value>::bind(&info).unwrap();
+        let binding = InputValue::<Value>::bind(&info).unwrap();
 
-        assert_eq!(*runtime_type, Type::String);
+        assert_eq!(binding.ty, Type::String);
     }
 
     #[test]

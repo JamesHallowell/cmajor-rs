@@ -4,48 +4,57 @@ use crate::value::types::{Array, Type};
 
 /// A Rust type whose corresponding Cmajor type is known at compile time.
 pub trait StaticType: Sized {
-    /// The number of bytes the value takes up in Cmajor's layout.
-    const SIZE: usize;
-
     /// The Cmajor type of the value.
     fn ty() -> Type;
 
-    /// Writes the value into bytes.
-    fn write(&self, bytes: &mut [u8]);
+    /// Writes the value into the start of `bytes`, returning a slice containing the written bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes` is shorter than `Self::ty().size()`.
+    fn write<'a>(&self, bytes: &'a mut [u8]) -> &'a [u8];
 
-    /// Reads the value from bytes.
-    fn read(bytes: &[u8]) -> Self;
+    /// Reads the value from the start of `bytes`, returning it with the bytes left over.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes` is shorter than `Self::ty().size()`.
+    fn read(bytes: &[u8]) -> (Self, &[u8]);
 }
 
 impl StaticType for () {
-    const SIZE: usize = 0;
-
     fn ty() -> Type {
         Type::Void
     }
 
-    fn write(&self, _: &mut [u8]) {}
+    fn write<'a>(&self, _: &'a mut [u8]) -> &'a [u8] {
+        &[]
+    }
 
-    fn read(_: &[u8]) -> Self {}
+    fn read(bytes: &[u8]) -> (Self, &[u8]) {
+        ((), bytes)
+    }
 }
 
 macro_rules! scalar {
     ($rust:ty, $cmajor:expr) => {
         impl StaticType for $rust {
-            const SIZE: usize = size_of::<$rust>();
-
             fn ty() -> Type {
                 $cmajor
             }
 
-            fn write(&self, bytes: &mut [u8]) {
-                bytes[..Self::SIZE].copy_from_slice(&self.to_ne_bytes());
+            fn write<'a>(&self, bytes: &'a mut [u8]) -> &'a [u8] {
+                let native = self.to_ne_bytes();
+                let written = &mut bytes[..native.len()];
+                written.copy_from_slice(&native);
+                written
             }
 
-            fn read(bytes: &[u8]) -> Self {
-                let mut native = [0; size_of::<$rust>()];
-                native.copy_from_slice(&bytes[..Self::SIZE]);
-                Self::from_ne_bytes(native)
+            fn read(bytes: &[u8]) -> (Self, &[u8]) {
+                let (native, leftover) = bytes
+                    .split_first_chunk()
+                    .expect("bytes should hold the Cmajor type");
+                (Self::from_ne_bytes(*native), leftover)
             }
         }
     };
@@ -57,18 +66,17 @@ scalar!(f32, Type::Float32);
 scalar!(f64, Type::Float64);
 
 impl StaticType for bool {
-    const SIZE: usize = i32::SIZE;
-
     fn ty() -> Type {
         Type::Bool
     }
 
-    fn write(&self, bytes: &mut [u8]) {
-        i32::from(*self).write(bytes);
+    fn write<'a>(&self, bytes: &'a mut [u8]) -> &'a [u8] {
+        i32::from(*self).write(bytes)
     }
 
-    fn read(bytes: &[u8]) -> Self {
-        i32::read(bytes) != 0
+    fn read(bytes: &[u8]) -> (Self, &[u8]) {
+        let (value, leftover) = i32::read(bytes);
+        (value != 0, leftover)
     }
 }
 
@@ -76,20 +84,25 @@ impl<T, const N: usize> StaticType for [T; N]
 where
     T: StaticType,
 {
-    const SIZE: usize = T::SIZE * N;
-
     fn ty() -> Type {
         Array::new(T::ty(), N).into()
     }
 
-    fn write(&self, bytes: &mut [u8]) {
-        for (index, elem) in self.iter().enumerate() {
-            elem.write(&mut bytes[index * T::SIZE..]);
+    fn write<'a>(&self, bytes: &'a mut [u8]) -> &'a [u8] {
+        let mut len = 0;
+        for elem in self {
+            len += elem.write(&mut bytes[len..]).len();
         }
+        &bytes[..len]
     }
 
-    fn read(bytes: &[u8]) -> Self {
-        std::array::from_fn(|index| T::read(&bytes[index * T::SIZE..]))
+    fn read(mut bytes: &[u8]) -> (Self, &[u8]) {
+        let value = std::array::from_fn(|_| {
+            let (elem, leftover) = T::read(bytes);
+            bytes = leftover;
+            elem
+        });
+        (value, bytes)
     }
 }
 
@@ -102,14 +115,14 @@ mod test {
     };
 
     fn round_trip<T: StaticType>(value: &T) -> T {
-        let mut bytes = vec![0; T::SIZE];
+        let mut bytes = vec![0; T::ty().size()];
         value.write(&mut bytes);
-        T::read(&bytes)
+        T::read(&bytes).0
     }
 
     fn decoded_dynamically<T: StaticType>(value: &T) -> Value {
         let ty = T::ty();
-        let mut bytes = vec![0; T::SIZE];
+        let mut bytes = vec![0; ty.size()];
         value.write(&mut bytes);
         ValueRef::new_from_slice(ty.as_ref(), &bytes).to_owned()
     }
@@ -154,20 +167,50 @@ mod test {
 
         true.write(&mut bytes);
 
-        assert_eq!(i32::read(&bytes), 1);
+        assert_eq!(i32::read(&bytes).0, 1);
     }
 
     #[test]
-    fn the_encoded_size_is_the_size_of_the_cmajor_type() {
-        assert_eq!(<()>::SIZE, <()>::ty().size());
-        assert_eq!(bool::SIZE, bool::ty().size());
-        assert_eq!(i32::SIZE, i32::ty().size());
-        assert_eq!(i64::SIZE, i64::ty().size());
-        assert_eq!(f32::SIZE, f32::ty().size());
-        assert_eq!(f64::SIZE, f64::ty().size());
-        assert_eq!(<[[bool; 3]; 2]>::SIZE, <[[bool; 3]; 2]>::ty().size());
-        assert_eq!(Complex32::SIZE, Complex32::ty().size());
-        assert_eq!(Complex64::SIZE, Complex64::ty().size());
+    fn writing_into_a_larger_buffer_returns_only_the_written_bytes() {
+        let mut bytes = [0xff; 16];
+
+        let written = [[1_i32], [2]].write(&mut bytes);
+
+        assert_eq!(<[[i32; 1]; 2]>::read(written), ([[1], [2]], &[][..]));
+    }
+
+    #[test]
+    fn writing_into_a_larger_buffer_leaves_the_rest_untouched() {
+        let mut bytes = [0xff; 16];
+
+        Complex32 {
+            real: 1.0,
+            imag: 2.0,
+        }
+        .write(&mut bytes);
+
+        assert_eq!(bytes[8..], [0xff; 8]);
+    }
+
+    #[test]
+    fn reading_from_a_larger_buffer_reads_the_value_at_its_start() {
+        let mut bytes = [0xff; 16];
+        [[1_i32], [2]].write(&mut bytes);
+
+        let (value, _) = <[[i32; 1]; 2]>::read(&bytes);
+
+        assert_eq!(value, [[1], [2]]);
+    }
+
+    #[test]
+    fn reading_returns_the_bytes_after_the_value() {
+        let mut bytes = [0; 12];
+        [1_i32, 2].write(&mut bytes);
+        3_i32.write(&mut bytes[8..]);
+
+        let (_, leftover) = <[i32; 2]>::read(&bytes);
+
+        assert_eq!(i32::read(leftover).0, 3);
     }
 
     #[test]

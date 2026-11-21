@@ -154,11 +154,11 @@ impl<'a> ValueRef<'a> {
     {
         match ty {
             TypeRef::Void => Self::Void,
-            TypeRef::Bool => Self::Bool(bool::read(data)),
-            TypeRef::Int32 => Self::Int32(i32::read(data)),
-            TypeRef::Int64 => Self::Int64(i64::read(data)),
-            TypeRef::Float32 => Self::Float32(f32::read(data)),
-            TypeRef::Float64 => Self::Float64(f64::read(data)),
+            TypeRef::Bool => Self::Bool(bool::read(data).0),
+            TypeRef::Int32 => Self::Int32(i32::read(data).0),
+            TypeRef::Int64 => Self::Int64(i64::read(data).0),
+            TypeRef::Float32 => Self::Float32(f32::read(data).0),
+            TypeRef::Float64 => Self::Float64(f64::read(data).0),
             TypeRef::String => Self::String(StringHandle(data.get_u32_ne())),
             TypeRef::Array(array) => Self::Array(ArrayValueRef::new_from_slice(array, data)),
             TypeRef::Object(object) => Self::Object(ObjectValueRef::new_from_slice(object, data)),
@@ -212,21 +212,14 @@ impl<'a> ValueRef<'a> {
     }
 
     pub(crate) fn with_bytes<R>(&self, mut callback: impl FnMut(&[u8]) -> R) -> R {
-        macro_rules! encoded {
-            ($value:expr, $ty:ty) => {{
-                let mut bytes = [0; <$ty as StaticType>::SIZE];
-                $value.write(&mut bytes);
-                callback(&bytes)
-            }};
-        }
-
+        let buffer = &mut [0; 8];
         match *self {
             Self::Void => callback(&[]),
-            Self::Bool(value) => encoded!(value, bool),
-            Self::Int32(value) => encoded!(value, i32),
-            Self::Int64(value) => encoded!(value, i64),
-            Self::Float32(value) => encoded!(value, f32),
-            Self::Float64(value) => encoded!(value, f64),
+            Self::Bool(value) => callback(value.write(buffer)),
+            Self::Int32(value) => callback(value.write(buffer)),
+            Self::Int64(value) => callback(value.write(buffer)),
+            Self::Float32(value) => callback(value.write(buffer)),
+            Self::Float64(value) => callback(value.write(buffer)),
             Self::String(StringHandle(value)) => callback(value.to_ne_bytes().as_slice()),
             Self::Array(array) => callback(array.data),
             Self::Object(object) => callback(object.data),
@@ -508,22 +501,17 @@ pub type Complex64 = Complex<f64>;
 macro_rules! complex {
     ($complex:ty, $class:literal, $part:ty) => {
         impl StaticType for $complex {
-            const SIZE: usize = 2 * <$part>::SIZE;
-
             fn ty() -> Type {
                 Self::object_ty().into()
             }
 
-            fn write(&self, bytes: &mut [u8]) {
-                self.real.write(bytes);
-                self.imag.write(&mut bytes[<$part>::SIZE..]);
+            fn write<'a>(&self, bytes: &'a mut [u8]) -> &'a [u8] {
+                [self.real, self.imag].write(bytes)
             }
 
-            fn read(bytes: &[u8]) -> Self {
-                Self {
-                    real: <$part>::read(bytes),
-                    imag: <$part>::read(&bytes[<$part>::SIZE..]),
-                }
+            fn read(bytes: &[u8]) -> (Self, &[u8]) {
+                let ([real, imag], leftover) = <[$part; 2]>::read(bytes);
+                (Self { real, imag }, leftover)
             }
         }
 
@@ -537,12 +525,10 @@ macro_rules! complex {
 
         impl From<$complex> for ObjectValue {
             fn from(value: $complex) -> Self {
-                let mut data = SmallVec::from_elem(0, <$complex>::SIZE);
+                let ty = <$complex>::object_ty();
+                let mut data = SmallVec::from_elem(0, ty.size());
                 value.write(&mut data);
-                ObjectValue {
-                    ty: <$complex>::object_ty(),
-                    data,
-                }
+                ObjectValue { ty, data }
             }
         }
 
@@ -558,7 +544,7 @@ macro_rules! complex {
             fn try_from(value: ValueRef<'_>) -> Result<Self, Self::Error> {
                 match value {
                     ValueRef::Object(object) if *object.ty == Self::object_ty() => {
-                        Ok(Self::read(object.data))
+                        Ok(Self::read(object.data).0)
                     }
                     _ => Err(()),
                 }
