@@ -129,17 +129,16 @@ fn resolution_errors(program: Program, baseline: Option<&StandardLibrary>) -> Ve
 
 fn describe_parse_errors(program: &Program) -> String {
     let error_tokens = program.error_tokens().map(|(unit, token)| {
-        let span = program[unit].tokens.span(token);
-        let start = span.start as usize;
-        let (line, col) = line_col(program[unit].source.contents(), start);
-        let line_text = program[unit]
+        let unit = &program[unit];
+        let location = unit.location(token).start;
+        let line_text = unit
             .source
             .contents()
             .lines()
-            .nth(line - 1)
+            .nth(usize::from(location.line) - 1)
             .unwrap_or("");
-        let token_text = &program[unit].source.contents()[start..span.end as usize];
-        format!("  {line}:{col}: at {token_text:?} in {line_text:?}")
+        let token_text = unit.text(token);
+        format!("  {location}: at {token_text:?} in {line_text:?}")
     });
 
     let diagnostics = program.diagnostics().map(|(_, d)| format!("  {d}"));
@@ -148,20 +147,6 @@ fn describe_parse_errors(program: &Program) -> String {
         .chain(diagnostics)
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn line_col(source: &str, byte_offset: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut col = 1;
-    for ch in source[..byte_offset.min(source.len())].chars() {
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
 }
 
 #[cfg(test)]
@@ -200,6 +185,17 @@ mod tests {
                 actual_error: None,
             }]
         );
+    }
+
+    #[test]
+    fn parse_error_columns_count_characters_not_bytes() {
+        let file = parse_test_file(
+            "## expectError (\"3:17: error: Expected a type\")\n\n/* é */ void f( { }\n",
+        );
+        let results = run(&file, None);
+        let actual = results[0].actual_error.as_deref().unwrap();
+        assert!(actual.contains("3:17: at \"{\""), "{actual}");
+        assert!(actual.contains("3:17: error: Expected a type"), "{actual}");
     }
 
     #[test]

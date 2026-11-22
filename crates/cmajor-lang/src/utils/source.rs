@@ -56,7 +56,7 @@ impl SourceFile {
             .line_starts
             .binary_search(&index)
             .unwrap_or_else(|line| line - 1);
-        let column = index - self.line_starts[line];
+        let column = self.contents[self.line_starts[line]..index].chars().count();
 
         SourceLocation {
             line: (line + 1).into(),
@@ -70,7 +70,16 @@ impl SourceFile {
             column: Column(column),
         } = location;
 
-        (self.line_starts[line - 1] + column - 1) as u32
+        let line_start = self.line_starts[line - 1];
+        let rest = &self.contents[line_start..];
+        let offset = rest
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .chain([rest.len()])
+            .nth(column - 1)
+            .expect("location is past the end of the source");
+
+        (line_start + offset) as u32
     }
 }
 
@@ -310,5 +319,37 @@ mod tests {
         assert_index(location!(2:1), 11);
         assert_index(location!(2:2), 12);
         assert_index(location!(2:3), 13);
+    }
+
+    const NON_ASCII: &str = "let é = 1;\nlet 名前 = 2;";
+
+    #[test]
+    fn non_ascii_character_moves_the_column_by_one() {
+        let source: SourceFile = NON_ASCII.into();
+        let equals = NON_ASCII.find('=').unwrap() as u32;
+
+        assert_eq!(source.location(equals), location!(1:7));
+    }
+
+    #[test]
+    fn column_after_non_ascii_characters_maps_to_its_byte_offset() {
+        let source: SourceFile = NON_ASCII.into();
+        let second_equals = NON_ASCII.rfind('=').unwrap() as u32;
+
+        assert_eq!(source.index(location!(2:8)), second_equals);
+    }
+
+    #[test]
+    fn byte_offset_round_trips_through_its_location() {
+        let source: SourceFile = NON_ASCII.into();
+        let offsets = NON_ASCII
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .chain([NON_ASCII.len()]);
+
+        for offset in offsets {
+            let offset = offset as u32;
+            assert_eq!(source.index(source.location(offset)), offset);
+        }
     }
 }
