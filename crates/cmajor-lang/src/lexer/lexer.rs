@@ -2,10 +2,12 @@ use crate::{
     lexer::{
         TokenStream,
         cursor::Cursor,
-        token::{Keyword, Literal, Token, TokenKind, Trivia},
+        token::{Keyword, LexError, Literal, Token, TokenKind, Trivia},
     },
     token,
 };
+
+const MAX_IDENTIFIER_LENGTH: usize = 256;
 
 pub fn tokenize(input: &str) -> TokenStream {
     let mut lexer = Lexer::new(input);
@@ -24,6 +26,8 @@ struct Lexer<'a> {
     input: &'a str,
     pos: u32,
     cursor: Cursor<'a>,
+    pending_error: Option<LexError>,
+    follows_minus: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -32,12 +36,30 @@ impl<'a> Lexer<'a> {
             input,
             pos: 0,
             cursor: Cursor::new(input),
+            pending_error: None,
+            follows_minus: false,
         }
     }
 
     fn next_token(&mut self) -> Option<Token> {
         self.cursor.reset_bytes_taken();
         let start = self.pos;
+
+        if let Some(error) = self.pending_error.take() {
+            if error == LexError::MalformedEscapeSequence {
+                self.take_rest_of_string();
+            } else {
+                self.cursor.take();
+                self.cursor.take_while(is_ident_continue);
+            }
+            let len = self.cursor.bytes_taken();
+            self.pos += len;
+            self.follows_minus = false;
+            return Some(Token {
+                kind: TokenKind::Error(error),
+                len,
+            });
+        }
 
         let c = self.cursor.take()?;
 
@@ -49,6 +71,12 @@ impl<'a> Lexer<'a> {
             '/' if self.cursor.peek() == Some('/') => self.line_comment(),
             '/' if self.cursor.peek() == Some('*') => self.block_comment(),
             c if is_ident_start(c) => self.ident(),
+            '0' if self.cursor.peek().is_some_and(|c| c.is_ascii_digit())
+                && !self.digits_continue_as_float() =>
+            {
+                self.cursor.take_while(|c| c.is_ascii_digit());
+                TokenKind::Error(LexError::OctalLiteral)
+            }
             c if c.is_ascii_digit() => self.number(),
             '.' if self.cursor.peek().is_some_and(|c| c.is_ascii_digit()) => self.number_from_dot(),
             '"' => self.string(),
@@ -188,7 +216,7 @@ impl<'a> Lexer<'a> {
             ']' => token!(']'),
             '{' => token!('{'),
             '}' => token!('}'),
-            _ => TokenKind::Error,
+            c => TokenKind::Error(LexError::IllegalCharacter(c)),
         };
 
         let len = self.cursor.bytes_taken();
@@ -196,12 +224,22 @@ impl<'a> Lexer<'a> {
 
         let kind = if kind == TokenKind::Identifier {
             let text = &self.input[start as usize..(start + len) as usize];
-            Keyword::try_from(text)
-                .map(TokenKind::from)
-                .unwrap_or(TokenKind::Identifier)
+            if text == "_" {
+                TokenKind::Error(LexError::IllegalCharacter('_'))
+            } else if text.starts_with('_') {
+                TokenKind::Error(LexError::LeadingUnderscore)
+            } else if text.len() > MAX_IDENTIFIER_LENGTH {
+                TokenKind::Error(LexError::IdentifierTooLong)
+            } else {
+                Keyword::try_from(text)
+                    .map(TokenKind::from)
+                    .unwrap_or(TokenKind::Identifier)
+            }
         } else {
             kind
         };
+
+        self.follows_minus = kind == token!(-);
 
         Some(Token { kind, len })
     }
@@ -228,7 +266,7 @@ impl<'a> Lexer<'a> {
 
         loop {
             match self.cursor.take() {
-                None => return TokenKind::Error,
+                None => return TokenKind::Error(LexError::UnterminatedComment),
                 Some('*') if self.cursor.peek() == Some('/') => {
                     self.cursor.take();
                     return TokenKind::Trivia(Trivia::BlockComment);
@@ -248,11 +286,17 @@ impl<'a> Lexer<'a> {
             Some('x' | 'X') => {
                 self.cursor.take();
                 self.cursor.take_while(|c| c.is_ascii_hexdigit());
+                if self.cursor.bytes_taken() == 2 {
+                    return TokenKind::Error(LexError::MalformedNumber);
+                }
                 Literal::Int32
             }
             Some('b' | 'B') => {
                 self.cursor.take();
                 self.cursor.take_while(is_binary_digit);
+                if self.cursor.bytes_taken() == 2 {
+                    return TokenKind::Error(LexError::MalformedNumber);
+                }
                 Literal::Int32
             }
             _ => {
@@ -279,24 +323,35 @@ impl<'a> Lexer<'a> {
         self.finish_number(kind)
     }
 
+    fn digits_continue_as_float(&self) -> bool {
+        let mut n = 0;
+        while self.cursor.peek_at(n).is_some_and(|c| c.is_ascii_digit()) {
+            n += 1;
+        }
+        self.cursor.peek_at(n) == Some('.') || self.exponent_follows(n)
+    }
+
     fn number_from_dot(&mut self) -> TokenKind {
         self.cursor.take_while(|c| c.is_ascii_digit());
         self.take_exponent();
         self.finish_number(Literal::Float64)
     }
 
-    fn take_exponent(&mut self) -> bool {
-        let (e, after_e) = self.cursor.peek_two();
-        if !matches!(e, Some('e' | 'E')) {
-            return false;
-        }
-
-        let has_exponent_digits = match after_e {
-            Some(c) if c.is_ascii_digit() => true,
-            Some('+' | '-') => self.cursor.peek_at(2).is_some_and(|c| c.is_ascii_digit()),
-            _ => false,
+    fn exponent_follows(&self, n: usize) -> bool {
+        let digit_at = |i| {
+            self.cursor
+                .peek_at(i)
+                .is_some_and(|c: char| c.is_ascii_digit())
         };
-        if !has_exponent_digits {
+        match (self.cursor.peek_at(n), self.cursor.peek_at(n + 1)) {
+            (Some('e' | 'E'), Some('+' | '-')) => digit_at(n + 2),
+            (Some('e' | 'E'), _) => digit_at(n + 1),
+            _ => false,
+        }
+    }
+
+    fn take_exponent(&mut self) -> bool {
+        if !self.exponent_follows(0) {
             return false;
         }
 
@@ -309,7 +364,9 @@ impl<'a> Lexer<'a> {
     }
 
     fn finish_number(&mut self, kind: Literal) -> TokenKind {
-        if let Some('_') = self.cursor.peek() {
+        let integer_value = (kind == Literal::Int32).then(|| self.integer_value());
+
+        if let (Some('_'), Some('f' | 'i' | 'L')) = self.cursor.peek_two() {
             self.cursor.take();
         }
 
@@ -330,35 +387,86 @@ impl<'a> Lexer<'a> {
                 self.cursor.take();
                 Literal::Float32
             }
-            (Some('i'), Some('6'), Some('4')) => {
+            (Some('i'), Some('3'), Some('2')) if kind == Literal::Int32 => {
+                self.cursor.take_n(3);
+                Literal::Int32
+            }
+            (Some('i'), Some('6'), Some('4')) if kind == Literal::Int32 => {
                 self.cursor.take_n(3);
                 Literal::Int64
             }
-            (Some('i'), _, _) => {
+            (Some('i'), _, _) if kind == Literal::Float64 => {
                 self.cursor.take();
                 Literal::Imaginary64
             }
-            (Some('L'), _, _) => {
+            (Some('L'), _, _) if kind == Literal::Int32 => {
                 self.cursor.take();
                 Literal::Int64
             }
             _ => kind,
         };
 
-        TokenKind::Literal(kind)
+        if let Some(c) = self.cursor.peek().filter(|&c| is_ident_continue(c)) {
+            self.pending_error = Some(match c {
+                'i' | 'I' if integer_value.is_some() => LexError::ImaginaryIntegerLiteral,
+                _ => LexError::UnrecognisedLiteralSuffix,
+            });
+        }
+
+        let int32_limit = i32::MAX as u64 + u64::from(self.follows_minus);
+        match integer_value {
+            Some(Err(_)) => TokenKind::Error(LexError::IntegerLiteralTooLarge),
+            Some(Ok(value)) if kind == Literal::Int32 && value > int32_limit => {
+                TokenKind::Error(LexError::IntegerLiteralNeedsSuffix)
+            }
+            _ => TokenKind::Literal(kind),
+        }
     }
 
     fn string(&mut self) -> TokenKind {
         loop {
             match self.cursor.take() {
-                None | Some('\n') => return TokenKind::Error,
+                None | Some('\n') => return TokenKind::Error(LexError::UnterminatedString),
                 Some('"') => return TokenKind::Literal(Literal::String),
-                Some('\\') if self.cursor.peek().is_some() => {
+                Some('\\') if self.cursor.peek().is_some() => match self.cursor.take() {
+                    Some('u') if !self.take_unicode_escape_digits() => {
+                        self.pending_error = Some(LexError::MalformedEscapeSequence);
+                        return TokenKind::Literal(Literal::String);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    fn integer_value(&self) -> Result<u64, std::num::ParseIntError> {
+        let digits = &self.input[self.pos as usize..][..self.cursor.bytes_taken() as usize];
+        match digits.get(..2) {
+            Some("0x" | "0X") => u64::from_str_radix(&digits[2..], 16),
+            Some("0b" | "0B") => u64::from_str_radix(&digits[2..], 2),
+            _ => digits.parse(),
+        }
+    }
+
+    fn take_rest_of_string(&mut self) {
+        while let Some(c) = self.cursor.peek().filter(|&c| c != '\n') {
+            self.cursor.take();
+            match c {
+                '"' => return,
+                '\\' if self.cursor.peek() != Some('\n') => {
                     self.cursor.take();
                 }
                 _ => {}
             }
         }
+    }
+
+    fn take_unicode_escape_digits(&mut self) -> bool {
+        (0..4).all(|_| {
+            self.cursor.peek().is_some_and(|c| c.is_ascii_hexdigit())
+                && self.cursor.take().is_some()
+        })
     }
 }
 
@@ -367,11 +475,11 @@ fn is_whitespace(c: char) -> bool {
 }
 
 fn is_ident_start(c: char) -> bool {
-    c == '_' || c.is_alphabetic()
+    c == '_' || c.is_ascii_alphabetic()
 }
 
 fn is_ident_continue(c: char) -> bool {
-    c == '_' || c.is_alphanumeric()
+    c == '_' || c.is_ascii_alphanumeric()
 }
 
 fn is_binary_digit(c: char) -> bool {
@@ -531,7 +639,7 @@ mod tests {
             lex("1e"),
             vec![
                 (TokenKind::Literal(Literal::Int32), "1"),
-                (TokenKind::Identifier, "e"),
+                (TokenKind::Error(LexError::UnrecognisedLiteralSuffix), "e"),
             ]
         );
     }
@@ -569,7 +677,21 @@ mod tests {
 
     #[test]
     fn unterminated_string_is_an_error() {
-        assert_eq!(lex("\"abc"), vec![(TokenKind::Error, "\"abc")]);
+        assert_eq!(
+            lex("\"abc"),
+            vec![(TokenKind::Error(LexError::UnterminatedString), "\"abc")]
+        );
+    }
+
+    #[test]
+    fn malformed_unicode_escape_is_an_error_at_the_bad_character() {
+        assert_eq!(
+            lex(r#""\u12""#),
+            vec![
+                (TokenKind::Literal(Literal::String), r#""\u12"#),
+                (TokenKind::Error(LexError::MalformedEscapeSequence), "\""),
+            ]
+        );
     }
 
     #[test]
@@ -586,7 +708,108 @@ mod tests {
 
     #[test]
     fn unterminated_block_comment_is_an_error() {
-        assert_eq!(lex("/* comment"), vec![(TokenKind::Error, "/* comment")]);
+        assert_eq!(
+            lex("/* comment"),
+            vec![(
+                TokenKind::Error(LexError::UnterminatedComment),
+                "/* comment"
+            )]
+        );
+    }
+
+    #[test]
+    fn non_ascii_outside_strings_and_comments_is_illegal() {
+        assert_eq!(
+            lex("Ω"),
+            vec![(TokenKind::Error(LexError::IllegalCharacter('Ω')), "Ω")]
+        );
+    }
+
+    #[test]
+    fn identifiers_cannot_start_with_an_underscore() {
+        assert_eq!(
+            lex("_x"),
+            vec![(TokenKind::Error(LexError::LeadingUnderscore), "_x")]
+        );
+    }
+
+    #[test]
+    fn leading_zero_makes_an_octal_literal_which_is_an_error() {
+        assert_eq!(
+            lex("0123"),
+            vec![(TokenKind::Error(LexError::OctalLiteral), "0123")]
+        );
+    }
+
+    #[test]
+    fn unrecognised_literal_suffix_is_an_error_at_the_suffix() {
+        assert_eq!(
+            lex("2.0f31"),
+            vec![
+                (TokenKind::Literal(Literal::Float32), "2.0f"),
+                (TokenKind::Error(LexError::UnrecognisedLiteralSuffix), "31"),
+            ]
+        );
+    }
+
+    #[test]
+    fn imaginary_suffix_needs_a_float_literal() {
+        assert_eq!(
+            lex("3i"),
+            vec![
+                (TokenKind::Literal(Literal::Int32), "3"),
+                (TokenKind::Error(LexError::ImaginaryIntegerLiteral), "i"),
+            ]
+        );
+    }
+
+    #[test]
+    fn i32_suffix_makes_an_int32_literal() {
+        assert_eq!(
+            lex("101i32"),
+            vec![(TokenKind::Literal(Literal::Int32), "101i32")]
+        );
+    }
+
+    #[test]
+    fn int32_literal_out_of_range_needs_a_suffix() {
+        assert_eq!(
+            lex("2147483648"),
+            vec![(
+                TokenKind::Error(LexError::IntegerLiteralNeedsSuffix),
+                "2147483648"
+            )]
+        );
+    }
+
+    #[test]
+    fn negated_int32_minimum_fits_without_a_suffix() {
+        assert_eq!(
+            lex("-2147483648"),
+            vec![
+                (TokenKind::Minus, "-"),
+                (TokenKind::Literal(Literal::Int32), "2147483648"),
+            ]
+        );
+    }
+
+    #[test]
+    fn integer_literal_beyond_64_bits_is_too_large() {
+        assert_eq!(
+            lex("0xffffffffffffffff1"),
+            vec![(
+                TokenKind::Error(LexError::IntegerLiteralTooLarge),
+                "0xffffffffffffffff1"
+            )]
+        );
+    }
+
+    #[test]
+    fn hex_prefix_without_digits_is_malformed() {
+        assert_eq!(
+            lex("0x"),
+            vec![(TokenKind::Error(LexError::MalformedNumber), "0x")]
+        );
     }
 
     #[test]
@@ -689,6 +912,71 @@ mod tests {
                 (TokenKind::ColonColon, "::"),
                 (TokenKind::Identifier, "sin"),
             ]
+        );
+    }
+
+    #[test]
+    fn rest_of_a_string_after_a_malformed_escape_stays_in_the_error() {
+        assert_eq!(
+            lex(r#""\u12zz abc" x"#),
+            vec![
+                (TokenKind::Literal(Literal::String), r#""\u12"#),
+                (
+                    TokenKind::Error(LexError::MalformedEscapeSequence),
+                    r#"zz abc""#
+                ),
+                (TokenKind::Trivia(Trivia::Whitespace), " "),
+                (TokenKind::Identifier, "x"),
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_unicode_escape_at_end_of_input_is_an_error() {
+        assert_eq!(
+            lex(r#""\u"#),
+            vec![
+                (TokenKind::Literal(Literal::String), r#""\u"#),
+                (TokenKind::Error(LexError::MalformedEscapeSequence), ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn integer_suffix_on_a_float_is_unrecognised() {
+        assert_eq!(
+            lex("1.5i32"),
+            vec![
+                (TokenKind::Literal(Literal::Imaginary64), "1.5i"),
+                (TokenKind::Error(LexError::UnrecognisedLiteralSuffix), "32"),
+            ]
+        );
+    }
+
+    #[test]
+    fn leading_zero_on_a_float_is_not_octal() {
+        assert_eq!(
+            lex("01.5"),
+            vec![(TokenKind::Literal(Literal::Float64), "01.5")]
+        );
+    }
+
+    #[test]
+    fn underscore_without_a_suffix_is_unrecognised() {
+        assert_eq!(
+            lex("1_"),
+            vec![
+                (TokenKind::Literal(Literal::Int32), "1"),
+                (TokenKind::Error(LexError::UnrecognisedLiteralSuffix), "_"),
+            ]
+        );
+    }
+
+    #[test]
+    fn lone_underscore_is_an_illegal_character() {
+        assert_eq!(
+            lex("_"),
+            vec![(TokenKind::Error(LexError::IllegalCharacter('_')), "_")]
         );
     }
 }

@@ -198,7 +198,7 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 children.push(self.child(*returns));
                 children.extend(params.iter().map(|&id| self.child(id)));
                 children.extend(annotations.iter(self.ast).map(|(id, _)| self.child(id)));
-                children.push(self.child(*body));
+                children.extend(body.map(|body| self.child(body)));
                 node(
                     format!("FunctionDecl {:?}{const_suffix}", self.text(name)),
                     children,
@@ -342,11 +342,18 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
                 let target = match target {
                     HoistTarget::Name(name) => self.text(name).to_string(),
                     HoistTarget::Wildcard {
-                        prefix: Some(prefix),
+                        pattern,
+                        name_template,
                     } => {
-                        format!("{}*", self.text(prefix))
+                        let pattern: String = pattern.iter().map(|token| self.text(token)).collect();
+                        let name_template: String =
+                            name_template.iter().map(|token| self.text(token)).collect();
+                        if name_template.is_empty() {
+                            pattern
+                        } else {
+                            format!("{pattern} {name_template}")
+                        }
                     }
-                    HoistTarget::Wildcard { prefix: None } => "*".to_string(),
                 };
                 let label = format!("EndpointDecl {dir} {path}.{target}");
                 let mut children: Vec<_> = index.map(|id| self.child(id)).into_iter().collect();
@@ -606,9 +613,12 @@ impl<'a> ExhaustiveVisitor for Dumper<'a> {
             }
             Expr::ScopeAccess(ScopeAccess { base, name }) => {
                 let label = "ScopeAccess".to_string();
-                let base = self.child(*base);
-                let name = self.child(*name);
-                node(label, vec![base, name])
+                let children = base
+                    .iter()
+                    .chain([name])
+                    .map(|&child| self.child(child))
+                    .collect();
+                node(label, children)
             }
             Expr::TypeModifier(TypeModifier {
                 source,

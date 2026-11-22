@@ -743,18 +743,29 @@ impl<'s, 'a> Resolve<'s, 'a> {
             .split_first()
             .expect("a scope path has at least one segment");
 
+        let from_global_scope = self.starts_at_global_scope(node);
+        let lookup_scope = if from_global_scope {
+            self.state.symbols.global_scope()
+        } else {
+            self.state.current_scope
+        };
+
         let mut symbol = self
             .state
             .symbols
             .find_visible(
-                self.state.current_scope,
+                lookup_scope,
                 self.state.has_matching_name(self.program, self.unit, first),
             )
             .ok_or_else(|| {
                 (
                     path_start,
                     CompileError::UnresolvedSymbol {
-                        name: self.written_path(&segments),
+                        name: if from_global_scope {
+                            format!("::{}", self.written_path(&segments))
+                        } else {
+                            self.written_path(&segments)
+                        },
                     },
                 )
             })?;
@@ -818,7 +829,10 @@ impl<'s, 'a> Resolve<'s, 'a> {
                         CompileError::UnexpectedNode,
                     ));
                 };
-                let mut segments = self.scope_path_segments(scope_access.base)?;
+                let mut segments = match scope_access.base {
+                    Some(base) => self.scope_path_segments(base)?,
+                    None => vec![],
+                };
                 segments.push(name.token);
                 Ok(segments)
             }
@@ -827,6 +841,16 @@ impl<'s, 'a> Resolve<'s, 'a> {
                 unit.location(unit.ast.span(node).start),
                 CompileError::UnexpectedNode,
             )),
+        }
+    }
+
+    fn starts_at_global_scope(&self, node: NodeId) -> bool {
+        match self.program[self.unit].ast.get(node) {
+            Node::Expr(Expr::ScopeAccess(scope_access)) => scope_access
+                .base
+                .is_none_or(|base| self.starts_at_global_scope(base)),
+            Node::Expr(Expr::Call(call)) => self.starts_at_global_scope(call.callee),
+            _ => false,
         }
     }
 
@@ -878,7 +902,10 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
             }
             function_decl.annotations.walk(ast, this);
 
-            let Node::Stmt(Stmt::Block(body)) = ast.get(function_decl.body) else {
+            let Some(body) = function_decl.body else {
+                return;
+            };
+            let Node::Stmt(Stmt::Block(body)) = ast.get(body) else {
                 unreachable!("function body is always a block")
             };
             body.walk(ast, this);

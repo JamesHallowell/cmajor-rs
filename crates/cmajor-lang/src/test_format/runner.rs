@@ -205,7 +205,7 @@ mod tests {
             vec![rejected(&[
                 "2:9: error: Expected a type",
                 "2:11: error: Found \"}\" when expecting identifier",
-                "2:11: error: Found \"}\" when expecting \")\"",
+                "2:11: error: Found \"}\" when expecting \",\"",
                 "2:11: error: Found \"}\" when expecting \"{\"",
             ])]
         );

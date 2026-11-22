@@ -583,7 +583,9 @@ where
             visitor.visit(ast, param);
         }
         self.annotations.walk(ast, visitor);
-        visitor.visit(ast, self.body);
+        if let Some(body) = self.body {
+            visitor.visit(ast, body);
+        }
     }
 }
 
@@ -1014,7 +1016,9 @@ where
     V: Visitor + ?Sized,
 {
     fn walk(&self, ast: &Ast, visitor: &mut V) {
-        visitor.visit(ast, self.base);
+        if let Some(base) = self.base {
+            visitor.visit(ast, base);
+        }
         visitor.visit(ast, self.name);
     }
 }

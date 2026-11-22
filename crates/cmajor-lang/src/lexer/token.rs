@@ -106,6 +106,23 @@ pub enum Literal {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LexError {
+    IllegalCharacter(char),
+    UnterminatedComment,
+    IdentifierTooLong,
+    LeadingUnderscore,
+    OctalLiteral,
+    IntegerLiteralTooLarge,
+    IntegerLiteralNeedsSuffix,
+    MalformedNumber,
+    UnrecognisedLiteralSuffix,
+    ImaginaryIntegerLiteral,
+    UnterminatedString,
+    MalformedEscapeSequence,
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenKind {
     Ampersand,
     AmpersandAmpersand,
@@ -132,7 +149,7 @@ pub enum TokenKind {
     EndOfFile,
     Equal,
     EqualEqual,
-    Error,
+    Error(LexError),
     Identifier,
     Keyword(Keyword),
     Literal(Literal),
@@ -204,6 +221,51 @@ impl TokenKind {
     pub fn is_end_of_file(self) -> bool {
         self == TokenKind::EndOfFile
     }
+
+    pub fn can_start_declaration(self) -> bool {
+        self.is_type_like()
+            || matches!(
+                self,
+                crate::token!(
+                    const
+                        | '('
+                        | ::
+                        | node
+                        | connection
+                        | graph
+                        | processor
+                        | struct
+                        | enum
+                        | var
+                        | let
+                        | event
+                        | using
+                        | namespace
+                        | input
+                        | output
+                        | import
+                        | external
+                )
+            )
+    }
+}
+
+impl LexError {
+    fn description(self) -> &'static str {
+        match self {
+            LexError::IllegalCharacter(_) => "unrecognised character",
+            LexError::UnterminatedComment => "unterminated comment",
+            LexError::IdentifierTooLong | LexError::LeadingUnderscore => "invalid identifier",
+            LexError::OctalLiteral
+            | LexError::IntegerLiteralTooLarge
+            | LexError::IntegerLiteralNeedsSuffix
+            | LexError::MalformedNumber
+            | LexError::ImaginaryIntegerLiteral => "invalid numeric literal",
+            LexError::UnrecognisedLiteralSuffix => "invalid literal suffix",
+            LexError::UnterminatedString => "unterminated string",
+            LexError::MalformedEscapeSequence => "invalid escape sequence",
+        }
+    }
 }
 
 impl Literal {
@@ -225,7 +287,7 @@ impl std::fmt::Display for TokenKind {
         let spelling = match *self {
             TokenKind::Identifier => return f.write_str("identifier"),
             TokenKind::EndOfFile => return f.write_str("end-of-file"),
-            TokenKind::Error => return f.write_str("unrecognised character"),
+            TokenKind::Error(error) => return f.write_str(error.description()),
             TokenKind::Literal(literal) => return f.write_str(literal.description()),
             TokenKind::Trivia(_) => return f.write_str("whitespace or comment"),
             TokenKind::Keyword(keyword) => keyword.as_str(),

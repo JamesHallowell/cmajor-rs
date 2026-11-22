@@ -53,7 +53,7 @@ pub struct FunctionDecl {
     pub params: Vec<NodeId>,
     pub is_const: bool,
     pub annotations: Annotations,
-    pub body: NodeId,
+    pub body: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

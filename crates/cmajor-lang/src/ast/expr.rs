@@ -100,7 +100,7 @@ pub struct Field {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopeAccess {
-    pub base: NodeId,
+    pub base: Option<NodeId>,
     pub name: NodeId,
 }
 

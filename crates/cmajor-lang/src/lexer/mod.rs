@@ -6,6 +6,6 @@ mod token_stream;
 
 pub use {
     lexer::tokenize,
-    token::{Keyword, Literal, Token, TokenKind, Trivia},
+    token::{Keyword, LexError, Literal, Token, TokenKind, Trivia},
     token_stream::{NonTrivialTokenStreamIterator, TokenId, TokenStream, TokenStreamIterator},
 };

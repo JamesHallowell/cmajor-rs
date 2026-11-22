@@ -16,7 +16,10 @@ pub enum InterpolationKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HoistTarget {
     Name(TokenId),
-    Wildcard { prefix: Option<TokenId> },
+    Wildcard {
+        pattern: Vec<TokenId>,
+        name_template: Vec<TokenId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
