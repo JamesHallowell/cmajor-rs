@@ -64,21 +64,32 @@ pub fn declare_stdlib(program: &Program) -> StandardLibrary {
     }
 }
 
-pub fn resolve_with_standard_library(program: &Program, baseline: &StandardLibrary) -> Resolution {
+pub struct ResolvedProgram {
+    pub program: Program,
+    pub resolution: Resolution,
+}
+
+pub fn resolve_with_standard_library(
+    program: Program,
+    baseline: &StandardLibrary,
+) -> ResolvedProgram {
     let mut combined = baseline.program.clone();
     let mut state = baseline.state.clone();
 
     let new_units: Vec<UnitId> = program
-        .units()
-        .map(|unit| combined.add_parsed_unit(program[unit].clone()))
+        .into_iter()
+        .map(|unit| combined.add_parsed_unit(unit))
         .collect();
 
     declare_units_for(&mut state, &combined, new_units.iter().copied());
     resolve_units_for(&mut state, &combined, new_units.iter().copied());
 
-    Resolution {
-        symbols: state.symbols,
-        diagnostics: state.diagnostics,
+    ResolvedProgram {
+        program: combined,
+        resolution: Resolution {
+            symbols: state.symbols,
+            diagnostics: state.diagnostics,
+        },
     }
 }
 
@@ -2655,6 +2666,50 @@ mod tests {
                     SymbolOrigin::Builtin { .. } => None,
                 })
                 .collect()
+        }
+
+        fn redeclare_stdlib_processor() -> ResolvedProgram {
+            let stdlib = declare_stdlib(&Program::new().with_source_file(
+                SourceFile::new("processor P { output stream int out; }").with_name("lib.cmajor"),
+            ));
+            let program = Program::new().with_source_file(
+                SourceFile::new("processor P { output stream int out; }").with_name("main.cmajor"),
+            );
+
+            resolve_with_standard_library(program, &stdlib)
+        }
+
+        #[test]
+        fn stdlib_resolution_reports_the_callers_unit_in_the_returned_program() {
+            let ResolvedProgram {
+                program,
+                resolution,
+            } = redeclare_stdlib_processor();
+
+            let [(unit, _)] = resolution.diagnostics.as_slice() else {
+                panic!("expected one diagnostic: {:?}", resolution.diagnostics);
+            };
+            assert_eq!(program[*unit].source.name(), Some("main.cmajor"));
+        }
+
+        #[test]
+        fn stdlib_resolution_note_points_at_the_stdlib_unit_in_the_returned_program() {
+            let ResolvedProgram {
+                program,
+                resolution,
+            } = redeclare_stdlib_processor();
+
+            let [(_, diagnostic)] = resolution.diagnostics.as_slice() else {
+                panic!("expected one diagnostic: {:?}", resolution.diagnostics);
+            };
+            let CompileError::NameInUse {
+                previous_declaration: Some(previous),
+                ..
+            } = &diagnostic.error
+            else {
+                panic!("expected a name clash with a previous declaration: {diagnostic}");
+            };
+            assert_eq!(program[previous.unit].source.name(), Some("lib.cmajor"));
         }
 
         #[test]

@@ -2,7 +2,7 @@ use {
     super::{Directive, TestFile},
     crate::{
         Program, SourceFile,
-        resolver::{self, StandardLibrary},
+        resolver::{self, ResolvedProgram, StandardLibrary},
     },
 };
 
@@ -58,16 +58,11 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                             let detail = describe_parse_errors(&program);
                             Outcome::Fail(format!("parse error produced\n{detail}"))
                         } else {
-                            let resolution = baseline
-                                .map(|baseline| {
-                                    resolver::resolve_with_standard_library(&program, baseline)
-                                })
-                                .unwrap_or_else(|| resolver::resolve(&program));
-                            if !resolution.diagnostics.is_empty() {
-                                let detail = resolution
-                                    .diagnostics
+                            let errors = resolution_errors(program, baseline);
+                            if !errors.is_empty() {
+                                let detail = errors
                                     .iter()
-                                    .map(|(_, d)| format!("  {d}"))
+                                    .map(|error| format!("  {error}"))
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 Outcome::Fail(format!("resolution error produced\n{detail}"))
@@ -87,20 +82,9 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                             actual_error = Some(describe_parse_errors(&program));
                             Outcome::Pass
                         } else {
-                            let resolution = baseline
-                                .map(|baseline| {
-                                    resolver::resolve_with_standard_library(&program, baseline)
-                                })
-                                .unwrap_or_else(|| resolver::resolve(&program));
-                            if !resolution.diagnostics.is_empty() {
-                                actual_error = Some(
-                                    resolution
-                                        .diagnostics
-                                        .iter()
-                                        .map(|(_, d)| d.to_string())
-                                        .collect::<Vec<_>>()
-                                        .join("\n"),
-                                );
+                            let errors = resolution_errors(program, baseline);
+                            if !errors.is_empty() {
+                                actual_error = Some(errors.join("\n"));
                                 Outcome::Pass
                             } else {
                                 Outcome::Fail("expected an error but none occurred".to_string())
@@ -119,6 +103,28 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                 actual_error,
             }
         })
+        .collect()
+}
+
+fn resolution_errors(program: Program, baseline: Option<&StandardLibrary>) -> Vec<String> {
+    let ResolvedProgram {
+        program,
+        resolution,
+    } = match baseline {
+        Some(baseline) => resolver::resolve_with_standard_library(program, baseline),
+        None => {
+            let resolution = resolver::resolve(&program);
+            ResolvedProgram {
+                program,
+                resolution,
+            }
+        }
+    };
+
+    resolution
+        .diagnostics
+        .iter()
+        .map(|(unit, diagnostic)| diagnostic.in_unit(*unit, &program).to_string())
         .collect()
 }
 
@@ -278,6 +284,45 @@ mod tests {
                 expected_error: None,
                 actual_error: None,
             }]
+        );
+    }
+
+    fn stdlib_declaring_processor_p() -> StandardLibrary {
+        resolver::declare_stdlib(&Program::new().with_source_file(
+            SourceFile::new("processor P { output stream int out; }").with_name("lib.cmajor"),
+        ))
+    }
+
+    #[test]
+    fn note_in_the_standard_library_names_its_file() {
+        let stdlib = stdlib_declaring_processor_p();
+        let file = parse_test_file(
+            "## expectError (\"2:11: error: nope\")\n\nprocessor P { output stream int out; }\n",
+        );
+
+        let results = run(&file, Some(&stdlib));
+
+        assert_eq!(
+            results[0].actual_error.as_deref(),
+            Some(
+                "3:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
+            )
+        );
+    }
+
+    #[test]
+    fn compile_failure_note_in_the_standard_library_names_its_file() {
+        let stdlib = stdlib_declaring_processor_p();
+        let file = parse_test_file("## testCompile()\n\nprocessor P { output stream int out; }\n");
+
+        let results = run(&file, Some(&stdlib));
+
+        assert_eq!(
+            results[0].outcome,
+            Outcome::Fail(
+                "resolution error produced\n  3:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
+                    .into()
+            )
         );
     }
 

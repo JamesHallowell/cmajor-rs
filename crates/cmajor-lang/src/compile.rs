@@ -103,6 +103,15 @@ impl Program {
     }
 }
 
+impl IntoIterator for Program {
+    type Item = ParsedUnit;
+    type IntoIter = std::vec::IntoIter<ParsedUnit>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.units.into_values()
+    }
+}
+
 impl std::ops::Index<UnitId> for Program {
     type Output = ParsedUnit;
 

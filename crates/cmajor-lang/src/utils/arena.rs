@@ -85,6 +85,10 @@ impl<K, V> Arena<K, V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.items.iter()
     }
+
+    pub fn into_values(self) -> std::vec::IntoIter<V> {
+        self.items.into_iter()
+    }
 }
 
 impl<K, V> Arena<K, V>
