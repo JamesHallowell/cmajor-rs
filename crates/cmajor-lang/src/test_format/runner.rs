@@ -44,39 +44,25 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
             ) {
                 (true, ..) => Outcome::Skipped("disabled".to_string()),
                 (false, Directive::TestCompile, Some(source)) => {
-                    let program = Program::new().with_source_file(SourceFile::new(source));
-
-                    if program.error_tokens().count() != 0 || program.diagnostics().count() != 0 {
-                        let detail = describe_parse_errors(&program);
-                        Outcome::Fail(format!("parse error produced\n{detail}"))
+                    let errors = compile(source, baseline);
+                    if errors.is_empty() {
+                        Outcome::Pass
                     } else {
-                        let errors = resolution_errors(program, baseline);
-                        if !errors.is_empty() {
-                            let detail = errors
-                                .iter()
-                                .map(|error| format!("  {error}"))
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            Outcome::Fail(format!("resolution error produced\n{detail}"))
-                        } else {
-                            Outcome::Pass
-                        }
+                        let detail = errors
+                            .iter()
+                            .map(|error| format!("  {error}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        Outcome::Fail(format!("compile error produced\n{detail}"))
                     }
                 }
                 (false, Directive::ExpectError(_), Some(source)) => {
-                    let program = Program::new().with_source_file(SourceFile::new(source));
-
-                    if program.error_tokens().count() != 0 || program.diagnostics().count() != 0 {
-                        actual_error = Some(describe_parse_errors(&program));
-                        Outcome::Pass
+                    let errors = compile(source, baseline);
+                    if errors.is_empty() {
+                        Outcome::Fail("expected an error but none occurred".to_string())
                     } else {
-                        let errors = resolution_errors(program, baseline);
-                        if !errors.is_empty() {
-                            actual_error = Some(errors.join("\n"));
-                            Outcome::Pass
-                        } else {
-                            Outcome::Fail("expected an error but none occurred".to_string())
-                        }
+                        actual_error = Some(errors.join("\n"));
+                        Outcome::Pass
                     }
                 }
                 _ => Outcome::Skipped(format!("execution of '{name}' not yet supported")),
@@ -91,6 +77,25 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
             }
         })
         .collect()
+}
+
+const REJECTED_WITHOUT_A_DIAGNOSTIC: &str = "error: rejected without a diagnostic";
+
+fn compile(source: String, baseline: Option<&StandardLibrary>) -> Vec<String> {
+    let program = Program::new().with_source_file(SourceFile::new(source));
+
+    let parse_errors: Vec<_> = program
+        .diagnostics()
+        .map(|(unit, diagnostic)| diagnostic.in_unit(unit, &program).to_string())
+        .collect();
+
+    if !parse_errors.is_empty() {
+        parse_errors
+    } else if program.error_tokens().next().is_some() {
+        vec![REJECTED_WITHOUT_A_DIAGNOSTIC.to_string()]
+    } else {
+        resolution_errors(program, baseline)
+    }
 }
 
 fn resolution_errors(program: Program, baseline: Option<&StandardLibrary>) -> Vec<String> {
@@ -113,28 +118,6 @@ fn resolution_errors(program: Program, baseline: Option<&StandardLibrary>) -> Ve
         .iter()
         .map(|(unit, diagnostic)| diagnostic.in_unit(*unit, &program).to_string())
         .collect()
-}
-
-fn describe_parse_errors(program: &Program) -> String {
-    let error_tokens = program.error_tokens().map(|(unit, token)| {
-        let unit = &program[unit];
-        let location = unit.location(token).start;
-        let line_text = unit
-            .source
-            .contents()
-            .lines()
-            .nth(usize::from(location.line) - 1)
-            .unwrap_or("");
-        let token_text = unit.text(token);
-        format!("  {location}: at {token_text:?} in {line_text:?}")
-    });
-
-    let diagnostics = program.diagnostics().map(|(_, d)| format!("  {d}"));
-
-    error_tokens
-        .chain(diagnostics)
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]
@@ -167,7 +150,7 @@ mod tests {
                 name: "testCompile".into(),
                 line: 1,
                 outcome: Outcome::Fail(
-                    "parse error produced\n  2:9: at \"{\" in \"void f( { }\"\n  2:9: error: Expected a type\n  2:11: error: Found \"}\" when expecting identifier\n  2:11: error: Found \"}\" when expecting \")\"\n  2:11: error: Found \"}\" when expecting \"{\"".into()
+                    "compile error produced\n  2:9: error: Expected a type\n  2:11: error: Found \"}\" when expecting identifier\n  2:11: error: Found \"}\" when expecting \")\"\n  2:11: error: Found \"}\" when expecting \"{\"".into()
                 ),
                 expected_error: None,
                 actual_error: None,
@@ -181,9 +164,11 @@ mod tests {
             "## expectError (\"2:17: error: Expected a type\")\n\n/* é */ void f( { }\n",
         );
         let results = run(&file, None);
-        let actual = results[0].actual_error.as_deref().unwrap();
-        assert!(actual.contains("2:17: at \"{\""), "{actual}");
-        assert!(actual.contains("2:17: error: Expected a type"), "{actual}");
+        let first_error = results[0]
+            .actual_error
+            .as_deref()
+            .and_then(|actual| actual.lines().next());
+        assert_eq!(first_error, Some("2:17: error: Expected a type"));
     }
 
     #[test]
@@ -205,8 +190,36 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: Some("2:9: error: nope".into()),
-                actual_error: Some("  2:9: at \"{\" in \"void f( { }\"\n  2:9: error: Expected a type\n  2:11: error: Found \"}\" when expecting identifier\n  2:11: error: Found \"}\" when expecting \")\"\n  2:11: error: Found \"}\" when expecting \"{\"".into()),
+                actual_error: Some("2:9: error: Expected a type\n2:11: error: Found \"}\" when expecting identifier\n2:11: error: Found \"}\" when expecting \")\"\n2:11: error: Found \"}\" when expecting \"{\"".into()),
             }]
+        );
+    }
+
+    #[test]
+    fn expect_error_passes_when_the_parser_rejects_code_without_a_diagnostic() {
+        let file =
+            parse_test_file("## expectError (\"2:12: error: nope\")\n\nvoid f() { node {} }\n");
+
+        let results = run(&file, None);
+
+        assert_eq!(results[0].outcome, Outcome::Pass);
+        assert_eq!(
+            results[0].actual_error.as_deref(),
+            Some(REJECTED_WITHOUT_A_DIAGNOSTIC)
+        );
+    }
+
+    #[test]
+    fn test_compile_fails_when_the_parser_rejects_code_without_a_diagnostic() {
+        let file = parse_test_file("## testCompile()\n\nvoid f() { node {} }\n");
+
+        let results = run(&file, None);
+
+        assert_eq!(
+            results[0].outcome,
+            Outcome::Fail(format!(
+                "compile error produced\n  {REJECTED_WITHOUT_A_DIAGNOSTIC}"
+            ))
         );
     }
 
@@ -293,7 +306,7 @@ mod tests {
         assert_eq!(
             results[0].outcome,
             Outcome::Fail(
-                "resolution error produced\n  2:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
+                "compile error produced\n  2:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
                     .into()
             )
         );
