@@ -2,6 +2,6 @@ mod parser;
 mod runner;
 
 pub use {
-    parser::{Directive, Section, TestFile, parse_test_file},
+    parser::{Directive, ExpectedError, Section, TestFile, TestNamespace, parse_test_file},
     runner::{Outcome, TestResult, run},
 };

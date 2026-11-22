@@ -35,9 +35,9 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
         .iter()
         .filter(|section| section.directive != Directive::Global)
         .map(|section| {
-            let name = directive_name(&section.directive);
+            let name = section.directive.to_string();
             let expected_error = match &section.directive {
-                Directive::ExpectError { .. } => section.directive.expected_error_message(),
+                Directive::ExpectError(expected) => Some(expected.message.clone()),
                 _ => None,
             };
 
@@ -71,7 +71,7 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                             }
                         }
                     }
-                    Directive::ExpectError { .. } => {
+                    Directive::ExpectError(_) => {
                         let program = Program::new().with_source_file(SourceFile::new(format!(
                             "{global_code}\n{}",
                             section.body
@@ -163,16 +163,6 @@ fn line_col(source: &str, byte_offset: usize) -> (usize, usize) {
         }
     }
     (line, col)
-}
-
-fn directive_name(directive: &Directive) -> String {
-    match directive {
-        Directive::Global => "global".to_string(),
-        Directive::TestCompile => "testCompile".to_string(),
-        Directive::ExpectError { .. } => "expectError".to_string(),
-        Directive::Call { name, .. } => name.clone(),
-        Directive::Unknown { raw } => raw.clone(),
-    }
 }
 
 #[cfg(test)]

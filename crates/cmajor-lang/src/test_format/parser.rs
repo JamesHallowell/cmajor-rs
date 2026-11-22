@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TestFile {
     pub prelude: String,
@@ -16,34 +18,115 @@ pub struct Section {
 pub enum Directive {
     Global,
     TestCompile,
-    ExpectError { error: String },
-    Call { name: String, raw_args: String },
+    TestFunction,
+    TestProcessor,
+    TestConsole,
+    TestInputEndpoints,
+    ExpectError(ExpectedError),
+    Other { name: String },
     Unknown { raw: String },
 }
 
-impl Directive {
-    pub fn expected_error_message(&self) -> Option<String> {
-        let Directive::ExpectError { error, .. } = self else {
-            return None;
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ExpectedError {
+    pub message: String,
+    pub namespace: TestNamespace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TestNamespace {
+    #[default]
+    Wrapped,
+    Unwrapped,
+}
+
+impl fmt::Display for Directive {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Directive::Global => "global",
+            Directive::TestCompile => "testCompile",
+            Directive::TestFunction => "testFunction",
+            Directive::TestProcessor => "testProcessor",
+            Directive::TestConsole => "testConsole",
+            Directive::TestInputEndpoints => "testInputEndpoints",
+            Directive::ExpectError(_) => "expectError",
+            Directive::Other { name } => name,
+            Directive::Unknown { raw } => raw,
+        })
+    }
+}
+
+impl ExpectedError {
+    fn parse(args: &str) -> Self {
+        let mut args = split_top_level_commas(args).map(str::trim);
+        let message = args
+            .next()
+            .and_then(parse_string_literal)
+            .unwrap_or_default();
+        let namespace = args
+            .next()
+            .map(TestNamespace::from_options)
+            .unwrap_or_default();
+        Self { message, namespace }
+    }
+}
+
+impl TestNamespace {
+    fn from_options(options: &str) -> Self {
+        let Some(fields) = options
+            .strip_prefix('{')
+            .and_then(|fields| fields.strip_suffix('}'))
+        else {
+            return TestNamespace::Wrapped;
         };
-        let start = error.find('"')? + 1;
-        let rest = &error[start..];
-        let mut out = String::new();
-        let mut chars = rest.chars();
-        loop {
-            match chars.next()? {
-                '\\' => match chars.next()? {
-                    '"' => out.push('"'),
-                    '\\' => out.push('\\'),
-                    'n' => out.push('\n'),
-                    'r' => out.push('\r'),
-                    't' => out.push('\t'),
-                    other => out.push(other),
-                },
-                '"' => return Some(out),
-                c => out.push(c),
-            }
+        let do_not_wrap = split_top_level_commas(fields)
+            .filter_map(property)
+            .filter(|(key, _)| key == "doNotWrapInTestNamespace")
+            .last();
+        match do_not_wrap {
+            Some((_, value)) if is_truthy(value) => TestNamespace::Unwrapped,
+            _ => TestNamespace::Wrapped,
         }
+    }
+}
+
+fn property(field: &str) -> Option<(String, &str)> {
+    let (colon, ..) = unquoted_chars(field).find(|&(_, c, depth)| c == ':' && depth == 0)?;
+    let key = field[..colon].trim();
+    let key = if key.starts_with(['"', '\'']) {
+        parse_string_literal(key)?
+    } else {
+        key.to_string()
+    };
+    Some((key, field[colon + 1..].trim()))
+}
+
+fn is_truthy(literal: &str) -> bool {
+    match literal {
+        "false" | "null" | "undefined" | "NaN" | "\"\"" | "''" | "``" => false,
+        _ => number_value(literal).is_none_or(|n| n != 0.0 && !n.is_nan()),
+    }
+}
+
+fn number_value(literal: &str) -> Option<f64> {
+    let unsigned = literal.trim_start_matches(['-', '+']);
+    let digits = unsigned
+        .strip_suffix('n')
+        .unwrap_or(unsigned)
+        .replace('_', "");
+    let prefixed = [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ]
+    .into_iter()
+    .find_map(|(prefix, radix)| Some((digits.strip_prefix(prefix)?, radix)));
+    match prefixed {
+        Some((digits, radix)) => u128::from_str_radix(digits, radix).ok().map(|n| n as f64),
+        None => digits.parse().ok(),
     }
 }
 
@@ -101,19 +184,25 @@ fn classify_header(header_rest: &str) -> (Directive, bool) {
 
 fn classify_directive(rest: &str) -> Directive {
     let rest = rest.trim();
-    if rest == "global" {
-        return Directive::Global;
-    }
+    let unknown = || Directive::Unknown {
+        raw: rest.to_string(),
+    };
 
-    match parse_call(rest) {
-        Some(("expectError", error)) => Directive::ExpectError { error },
-        Some(("testCompile", _)) => Directive::TestCompile,
-        Some((name, raw_args)) if name != "if" => Directive::Call {
+    let Some(Call { name, args }) = Call::parse(rest) else {
+        return unknown();
+    };
+
+    match name {
+        "global" if args.is_none() => Directive::Global,
+        "testCompile" => Directive::TestCompile,
+        "testFunction" => Directive::TestFunction,
+        "testProcessor" => Directive::TestProcessor,
+        "testConsole" => Directive::TestConsole,
+        "testInputEndpoints" => Directive::TestInputEndpoints,
+        "expectError" => Directive::ExpectError(ExpectedError::parse(args.unwrap_or_default())),
+        "if" => unknown(),
+        name => Directive::Other {
             name: name.to_string(),
-            raw_args,
-        },
-        _ => Directive::Unknown {
-            raw: rest.to_string(),
         },
     }
 }
@@ -127,57 +216,134 @@ fn strip_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
     }
 }
 
-fn parse_call(text: &str) -> Option<(&str, String)> {
-    let name_len = text
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .count();
-    if name_len == 0 {
-        return None;
-    }
-    let name = &text[..name_len];
+struct Call<'a> {
+    name: &'a str,
+    args: Option<&'a str>,
+}
 
-    let after_name = &text[name.len()..];
-    let open_offset = after_name.find(|c: char| !c.is_whitespace())?;
-    if after_name[open_offset..].chars().next()? != '(' {
-        return None;
-    }
+impl<'a> Call<'a> {
+    fn parse(text: &'a str) -> Option<Self> {
+        let name_len = text
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(text.len());
+        if name_len == 0 {
+            return None;
+        }
+        let (name, rest) = text.split_at(name_len);
 
-    let paren_start = name.len() + open_offset;
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return Some(Self { name, args: None });
+        }
+
+        if !rest.starts_with('(') {
+            return None;
+        }
+        let (close, ..) = unquoted_chars(rest).find(|&(_, c, depth)| c == ')' && depth == 0)?;
+        ends_statement(&rest[close + 1..]).then(|| Self {
+            name,
+            args: Some(rest[1..close].trim()),
+        })
+    }
+}
+
+fn ends_statement(text: &str) -> bool {
+    let text = text.trim_start();
+    let text = text.strip_prefix(';').unwrap_or(text).trim_start();
+    text.is_empty() || text.starts_with("//")
+}
+
+fn split_top_level_commas(text: &str) -> impl Iterator<Item = &str> {
+    let mut start = 0;
+    unquoted_chars(text)
+        .filter(|&(_, c, depth)| c == ',' && depth == 0)
+        .map(|(i, ..)| i)
+        .chain([text.len()])
+        .map(move |end| {
+            let part = &text[start..end];
+            start = end + 1;
+            part
+        })
+}
+
+fn unquoted_chars(text: &str) -> impl Iterator<Item = (usize, char, usize)> {
     let mut depth = 0usize;
-    let mut in_string = false;
+    let mut quote = None;
     let mut escaped = false;
-    let mut close_pos = None;
-
-    for (i, c) in text[paren_start..].char_indices() {
-        if in_string {
+    text.char_indices().filter_map(move |(i, c)| {
+        if let Some(open) = quote {
             if escaped {
                 escaped = false;
             } else if c == '\\' {
                 escaped = true;
-            } else if c == '"' {
-                in_string = false;
+            } else if c == open {
+                quote = None;
             }
-            continue;
+            return None;
         }
-
         match c {
-            '"' => in_string = true,
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    close_pos = Some(paren_start + i);
-                    break;
-                }
+            '"' | '\'' => {
+                quote = Some(c);
+                None
             }
-            _ => {}
+            '(' | '[' | '{' => {
+                depth += 1;
+                Some((i, c, depth - 1))
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                Some((i, c, depth))
+            }
+            _ => Some((i, c, depth)),
+        }
+    })
+}
+
+fn parse_string_literal(literal: &str) -> Option<String> {
+    let mut chars = literal.char_indices().peekable();
+    let quote = chars
+        .next()
+        .map(|(_, c)| c)
+        .filter(|c| matches!(c, '"' | '\''))?;
+    let mut value = String::new();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => value.push(match chars.next()?.1 {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'v' => '\u{b}',
+                '0' => '\0',
+                'x' => hex_char(&take_chars(&mut chars, 2))?,
+                'u' if chars.next_if(|&(_, c)| c == '{').is_some() => {
+                    let digits: String = chars
+                        .by_ref()
+                        .map(|(_, c)| c)
+                        .take_while(|&c| c != '}')
+                        .collect();
+                    hex_char(&digits)?
+                }
+                'u' => hex_char(&take_chars(&mut chars, 4))?,
+                other => other,
+            }),
+            c if c == quote => return (i + 1 == literal.len()).then_some(value),
+            c => value.push(c),
         }
     }
+    None
+}
 
-    let close_pos = close_pos?;
-    let raw_args = text[paren_start + 1..close_pos].trim().to_string();
-    Some((name, raw_args))
+fn take_chars(chars: &mut impl Iterator<Item = (usize, char)>, count: usize) -> String {
+    chars.take(count).map(|(_, c)| c).collect()
+}
+
+fn hex_char(digits: &str) -> Option<char> {
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(digits, 16).ok()?)
 }
 
 #[cfg(test)]
@@ -212,6 +378,18 @@ mod tests {
         assert_eq!(file.sections[0].body, "\nprocessor P {}\n");
     }
 
+    fn directive_of(header: &str) -> Directive {
+        let file = parse_test_file(&format!("{header}\n\nvoid f() {{}}\n"));
+        file.sections[0].directive.clone()
+    }
+
+    fn expected_error(message: &str, namespace: TestNamespace) -> Directive {
+        Directive::ExpectError(ExpectedError {
+            message: message.to_string(),
+            namespace,
+        })
+    }
+
     #[test]
     fn disabled_wraps_inner_directive() {
         let file =
@@ -220,33 +398,281 @@ mod tests {
         assert!(section.disabled);
         assert_eq!(
             section.directive,
-            Directive::ExpectError {
-                error: "\"2:9: error: nope\"".to_string(),
+            expected_error("2:9: error: nope", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn test_compile_header_parses_to_test_compile() {
+        assert_eq!(directive_of("## testCompile()"), Directive::TestCompile);
+    }
+
+    #[test]
+    fn test_function_header_parses_to_test_function() {
+        assert_eq!(directive_of("## testFunction()"), Directive::TestFunction);
+    }
+
+    #[test]
+    fn test_processor_header_parses_to_test_processor() {
+        assert_eq!(directive_of("## testProcessor()"), Directive::TestProcessor);
+    }
+
+    #[test]
+    fn test_console_header_parses_to_test_console() {
+        assert_eq!(
+            directive_of("## testConsole (\"hello\")"),
+            Directive::TestConsole
+        );
+    }
+
+    #[test]
+    fn test_input_endpoints_header_parses_to_test_input_endpoints() {
+        assert_eq!(
+            directive_of("## testInputEndpoints ([\"in\"])"),
+            Directive::TestInputEndpoints
+        );
+    }
+
+    #[test]
+    fn call_arguments_may_contain_nested_parentheses() {
+        assert_eq!(
+            directive_of("## testFunction (makeArgs (1))"),
+            Directive::TestFunction
+        );
+    }
+
+    #[test]
+    fn trailing_semicolon_and_comment_are_ignored() {
+        assert_eq!(
+            directive_of("## testCompile(); // flaky on wasm"),
+            Directive::TestCompile
+        );
+    }
+
+    #[test]
+    fn trailing_code_makes_the_header_unknown() {
+        assert_eq!(
+            directive_of("## testCompile() testFunction()"),
+            Directive::Unknown {
+                raw: "testCompile() testFunction()".to_string(),
             }
         );
     }
 
     #[test]
-    fn expect_error_message_is_extracted_and_unescaped() {
-        let file =
-            parse_test_file("## expectError (\"2:9: error: Found \\\"XX\\\"\")\n\nvoid f() {}\n");
-        let msg = file.sections[0].directive.expected_error_message().unwrap();
-        assert_eq!(msg, "2:9: error: Found \"XX\"");
+    fn expect_error_message_is_unescaped() {
+        assert_eq!(
+            directive_of(r#"## expectError ("2:9: error: Found \"XX\"")"#),
+            expected_error("2:9: error: Found \"XX\"", TestNamespace::Wrapped)
+        );
     }
 
     #[test]
-    fn raw_args_balances_nested_parens() {
-        let file = parse_test_file(
-            "## runScript ({ frequency:1000, blockSize:32, samplesToRender:1000, subDir:\"gain\"})\n\nprocessor P {}\n",
-        );
-        let Directive::Call { name, raw_args } = &file.sections[0].directive else {
-            panic!("expected a call directive");
-        };
-        assert_eq!(name, "runScript");
+    fn expect_error_message_may_be_single_quoted() {
         assert_eq!(
-            raw_args,
-            "{ frequency:1000, blockSize:32, samplesToRender:1000, subDir:\"gain\"}"
+            directive_of("## expectError ('10:20: error: An array index must be an integer type')"),
+            expected_error(
+                "10:20: error: An array index must be an integer type",
+                TestNamespace::Wrapped
+            )
         );
+    }
+
+    #[test]
+    fn expect_error_message_may_contain_parentheses_and_commas() {
+        assert_eq!(
+            directive_of(
+                "## expectError (\"1:1: error: Cannot connect in (float32<2>) to out (float32<3>), sorry\")"
+            ),
+            expected_error(
+                "1:1: error: Cannot connect in (float32<2>) to out (float32<3>), sorry",
+                TestNamespace::Wrapped
+            )
+        );
+    }
+
+    #[test]
+    fn bare_expect_error_has_an_empty_message() {
+        assert_eq!(
+            directive_of("## expectError"),
+            expected_error("", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn do_not_wrap_option_parses_to_an_unwrapped_expected_error() {
+        assert_eq!(
+            directive_of(
+                "## expectError (\"2:11: error: The name 'std' is already in use\", {\"doNotWrapInTestNamespace\":\"true\"})"
+            ),
+            expected_error(
+                "2:11: error: The name 'std' is already in use",
+                TestNamespace::Unwrapped
+            )
+        );
+    }
+
+    #[test]
+    fn falsy_do_not_wrap_option_leaves_the_test_wrapped() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: error: a\", { doNotWrapInTestNamespace: false })"),
+            expected_error("1:1: error: a", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn unrelated_expect_error_options_leave_the_test_wrapped() {
+        assert_eq!(
+            directive_of(
+                "## expectError (\"error: Stack size limit exceeded\", { maxStackSize: 50000 })"
+            ),
+            expected_error("error: Stack size limit exceeded", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn unreadable_expect_error_message_is_empty() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: \" + \"error: a\")"),
+            expected_error("", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn unreadable_expect_error_options_leave_the_test_wrapped() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: error: a\", getOptions())"),
+            expected_error("1:1: error: a", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn quoted_option_key_may_contain_a_colon() {
+        assert_eq!(
+            directive_of(
+                "## expectError (\"1:1: error: a\", {\"a:b\": 1, \"doNotWrapInTestNamespace\": true})"
+            ),
+            expected_error("1:1: error: a", TestNamespace::Unwrapped)
+        );
+    }
+
+    #[test]
+    fn shorthand_option_is_ignored() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: error: a\", { doNotWrapInTestNamespace })"),
+            expected_error("1:1: error: a", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn last_do_not_wrap_option_wins() {
+        assert_eq!(
+            directive_of(
+                "## expectError (\"1:1: error: a\", { doNotWrapInTestNamespace: true, doNotWrapInTestNamespace: false })"
+            ),
+            expected_error("1:1: error: a", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn zero_in_any_numeric_form_leaves_the_test_wrapped() {
+        for zero in [
+            "0", "0.0", "-0", ".0", "0e5", "0x0", "0b0", "0o0", "0n", "0_0",
+        ] {
+            assert_eq!(
+                directive_of(&format!(
+                    "## expectError (\"1:1: error: a\", {{ doNotWrapInTestNamespace: {zero} }})"
+                )),
+                expected_error("1:1: error: a", TestNamespace::Wrapped),
+                "{zero}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_zero_number_unwraps_the_test() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: error: a\", { doNotWrapInTestNamespace: 0x1 })"),
+            expected_error("1:1: error: a", TestNamespace::Unwrapped)
+        );
+    }
+
+    #[test]
+    fn hex_escape_is_decoded() {
+        assert_eq!(
+            directive_of(r#"## expectError ("Found \x22x\x22")"#),
+            expected_error("Found \"x\"", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn four_digit_unicode_escape_is_decoded() {
+        assert_eq!(
+            directive_of(&format!(
+                "## expectError (\"Found {0}u0022x{0}u0022\")",
+                '\\'
+            )),
+            expected_error("Found \"x\"", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn braced_unicode_escape_is_decoded() {
+        assert_eq!(
+            directive_of(r#"## expectError ("Found \u{1F600}")"#),
+            expected_error("Found \u{1F600}", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn control_character_escapes_are_decoded() {
+        assert_eq!(
+            directive_of(r#"## expectError ("\b\f\v\0")"#),
+            expected_error("\u{8}\u{c}\u{b}\0", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn malformed_escape_makes_the_message_empty() {
+        assert_eq!(
+            directive_of(r#"## expectError ("bad \x4")"#),
+            expected_error("", TestNamespace::Wrapped)
+        );
+    }
+
+    #[test]
+    fn other_directive_keeps_only_its_name() {
+        assert_eq!(
+            directive_of(
+                "## runScript ({ frequency:1000, blockSize:32, samplesToRender:1000, subDir:\"gain\"})"
+            ),
+            Directive::Other {
+                name: "runScript".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn other_directive_may_omit_its_arguments() {
+        assert_eq!(
+            directive_of("## performanceTest"),
+            Directive::Other {
+                name: "performanceTest".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_kind_displays_as_its_header_name() {
+        assert_eq!(
+            directive_of("## expectError (\"1:1: error: a\")").to_string(),
+            "expectError"
+        );
+    }
+
+    #[test]
+    fn other_directive_displays_as_its_name() {
+        assert_eq!(directive_of("## testPatch ()").to_string(), "testPatch");
     }
 
     #[test]
