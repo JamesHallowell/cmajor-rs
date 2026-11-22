@@ -67,7 +67,7 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                                 let detail = resolution
                                     .diagnostics
                                     .iter()
-                                    .map(|d| format!("  {d}"))
+                                    .map(|(_, d)| format!("  {d}"))
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 Outcome::Fail(format!("resolution error produced\n{detail}"))
@@ -97,7 +97,7 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
                                     resolution
                                         .diagnostics
                                         .iter()
-                                        .map(|d| d.to_string())
+                                        .map(|(_, d)| d.to_string())
                                         .collect::<Vec<_>>()
                                         .join("\n"),
                                 );
@@ -199,7 +199,7 @@ mod tests {
                 name: "testCompile".into(),
                 line: 1,
                 outcome: Outcome::Fail(
-                    "parse error produced\n  3:9: at \"{\" in \"void f( { }\"\n  3:9: expected type, found BraceLeft\n  3:11: expected Identifier, found BraceRight\n  3:11: expected token! (')'), found BraceRight\n  3:11: expected BraceLeft, found BraceRight".into()
+                    "parse error produced\n  3:9: at \"{\" in \"void f( { }\"\n  3:9: error: Expected a type\n  3:11: error: Found \"}\" when expecting identifier\n  3:11: error: Found \"}\" when expecting \")\"\n  3:11: error: Found \"}\" when expecting \"{\"".into()
                 ),
                 expected_error: None,
                 actual_error: None,
@@ -226,7 +226,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: Some("2:9: error: nope".into()),
-                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"\n  3:9: expected type, found BraceLeft\n  3:11: expected Identifier, found BraceRight\n  3:11: expected token! (')'), found BraceRight\n  3:11: expected BraceLeft, found BraceRight".into()),
+                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"\n  3:9: error: Expected a type\n  3:11: error: Found \"}\" when expecting identifier\n  3:11: error: Found \"}\" when expecting \")\"\n  3:11: error: Found \"}\" when expecting \"{\"".into()),
             }]
         );
     }

@@ -1,121 +1,85 @@
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+macro_rules! keywords {
+    ($($variant:ident => $text:literal,)*) => {
+        #[repr(u8)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Keyword {
+            $($variant,)*
+        }
 
-pub enum Keyword {
-    Bool,
-    Break,
-    Case,
-    Catch,
-    Class,
-    Complex,
-    Complex32,
-    Complex64,
-    Connection,
-    Const,
-    Continue,
-    Default,
-    Do,
-    Double,
-    Else,
-    Enum,
-    Event,
-    External,
-    False,
-    Fixed,
-    Float,
-    Float32,
-    Float64,
-    For,
-    ForwardBranch,
-    Graph,
-    If,
-    Import,
-    Input,
-    Int,
-    Int32,
-    Int64,
-    Let,
-    Loop,
-    Namespace,
-    Node,
-    Operator,
-    Output,
-    Private,
-    Processor,
-    Public,
-    Return,
-    String,
-    Struct,
-    Switch,
-    Throw,
-    True,
-    Try,
-    Using,
-    Var,
-    Void,
-    While,
+        impl Keyword {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Keyword::$variant => $text,)*
+                }
+            }
+        }
+
+        impl TryFrom<&str> for Keyword {
+            type Error = ();
+
+            fn try_from(s: &str) -> Result<Self, Self::Error> {
+                match s {
+                    $($text => Ok(Keyword::$variant),)*
+                    _ => Err(()),
+                }
+            }
+        }
+    };
 }
 
-impl TryFrom<&str> for Keyword {
-    type Error = ();
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Ok(match s {
-            "bool" => Keyword::Bool,
-            "break" => Keyword::Break,
-            "case" => Keyword::Case,
-            "catch" => Keyword::Catch,
-            "class" => Keyword::Class,
-            "complex" => Keyword::Complex,
-            "complex32" => Keyword::Complex32,
-            "complex64" => Keyword::Complex64,
-            "connection" => Keyword::Connection,
-            "const" => Keyword::Const,
-            "continue" => Keyword::Continue,
-            "default" => Keyword::Default,
-            "do" => Keyword::Do,
-            "double" => Keyword::Double,
-            "else" => Keyword::Else,
-            "enum" => Keyword::Enum,
-            "event" => Keyword::Event,
-            "external" => Keyword::External,
-            "false" => Keyword::False,
-            "fixed" => Keyword::Fixed,
-            "float" => Keyword::Float,
-            "float32" => Keyword::Float32,
-            "float64" => Keyword::Float64,
-            "for" => Keyword::For,
-            "forward_branch" => Keyword::ForwardBranch,
-            "graph" => Keyword::Graph,
-            "if" => Keyword::If,
-            "import" => Keyword::Import,
-            "input" => Keyword::Input,
-            "int" => Keyword::Int,
-            "int32" => Keyword::Int32,
-            "int64" => Keyword::Int64,
-            "let" => Keyword::Let,
-            "loop" => Keyword::Loop,
-            "namespace" => Keyword::Namespace,
-            "node" => Keyword::Node,
-            "operator" => Keyword::Operator,
-            "output" => Keyword::Output,
-            "private" => Keyword::Private,
-            "processor" => Keyword::Processor,
-            "public" => Keyword::Public,
-            "return" => Keyword::Return,
-            "string" => Keyword::String,
-            "struct" => Keyword::Struct,
-            "switch" => Keyword::Switch,
-            "throw" => Keyword::Throw,
-            "true" => Keyword::True,
-            "try" => Keyword::Try,
-            "using" => Keyword::Using,
-            "var" => Keyword::Var,
-            "void" => Keyword::Void,
-            "while" => Keyword::While,
-            _ => return Err(()),
-        })
-    }
+keywords! {
+    Bool => "bool",
+    Break => "break",
+    Case => "case",
+    Catch => "catch",
+    Class => "class",
+    Complex => "complex",
+    Complex32 => "complex32",
+    Complex64 => "complex64",
+    Connection => "connection",
+    Const => "const",
+    Continue => "continue",
+    Default => "default",
+    Do => "do",
+    Double => "double",
+    Else => "else",
+    Enum => "enum",
+    Event => "event",
+    External => "external",
+    False => "false",
+    Fixed => "fixed",
+    Float => "float",
+    Float32 => "float32",
+    Float64 => "float64",
+    For => "for",
+    ForwardBranch => "forward_branch",
+    Graph => "graph",
+    If => "if",
+    Import => "import",
+    Input => "input",
+    Int => "int",
+    Int32 => "int32",
+    Int64 => "int64",
+    Let => "let",
+    Loop => "loop",
+    Namespace => "namespace",
+    Node => "node",
+    Operator => "operator",
+    Output => "output",
+    Private => "private",
+    Processor => "processor",
+    Public => "public",
+    Return => "return",
+    String => "string",
+    Struct => "struct",
+    Switch => "switch",
+    Throw => "throw",
+    True => "true",
+    Try => "try",
+    Using => "using",
+    Var => "var",
+    Void => "void",
+    While => "while",
 }
 
 #[repr(u8)]
@@ -239,6 +203,86 @@ impl TokenKind {
 
     pub fn is_end_of_file(self) -> bool {
         self == TokenKind::EndOfFile
+    }
+}
+
+impl Literal {
+    fn description(self) -> &'static str {
+        match self {
+            Literal::Int32 => "int32 literal",
+            Literal::Int64 => "int64 literal",
+            Literal::Float32 => "float32 literal",
+            Literal::Float64 => "float64 literal",
+            Literal::Imaginary32 => "imag32 imaginary literal",
+            Literal::Imaginary64 => "imag64 imaginary literal",
+            Literal::String => "string literal",
+        }
+    }
+}
+
+impl std::fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let spelling = match *self {
+            TokenKind::Identifier => return f.write_str("identifier"),
+            TokenKind::EndOfFile => return f.write_str("end-of-file"),
+            TokenKind::Error => return f.write_str("unrecognised character"),
+            TokenKind::Literal(literal) => return f.write_str(literal.description()),
+            TokenKind::Trivia(_) => return f.write_str("whitespace or comment"),
+            TokenKind::Keyword(keyword) => keyword.as_str(),
+            TokenKind::Ampersand => "&",
+            TokenKind::AmpersandAmpersand => "&&",
+            TokenKind::AmpersandAmpersandEqual => "&&=",
+            TokenKind::AmpersandEqual => "&=",
+            TokenKind::AngleBracketLeft => "<",
+            TokenKind::AngleBracketLeftEqual => "<=",
+            TokenKind::AngleBracketRight => ">",
+            TokenKind::AngleBracketRightEqual => ">=",
+            TokenKind::ArrowLeft => "<-",
+            TokenKind::ArrowRight => "->",
+            TokenKind::Bang => "!",
+            TokenKind::BangEqual => "!=",
+            TokenKind::BraceLeft => "{",
+            TokenKind::BraceRight => "}",
+            TokenKind::BracketLeft => "[",
+            TokenKind::BracketRight => "]",
+            TokenKind::Caret => "^",
+            TokenKind::CaretEqual => "^=",
+            TokenKind::Colon => ":",
+            TokenKind::ColonColon => "::",
+            TokenKind::Comma => ",",
+            TokenKind::Dot => ".",
+            TokenKind::Equal => "=",
+            TokenKind::EqualEqual => "==",
+            TokenKind::Minus => "-",
+            TokenKind::MinusEqual => "-=",
+            TokenKind::MinusMinus => "--",
+            TokenKind::ParenthesisLeft => "(",
+            TokenKind::ParenthesisRight => ")",
+            TokenKind::Percent => "%",
+            TokenKind::PercentEqual => "%=",
+            TokenKind::Pipe => "|",
+            TokenKind::PipeEqual => "|=",
+            TokenKind::PipePipe => "||",
+            TokenKind::PipePipeEqual => "||=",
+            TokenKind::Plus => "+",
+            TokenKind::PlusEqual => "+=",
+            TokenKind::PlusPlus => "++",
+            TokenKind::Question => "?",
+            TokenKind::Semicolon => ";",
+            TokenKind::ShiftLeft => "<<",
+            TokenKind::ShiftLeftEqual => "<<=",
+            TokenKind::ShiftRight => ">>",
+            TokenKind::ShiftRightEqual => ">>=",
+            TokenKind::ShiftRightShiftRight => ">>>",
+            TokenKind::ShiftRightShiftRightEqual => ">>>=",
+            TokenKind::Slash => "/",
+            TokenKind::SlashEqual => "/=",
+            TokenKind::Star => "*",
+            TokenKind::StarEqual => "*=",
+            TokenKind::StarStar => "**",
+            TokenKind::Tilde => "~",
+        };
+        write!(f, "\"{spelling}\"")
     }
 }
 

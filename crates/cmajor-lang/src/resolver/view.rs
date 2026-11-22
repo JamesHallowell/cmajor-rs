@@ -88,7 +88,7 @@ impl serde::Serialize for ResolutionView {
                 .resolution
                 .diagnostics
                 .iter()
-                .map(ToString::to_string)
+                .map(|(_, diagnostic)| diagnostic.to_string())
                 .collect(),
         }
         .serialize(serializer)

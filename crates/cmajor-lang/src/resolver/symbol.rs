@@ -2,12 +2,13 @@ use {
     crate::{
         arena_key,
         ast::NodeId,
+        compile::Program,
         lexer::TokenId,
         resolver::{
             Scope, ScopeId,
             unit::{Anchor, UnitId},
         },
-        utils::arena::Arena,
+        utils::arena::{Arena, SparseSecondaryArena},
     },
     std::assert_matches,
 };
@@ -57,10 +58,20 @@ pub struct Symbol {
     pub scope: ScopeId,
 }
 
+impl Symbol {
+    pub fn name<'p>(&self, program: &'p Program) -> &'p str {
+        match self.origin {
+            SymbolOrigin::Builtin { name } => name,
+            SymbolOrigin::Source { unit, name, .. } => program[unit].text(name),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
     scopes: Arena<ScopeId, Scope>,
     symbols: Arena<SymbolId, Symbol>,
+    inner_scopes: SparseSecondaryArena<SymbolId, ScopeId>,
 }
 
 impl Default for SymbolTable {
@@ -77,6 +88,7 @@ impl SymbolTable {
         Self {
             scopes,
             symbols: Arena::default(),
+            inner_scopes: SparseSecondaryArena::default(),
         }
     }
 
@@ -93,9 +105,36 @@ impl SymbolTable {
     pub fn new_scope(&mut self, parent: ScopeId, start: Anchor) -> ScopeId {
         self.scopes.push(Scope::Child {
             parent,
+            owner: None,
             symbols: Vec::new(),
             start,
         })
+    }
+
+    pub fn new_inner_scope(&mut self, owner: SymbolId, start: Anchor) -> ScopeId {
+        let inner = self.scopes.push(Scope::Child {
+            parent: self.symbols[owner].scope,
+            owner: Some(owner),
+            symbols: Vec::new(),
+            start,
+        });
+        self.inner_scopes.insert(owner, inner);
+        inner
+    }
+
+    pub fn inner_scope(&self, symbol: SymbolId) -> Option<ScopeId> {
+        self.inner_scopes.get(symbol).copied()
+    }
+
+    pub fn qualified_path(&self, symbol: SymbolId) -> Vec<SymbolId> {
+        let mut path = vec![symbol];
+        let mut current = symbol;
+        while let Some(owner) = self.scope(self.symbols[current].scope).owner() {
+            path.push(owner);
+            current = owner;
+        }
+        path.reverse();
+        path
     }
 
     pub fn child_scopes(&self, scope: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {

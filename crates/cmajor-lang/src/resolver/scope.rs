@@ -1,4 +1,7 @@
-use crate::{arena_key, resolver::SymbolId, resolver::unit::Anchor};
+use crate::{
+    arena_key,
+    resolver::{SymbolId, unit::Anchor},
+};
 
 arena_key!(ScopeId);
 
@@ -9,6 +12,7 @@ pub enum Scope {
     },
     Child {
         parent: ScopeId,
+        owner: Option<SymbolId>,
         symbols: Vec<SymbolId>,
         start: Anchor,
     },
@@ -37,6 +41,13 @@ impl Scope {
         match self {
             Self::Global { .. } => None,
             Self::Child { parent, .. } => Some(*parent),
+        }
+    }
+
+    pub fn owner(&self) -> Option<SymbolId> {
+        match self {
+            Self::Global { .. } => None,
+            Self::Child { owner, .. } => *owner,
         }
     }
 

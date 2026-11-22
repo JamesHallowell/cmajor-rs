@@ -9,6 +9,6 @@ pub mod utils;
 
 pub use {
     compile::{ParsedUnit, Program},
-    diagnostic::Diagnostic,
+    diagnostic::{CompileError, Diagnostic, DiagnosticInUnit, UnitLocation},
     utils::source::SourceFile,
 };

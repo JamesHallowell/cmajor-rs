@@ -1,4 +1,4 @@
-use cmajor_lang::{Program, SourceFile};
+use cmajor_lang::{CompileError, Program, SourceFile};
 
 fn stdlib_units() -> impl IntoIterator<Item = SourceFile> {
     [
@@ -51,7 +51,7 @@ fn compiles_a_program_against_a_synthetic_standard_library() {
         "expected no diagnostics, got: {:?}",
         program
             .diagnostics()
-            .map(|(_, diagnostic)| diagnostic.message.to_string())
+            .map(|(_, diagnostic)| diagnostic.to_string())
             .collect::<Vec<_>>()
     );
 }
@@ -77,11 +77,16 @@ fn undeclared_stdlib_reference_is_reported() {
 
     let resolution = cmajor_lang::resolver::resolve(&program);
 
-    assert_eq!(resolution.diagnostics.len(), 1);
-    assert!(
-        resolution.diagnostics[0]
-            .message
-            .contains("undeclared identifier 'bogus'")
+    let errors: Vec<_> = resolution
+        .diagnostics
+        .into_iter()
+        .map(|(_, diagnostic)| diagnostic.error)
+        .collect();
+    assert_eq!(
+        errors,
+        vec![CompileError::UnresolvedSymbol {
+            name: "teststd::osc::bogus".into()
+        }]
     );
 }
 

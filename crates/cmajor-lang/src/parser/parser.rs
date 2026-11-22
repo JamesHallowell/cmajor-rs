@@ -1,5 +1,5 @@
 use crate::{
-    Diagnostic,
+    CompileError, Diagnostic,
     ast::{
         self, Alias, Annotation, Annotations, Assign, Ast, Binary, Block, Bracketed, BreakStmt,
         Call, ChildList, ChildPool, Connection, ConnectionDecl, ConnectionIf, ContinueStmt, Decl,
@@ -218,54 +218,9 @@ struct Parser<'a> {
     diagnostics: Vec<Diagnostic>,
 }
 
-macro_rules! expect_matches {
-    ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
-        if matches!($parser.peek(), $expected $(if $guard)?) {
-            $parser.advance()
-        } else {
-            let (id, token) = $parser.peek_verbose();
-            $parser.error(
-                id,
-                format!("expected {}, found {:?}", stringify!($expected), token.kind),
-            );
-            id
-        }
-    };
-}
-
-macro_rules! expect_identifier {
-    ($parser:expr, $expected:pat $(if $guard:expr)? $(,)?) => {
-        {
-            let (id, token) = $parser.peek_verbose();
-            match token.kind {
-                TokenKind::Identifier => {
-                    let text = $parser.text(id);
-
-                    if matches!(text, $expected $(if $guard)?) {
-                        $parser.advance()
-                    } else {
-                        $parser.error(
-                            id,
-                            format!("expected {}, found {text:?}", stringify!($expected)),
-                        );
-                        id
-                    }
-                }
-                actual_kind => {
-                    $parser.error(
-                        id,
-                        format!("expected {}, found {actual_kind:?}", stringify!($expected)),
-                    );
-                    id
-                }
-            }
-        }
-    };
-}
-
 macro_rules! until {
-    ($parser:ident, $token:pat, $body:block) => {
-        while !matches!($parser.peek(), $token | TokenKind::EndOfFile) $body
+    ($parser:ident, $token:expr, $body:block) => {
+        while !$parser.at($token) && !$parser.at(TokenKind::EndOfFile) $body
     };
 }
 
@@ -313,7 +268,7 @@ macro_rules! list {
             items
         }
     };
-    (@impl $parser:ident, $start:expr, $separator:expr, $stop:pat, $body:expr) => {
+    (@impl $parser:ident, $start:expr, $separator:expr, $stop:expr, $body:expr) => {
         {
             $parser.expect($start);
 
@@ -325,7 +280,7 @@ macro_rules! list {
                 }
             });
 
-            expect_matches!($parser, $stop);
+            $parser.expect($stop);
             items
         }
     };
@@ -363,7 +318,7 @@ macro_rules! list2 {
             $parser.expect(token!(']'));
         }
     };
-    (@impl $parser:ident, $start:expr, $stop:pat, $body:expr) => {
+    (@impl $parser:ident, $start:expr, $stop:expr, $body:expr) => {
         {
             $parser.expect($start);
             until!($parser, $stop, {
@@ -372,7 +327,7 @@ macro_rules! list2 {
                     break;
                 }
             });
-            expect_matches!($parser, $stop);
+            $parser.expect($stop);
         }
     };
 }
@@ -448,25 +403,38 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn error(&mut self, token: TokenId, message: impl Into<String>) {
+    fn error(&mut self, token: TokenId, error: CompileError) {
         let location = self
             .tokens
             .span(token)
             .to_source_location_span(&self.source);
 
-        self.diagnostics.push(Diagnostic {
-            location,
-            message: message.into(),
-        });
+        self.diagnostics.push(Diagnostic { location, error });
     }
 
     fn expect(&mut self, kind: impl Into<TokenKind>) -> TokenId {
         let kind = kind.into();
         self.advance_if(kind).unwrap_or_else(|| {
             let (id, token) = self.peek_verbose();
-            self.error(id, format!("expected {kind:?}, found {:?}", token.kind));
+            self.error(
+                id,
+                CompileError::FoundWhenExpecting {
+                    found: token.kind,
+                    expected: kind,
+                },
+            );
             id
         })
+    }
+
+    fn expect_stream_type(&mut self) -> TokenId {
+        let (id, token) = self.peek_verbose();
+        if token.kind == TokenKind::Identifier && matches!(self.text(id), "value" | "stream") {
+            self.advance()
+        } else {
+            self.error(id, CompileError::ExpectedStreamType);
+            id
+        }
     }
 
     fn add_node(&mut self, start: TokenId, node: impl Into<Node>) -> NodeId {
@@ -534,10 +502,9 @@ impl<'a> Parser<'a> {
                 let token = self.advance();
                 self.add_node(token, Expr::Ident(Ident { token }))
             }
-            peeked => {
-                let message = format!("expected expression, found {peeked:?}");
+            _ => {
                 let token = self.advance();
-                self.error(token, message);
+                self.error(token, CompileError::ExpectedValue);
                 self.add_node(token, Node::Error { token })
             }
         };
@@ -1123,7 +1090,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_container(&mut self) -> NodeId {
-        let keyword = expect_matches!(self, token!(processor | graph | struct));
+        let keyword = self.advance();
         let keyword_kind = self.tokens.get(keyword).kind;
         let name = self.expect(TokenKind::Identifier);
         let params = self.parse_optional_specialisation_params();
@@ -1291,23 +1258,17 @@ impl<'a> Parser<'a> {
 
             if self.child_pool.get(sources).len() > 1 && self.child_pool.get(destinations).len() > 1
             {
-                self.error(arrow, "many-to-many connections are not supported");
+                self.error(arrow, CompileError::ManyToManyConnection);
             }
 
             let chain_continues = self.at(token!(->));
             if chain_continues {
                 if self.child_pool.get(destinations).len() > 1 {
-                    self.error(
-                        arrow,
-                        "cannot chain a connection with multiple destinations",
-                    );
+                    self.error(arrow, CompileError::ChainedConnectionWithMultipleEndpoints);
                 } else if let Some(&dest) = self.child_pool.get(destinations).first()
                     && matches!(self.nodes[dest], Node::Expr(Expr::Field { .. }))
                 {
-                    self.error(
-                        arrow,
-                        "cannot name an endpoint in the middle of a connection chain",
-                    );
+                    self.error(arrow, CompileError::EndpointNamedInChain);
                 }
             }
 
@@ -1611,7 +1572,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_endpoint_group(&mut self) -> Vec<NodeId> {
-        let direction = expect_matches!(self, token!(input | output));
+        let direction = self.advance();
         if self.at(token!('{')) {
             self.advance();
             let mut endpoints = Vec::new();
@@ -1632,7 +1593,7 @@ impl<'a> Parser<'a> {
         let kind = if self.at(token!(event)) {
             self.advance()
         } else {
-            expect_identifier!(self, "value" | "stream")
+            self.expect_stream_type()
         };
 
         if self.at(token!('{')) {
@@ -1818,10 +1779,9 @@ impl<'a> Parser<'a> {
     fn parse_type_base(&mut self) -> NodeId {
         let mut ty = match self.peek() {
             kind if kind.is_type_like() => self.parse_qualified_name(),
-            peeked => {
-                let message = format!("expected type, found {peeked:?}");
+            _ => {
                 let token = self.advance();
-                self.error(token, message);
+                self.error(token, CompileError::ExpectedType);
                 self.add_node(token, Node::Error { token })
             }
         };
@@ -1912,7 +1872,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use {
         super::*,
-        crate::{ast, lexer},
+        crate::{ast, lexer, utils::source::SourceLocation},
     };
 
     fn dump(source: &str, parse_fn: Option<fn(&mut Parser) -> NodeId>) -> String {
@@ -2602,9 +2562,39 @@ mod tests {
         assert_eq!(parser.diagnostics.len(), 1);
         let diagnostic = &parser.diagnostics[0];
         assert_eq!(
-            diagnostic.to_string(),
-            "1:10: expected Semicolon, found EndOfFile"
+            diagnostic.error,
+            CompileError::FoundWhenExpecting {
+                found: TokenKind::EndOfFile,
+                expected: token!(;),
+            }
         );
+        assert_eq!(
+            diagnostic.location.start,
+            SourceLocation {
+                line: 1.into(),
+                column: 10.into(),
+            }
+        );
+    }
+
+    #[test]
+    fn missing_parameter_type_reports_expected_type() {
+        let source = "void f( { }";
+        let tokens = lexer::tokenize(source);
+        let (_, diagnostics) = parse(source, &tokens);
+
+        let errors: Vec<_> = diagnostics.iter().map(|d| &d.error).collect();
+        assert_eq!(errors.first(), Some(&&CompileError::ExpectedType));
+    }
+
+    #[test]
+    fn endpoint_without_stream_type_reports_expected_stream_type() {
+        let source = "processor P { output int out; }";
+        let tokens = lexer::tokenize(source);
+        let (_, diagnostics) = parse(source, &tokens);
+
+        let errors: Vec<_> = diagnostics.iter().map(|d| &d.error).collect();
+        assert_eq!(errors.first(), Some(&&CompileError::ExpectedStreamType));
     }
 
     #[test]

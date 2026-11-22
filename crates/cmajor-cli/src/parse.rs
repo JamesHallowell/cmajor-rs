@@ -29,12 +29,9 @@ fn compile_with_stdlib(stdlib_dir: &Path, path: &Path) -> bool {
 
     let resolution = cmajor_lang::resolver::resolve(&program);
 
-    for diagnostic in &resolution.diagnostics {
-        let unit_name = program[diagnostic.unit].source.name().unwrap_or("<unknown>");
-        eprintln!(
-            "{unit_name}:{}: {}",
-            diagnostic.location.start, diagnostic.message
-        );
+    for (unit, diagnostic) in &resolution.diagnostics {
+        let unit_name = program[*unit].source.name().unwrap_or("<unknown>");
+        eprintln!("{unit_name}:{}", diagnostic.in_unit(*unit, &program));
     }
 
     resolution.diagnostics.is_empty()
@@ -51,7 +48,7 @@ fn parse_file(path: &Path) -> (bool, String) {
         output.push_str(&ast::dump(&ast, &tokens, &source, root));
     }
     for diagnostic in &diagnostics {
-        output.push_str(&format!("error: {diagnostic}\n"));
+        output.push_str(&format!("{diagnostic}\n"));
     }
 
     (diagnostics.is_empty(), output)

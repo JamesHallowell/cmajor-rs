@@ -11,6 +11,7 @@ pub use {
 };
 
 use crate::{
+    CompileError, Diagnostic, UnitLocation,
     ast::{
         Alias, Ast, Block, EndpointDeclaration, EnumDecl, EnumValue, EventHandlerDecl, Expr,
         ForStmt, FunctionDecl, GenericParam, GraphDecl, HoistedEndpointDeclaration, Ident, IfStmt,
@@ -30,20 +31,7 @@ use crate::{
 
 pub struct Resolution {
     pub symbols: SymbolTable,
-    pub diagnostics: Vec<ResolvedDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResolvedDiagnostic {
-    pub unit: UnitId,
-    pub location: Span<SourceLocation>,
-    pub message: String,
-}
-
-impl std::fmt::Display for ResolvedDiagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.location.start, self.message)
-    }
+    pub diagnostics: Vec<(UnitId, Diagnostic)>,
 }
 
 pub fn resolve(program: &Program) -> Resolution {
@@ -152,7 +140,7 @@ fn compute_intrinsics_scope(state: &mut State, program: &Program) {
                     } => name == program[unit].text(token),
                 }
         })?;
-        state.symbols_scope.get(symbol).copied()
+        state.symbols.inner_scope(symbol)
     };
 
     let scope = find_child_namespace(state, program, global_scope, "std")
@@ -163,33 +151,13 @@ fn compute_intrinsics_scope(state: &mut State, program: &Program) {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("undeclared identifier '{name}'")]
-    UndeclaredIdentifier { name: String },
-
-    #[error("redefinition of '{name}' (previously declared at {})", location.map_or_else(|| "<builtin>".to_string(), |location| location.to_string())
-    )]
-    RedefinedIdentifier {
-        name: String,
-        location: Option<SourceLocation>,
-    },
-
-    #[error("unexpected node")]
-    UnexpectedNode,
-
-    #[error("'{name}' is not a namespace, processor, graph, struct, or enum")]
-    NotAScope { name: String },
-}
-
-type Result<T> = std::result::Result<T, (Span<SourceLocation>, Error)>;
+type Result<T> = std::result::Result<T, (Span<SourceLocation>, CompileError)>;
 
 #[derive(Clone)]
 struct State {
     symbols: SymbolTable,
-    diagnostics: Vec<ResolvedDiagnostic>,
+    diagnostics: Vec<(UnitId, Diagnostic)>,
     current_scope: ScopeId,
-    symbols_scope: SparseSecondaryArena<SymbolId, ScopeId>,
     node_scope: SecondaryArena<UnitId, SparseSecondaryArena<NodeId, ScopeId>>,
     declared: SecondaryArena<UnitId, SparseSecondaryArena<NodeId, SymbolId>>,
     intrinsics_scope: Option<ScopeId>,
@@ -269,7 +237,6 @@ impl State {
             symbols,
             diagnostics: Vec::new(),
             current_scope: global_scope,
-            symbols_scope: SparseSecondaryArena::default(),
             node_scope,
             declared,
             intrinsics_scope: None,
@@ -286,19 +253,18 @@ impl State {
         }
     }
 
-    fn error(&mut self, unit: UnitId, location: Span<SourceLocation>, err: Error) {
-        self.diagnostics.push(ResolvedDiagnostic {
-            unit,
-            location,
-            message: err.to_string(),
-        });
+    fn error(&mut self, unit: UnitId, location: Span<SourceLocation>, error: CompileError) {
+        self.diagnostics
+            .push((unit, Diagnostic { location, error }));
     }
 
-    fn symbol_location(&self, symbol: SymbolId) -> Option<Anchor> {
-        let symbol = self.symbols.symbol(symbol);
-        match symbol.origin {
-            SymbolOrigin::Builtin { name: _ } => None,
-            SymbolOrigin::Source { unit, name, .. } => Some(Anchor { unit, token: name }),
+    fn declaration_location(&self, program: &Program, symbol: SymbolId) -> Option<UnitLocation> {
+        match self.symbols.symbol(symbol).origin {
+            SymbolOrigin::Builtin { .. } => None,
+            SymbolOrigin::Source { unit, name, .. } => Some(UnitLocation {
+                unit,
+                location: program[unit].location(name).start,
+            }),
         }
     }
 
@@ -309,14 +275,7 @@ impl State {
         name: TokenId,
     ) -> impl FnMut(&Symbol) -> bool {
         let query = program[unit].text(name).to_string();
-        move |symbol: &Symbol| match symbol.origin {
-            SymbolOrigin::Builtin { name: symbol_name } => query == *symbol_name,
-            SymbolOrigin::Source {
-                unit,
-                name: symbol_name,
-                ..
-            } => query == program[unit].text(symbol_name),
-        }
+        move |symbol: &Symbol| symbol.name(program) == query
     }
 
     fn declare(
@@ -337,16 +296,14 @@ impl State {
                 .symbols
                 .find_local(scope, self.has_matching_name(program, unit, name))
         {
-            let existing_location = self
-                .symbol_location(existing)
-                .map(|anchor| program[anchor.unit].location(anchor.token).start);
+            let existing_location = self.declaration_location(program, existing);
 
             self.error(
                 unit,
                 program[unit].location(name),
-                Error::RedefinedIdentifier {
+                CompileError::NameInUse {
                     name: program[unit].text(name).to_string(),
-                    location: existing_location,
+                    previous_declaration: existing_location,
                 },
             );
         }
@@ -415,11 +372,7 @@ impl<'s, 'p> Declare<'s, 'p> {
             token: program[unit].ast.span(node).start,
         };
 
-        let container_scope = self
-            .state
-            .symbols
-            .new_scope(self.state.current_scope, scope_start);
-        self.state.symbols_scope.insert(symbol, container_scope);
+        let container_scope = self.state.symbols.new_inner_scope(symbol, scope_start);
 
         self.state.node_scope[unit].insert(node, container_scope);
 
@@ -461,9 +414,8 @@ impl<'s, 'p> Declare<'s, 'p> {
             if existing.kind == SymbolKind::Namespace {
                 return self
                     .state
-                    .symbols_scope
-                    .get(existing_id)
-                    .copied()
+                    .symbols
+                    .inner_scope(existing_id)
                     .expect("namespace symbol always has an inner scope");
             }
 
@@ -472,12 +424,9 @@ impl<'s, 'p> Declare<'s, 'p> {
             self.state.error(
                 unit,
                 error_location,
-                Error::RedefinedIdentifier {
+                CompileError::NameInUse {
                     name: program[unit].text(name).to_string(),
-                    location: self
-                        .state
-                        .symbol_location(existing_id)
-                        .map(|anchor| program[anchor.unit].location(anchor.token).start),
+                    previous_declaration: self.state.declaration_location(program, existing_id),
                 },
             );
         }
@@ -492,9 +441,7 @@ impl<'s, 'p> Declare<'s, 'p> {
             token: program[unit].ast.span(node).start,
         };
 
-        let inner = self.state.symbols.new_scope(scope, scope_start);
-        self.state.symbols_scope.insert(symbol, inner);
-        inner
+        self.state.symbols.new_inner_scope(symbol, scope_start)
     }
 }
 
@@ -770,78 +717,116 @@ impl<'s, 'a> Resolve<'s, 'a> {
 
     fn resolve_scope_path(&self, node: NodeId) -> Result<SymbolId> {
         let unit = &self.program[self.unit];
+        let path_start = unit.location(unit.ast.span(node).start);
+        let segments = self.scope_path_segments(node)?;
+        let (&first, rest) = segments
+            .split_first()
+            .expect("a scope path has at least one segment");
 
-        match unit.ast.get(node) {
-            Node::Expr(Expr::Ident(ident)) => {
-                let symbol = self
-                    .state
-                    .symbols
-                    .find_visible(
-                        self.state.current_scope,
-                        self.state
-                            .has_matching_name(self.program, self.unit, ident.token),
-                    )
-                    .ok_or((
-                        unit.location(ident.token),
-                        Error::UndeclaredIdentifier {
-                            name: unit.text(ident.token).to_owned(),
-                        },
-                    ))?;
+        let mut symbol = self
+            .state
+            .symbols
+            .find_visible(
+                self.state.current_scope,
+                self.state.has_matching_name(self.program, self.unit, first),
+            )
+            .ok_or_else(|| {
+                (
+                    path_start,
+                    CompileError::UnresolvedSymbol {
+                        name: self.written_path(&segments),
+                    },
+                )
+            })?;
 
-                Ok(symbol)
+        for (index, &segment) in rest.iter().enumerate() {
+            if matches!(
+                self.state.symbols.symbol(symbol).kind,
+                SymbolKind::Alias | SymbolKind::Generic
+            ) {
+                return Ok(symbol);
             }
-            Node::Expr(Expr::ScopeAccess(scope_access)) => {
-                let base = self.resolve_scope_path(scope_access.base)?;
 
-                if matches!(
-                    self.state.symbols.symbol(base).kind,
-                    SymbolKind::Alias | SymbolKind::Generic
-                ) {
-                    return Ok(base);
-                }
+            let scope = self.state.symbols.inner_scope(symbol).ok_or_else(|| {
+                (
+                    path_start,
+                    CompileError::NotAScope {
+                        name: self
+                            .state
+                            .symbols
+                            .symbol(symbol)
+                            .name(self.program)
+                            .to_owned(),
+                    },
+                )
+            })?;
 
-                let base_scope = *self.state.symbols_scope.get(base).ok_or_else(|| {
-                    let base_location = self.program[self.unit]
-                        .location(self.program[self.unit].ast.span(scope_access.base).start);
-
+            symbol = self
+                .state
+                .symbols
+                .find_local(
+                    scope,
+                    self.state
+                        .has_matching_name(self.program, self.unit, segment),
+                )
+                .ok_or_else(|| {
                     (
-                        base_location,
-                        Error::NotAScope {
-                            name: self.program[self.unit].source[base_location].to_owned(),
+                        path_start,
+                        CompileError::UnresolvedSymbol {
+                            name: format!(
+                                "{}::{}",
+                                self.qualified_name(symbol),
+                                self.written_path(&rest[index..])
+                            ),
                         },
                     )
                 })?;
+        }
 
+        Ok(symbol)
+    }
+
+    fn scope_path_segments(&self, node: NodeId) -> Result<Vec<TokenId>> {
+        let unit = &self.program[self.unit];
+
+        match unit.ast.get(node) {
+            Node::Expr(Expr::Ident(ident)) => Ok(vec![ident.token]),
+            Node::Expr(Expr::ScopeAccess(scope_access)) => {
                 let Node::Expr(Expr::Ident(name)) = unit.ast.get(scope_access.name) else {
                     return Err((
-                        self.program[self.unit].location(unit.ast.span(scope_access.name).start),
-                        Error::UnexpectedNode,
+                        unit.location(unit.ast.span(scope_access.name).start),
+                        CompileError::UnexpectedNode,
                     ));
                 };
-
-                let member = self
-                    .state
-                    .symbols
-                    .find_local(
-                        base_scope,
-                        self.state
-                            .has_matching_name(self.program, self.unit, name.token),
-                    )
-                    .ok_or((
-                        unit.location(name.token),
-                        Error::UndeclaredIdentifier {
-                            name: unit.text(name.token).to_owned(),
-                        },
-                    ))?;
-
-                Ok(member)
+                let mut segments = self.scope_path_segments(scope_access.base)?;
+                segments.push(name.token);
+                Ok(segments)
             }
-            Node::Expr(Expr::Call(call)) => self.resolve_scope_path(call.callee),
-            _ => {
-                let location = unit.location(unit.ast.span(node).start);
-                Err((location, Error::UnexpectedNode))
-            }
+            Node::Expr(Expr::Call(call)) => self.scope_path_segments(call.callee),
+            _ => Err((
+                unit.location(unit.ast.span(node).start),
+                CompileError::UnexpectedNode,
+            )),
         }
+    }
+
+    fn written_path(&self, segments: &[TokenId]) -> String {
+        let unit = &self.program[self.unit];
+        segments
+            .iter()
+            .map(|&segment| unit.text(segment))
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    fn qualified_name(&self, symbol: SymbolId) -> String {
+        self.state
+            .symbols
+            .qualified_path(symbol)
+            .into_iter()
+            .map(|symbol| self.state.symbols.symbol(symbol).name(self.program))
+            .collect::<Vec<_>>()
+            .join("::")
     }
 }
 
@@ -1040,7 +1025,7 @@ impl<'s, 'a> Visitor for Resolve<'s, 'a> {
             self.state.error(
                 self.unit,
                 self.program[self.unit].location(ident.token),
-                Error::UndeclaredIdentifier {
+                CompileError::UnresolvedSymbol {
                     name: self.program[self.unit].text(ident.token).to_owned(),
                 },
             );
@@ -1175,7 +1160,7 @@ mod tests {
                 kind: Endpoint
                 location: "8:23"
         diagnostics:
-          - "6:11: redefinition of 'P' (previously declared at 1:11)"
+          - "6:11: error: The name 'P' is already in use //// 1:11: note: See previous declaration"
         "#
         );
     }
@@ -1371,7 +1356,7 @@ mod tests {
             scopes:
               - location: "6:10"
         diagnostics:
-          - "4:9: redefinition of 'x' (previously declared at 3:9)"
+          - "4:9: error: The name 'x' is already in use //// 3:9: note: See previous declaration"
         "#
         );
     }
@@ -1418,9 +1403,90 @@ mod tests {
                 kind: Endpoint
                 location: "10:23"
         diagnostics:
-          - "9:10: redefinition of 'a' (previously declared at 8:10)"
+          - "9:10: error: The name 'a' is already in use //// 8:10: note: See previous declaration"
         "#
         );
+    }
+
+    #[test]
+    fn unresolved_qualified_name_reports_the_full_path() {
+        let program = Program::new().with_source_file(SourceFile::new(indoc! {"
+            namespace blah {}
+            processor P
+            {
+                void main() { let x = blah::cos (1.0f); }
+            }
+        "}));
+
+        let errors: Vec<_> = resolve(&program)
+            .diagnostics
+            .into_iter()
+            .map(|(_, diagnostic)| diagnostic.error)
+            .collect();
+
+        assert_eq!(
+            errors,
+            vec![CompileError::UnresolvedSymbol {
+                name: "blah::cos".into()
+            }]
+        );
+    }
+
+    fn resolution_errors(source: &str) -> Vec<CompileError> {
+        let program = Program::new().with_source_file(SourceFile::new(source));
+        resolve(&program)
+            .diagnostics
+            .into_iter()
+            .map(|(_, diagnostic)| diagnostic.error)
+            .collect()
+    }
+
+    #[test]
+    fn unresolved_member_is_named_by_its_qualified_path() {
+        let errors = resolution_errors(indoc! {"
+            namespace tests
+            {
+                struct S { int32 x; }
+                bool f() { return S::y.isScalar; }
+            }
+        "});
+
+        assert_eq!(
+            errors,
+            vec![CompileError::UnresolvedSymbol {
+                name: "tests::S::y".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn unresolved_path_root_names_the_whole_path_as_written() {
+        let errors = resolution_errors(indoc! {"
+            processor P
+            {
+                void main() { let v = blah :: cos (1.0); }
+            }
+        "});
+
+        assert_eq!(
+            errors,
+            vec![CompileError::UnresolvedSymbol {
+                name: "blah::cos".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn not_a_scope_names_the_segment_that_has_no_members() {
+        let errors = resolution_errors(indoc! {"
+            namespace A { int B = 1; }
+            processor P
+            {
+                void main() { let v = A::B::c; }
+            }
+        "});
+
+        assert_eq!(errors, vec![CompileError::NotAScope { name: "B".into() }]);
     }
 
     #[test]
@@ -1453,7 +1519,7 @@ mod tests {
                     kind: Variable
                     location: "5:13"
         diagnostics:
-          - "5:17: undeclared identifier 'qty'"
+          - "5:17: error: Cannot find symbol 'qty'"
         "#);
     }
 
@@ -1779,7 +1845,7 @@ mod tests {
                     kind: Variable
                     location: "9:13"
         diagnostics:
-          - "9:24: undeclared identifier 'bogus'"
+          - "9:17: error: Cannot find symbol 'Utils::bogus'"
         "#);
     }
 
@@ -1875,7 +1941,7 @@ mod tests {
                     kind: Variable
                     location: "7:23"
         diagnostics:
-          - "7:34: undeclared identifier 'bogus'"
+          - "7:27: error: Cannot find symbol 'Utils::bogus'"
         "#);
     }
 
@@ -1953,7 +2019,7 @@ mod tests {
                     kind: Variable
                     location: "2:33"
         diagnostics:
-          - "2:44: undeclared identifier 'z'"
+          - "2:37: error: Cannot find symbol 'Point::z'"
         "#);
     }
 
@@ -2043,7 +2109,7 @@ mod tests {
                     kind: Variable
                     location: "3:33"
         diagnostics:
-          - "3:40: undeclared identifier 'bogus'"
+          - "3:37: error: Cannot find symbol 'G::bogus'"
         "#);
     }
 
@@ -2083,7 +2149,7 @@ mod tests {
                     kind: Variable
                     location: "2:33"
         diagnostics:
-          - "2:43: undeclared identifier 'Bogus'"
+          - "2:37: error: Cannot find symbol 'Mode::Bogus'"
         "#);
     }
 
@@ -2179,7 +2245,7 @@ mod tests {
                     kind: Variable
                     location: "2:33"
         diagnostics:
-          - "2:43: undeclared identifier 'bogus'"
+          - "2:37: error: Cannot find symbol 'A::B::bogus'"
         "#);
     }
 
@@ -2248,7 +2314,7 @@ mod tests {
                     kind: Variable
                     location: "1:44"
         diagnostics:
-          - "1:48: 'a' is not a namespace, processor, graph, struct, or enum"
+          - "1:48: error: 'a' is not a namespace, processor, graph, struct, or enum"
         "#
         );
     }
@@ -2550,17 +2616,16 @@ mod tests {
             let resolution = resolve(&program);
 
             assert_eq!(resolution.diagnostics.len(), 1);
-            let diagnostic = &resolution.diagnostics[0];
+            let (unit, diagnostic) = &resolution.diagnostics[0];
             assert!(
-                diagnostic.message.contains("redefinition of 'P'"),
-                "{}",
-                diagnostic.message
+                matches!(&diagnostic.error, CompileError::NameInUse { name, .. } if name == "P"),
+                "{diagnostic}"
             );
 
             let processor_units = source_units_in_declaration_order(&resolution);
             assert_eq!(processor_units.len(), 2);
             assert_ne!(processor_units[0], processor_units[1]);
-            assert_eq!(diagnostic.unit, processor_units[1]);
+            assert_eq!(*unit, processor_units[1]);
         }
 
         #[test]
@@ -2577,7 +2642,7 @@ mod tests {
 
             let units = source_units_in_declaration_order(&resolution);
             assert_eq!(units.len(), 2);
-            assert_eq!(resolution.diagnostics[0].unit, units[1]);
+            assert_eq!(resolution.diagnostics[0].0, units[1]);
         }
 
         fn source_units_in_declaration_order(resolution: &Resolution) -> Vec<UnitId> {
