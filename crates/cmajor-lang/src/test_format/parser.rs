@@ -40,6 +40,43 @@ pub enum TestNamespace {
     Unwrapped,
 }
 
+const TEST_PROCESSOR: &str =
+    "processor TestProcessor { output stream float32 out; void main() { advance(); } }";
+
+impl TestFile {
+    pub fn global_source(&self) -> String {
+        self.sections
+            .iter()
+            .filter(|section| section.directive == Directive::Global)
+            .map(|section| section.body.as_str())
+            .collect()
+    }
+}
+
+impl Section {
+    pub fn source(&self, global: &str) -> Option<String> {
+        let body = &self.body;
+        match &self.directive {
+            Directive::ExpectError(ExpectedError {
+                namespace: TestNamespace::Wrapped,
+                ..
+            }) => Some(format!(
+                "namespace tests {{ {body} }}\n{TEST_PROCESSOR}\n{global}"
+            )),
+            Directive::TestFunction => Some(format!("namespace tests {{ {body} }}{global}")),
+            Directive::ExpectError(ExpectedError {
+                namespace: TestNamespace::Unwrapped,
+                ..
+            })
+            | Directive::TestCompile
+            | Directive::TestProcessor
+            | Directive::TestConsole
+            | Directive::TestInputEndpoints => Some(format!("{body}{global}")),
+            Directive::Global | Directive::Other { .. } | Directive::Unknown { .. } => None,
+        }
+    }
+}
+
 impl fmt::Display for Directive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -719,5 +756,94 @@ mod tests {
     fn section_with_no_lines_has_an_empty_body() {
         let file = parse_test_file("## testCompile()\n## testCompile()\nvoid f() {}\n");
         assert_eq!(file.sections[0].body, "");
+    }
+
+    fn source_of(header: &str, global: &str) -> Option<String> {
+        let file = parse_test_file(&format!("{header}\nint body;\n"));
+        file.sections[0].source(global)
+    }
+
+    #[test]
+    fn expect_error_source_wraps_the_body_and_adds_the_test_processor() {
+        assert_eq!(
+            source_of("## expectError (\"1:1: error: a\")", "int global;\n").as_deref(),
+            Some(
+                "namespace tests { int body;\n }\nprocessor TestProcessor { output stream float32 out; void main() { advance(); } }\nint global;\n"
+            )
+        );
+    }
+
+    #[test]
+    fn unwrapped_expect_error_source_is_the_body_then_global_code() {
+        assert_eq!(
+            source_of(
+                "## expectError (\"1:1: error: a\", {\"doNotWrapInTestNamespace\": true})",
+                "int global;\n"
+            )
+            .as_deref(),
+            Some("int body;\nint global;\n")
+        );
+    }
+
+    #[test]
+    fn test_function_source_wraps_the_body_without_a_test_processor() {
+        assert_eq!(
+            source_of("## testFunction()", "int global;\n").as_deref(),
+            Some("namespace tests { int body;\n }int global;\n")
+        );
+    }
+
+    #[test]
+    fn test_compile_source_is_the_body_then_global_code() {
+        assert_eq!(
+            source_of("## testCompile()", "int global;\n").as_deref(),
+            Some("int body;\nint global;\n")
+        );
+    }
+
+    #[test]
+    fn test_processor_source_is_the_body_then_global_code() {
+        assert_eq!(
+            source_of("## testProcessor()", "int global;\n").as_deref(),
+            Some("int body;\nint global;\n")
+        );
+    }
+
+    #[test]
+    fn test_console_source_is_the_body_then_global_code() {
+        assert_eq!(
+            source_of("## testConsole (\"hi\")", "int global;\n").as_deref(),
+            Some("int body;\nint global;\n")
+        );
+    }
+
+    #[test]
+    fn test_input_endpoints_source_is_the_body_then_global_code() {
+        assert_eq!(
+            source_of("## testInputEndpoints ([])", "int global;\n").as_deref(),
+            Some("int body;\nint global;\n")
+        );
+    }
+
+    #[test]
+    fn global_section_has_no_source_of_its_own() {
+        assert_eq!(source_of("## global", ""), None);
+    }
+
+    #[test]
+    fn other_directive_has_no_source() {
+        assert_eq!(source_of("## runScript ({})", ""), None);
+    }
+
+    #[test]
+    fn unknown_header_has_no_source() {
+        assert_eq!(source_of("## if (x) testCompile()", ""), None);
+    }
+
+    #[test]
+    fn global_source_joins_every_global_section_in_order() {
+        let file =
+            parse_test_file("## global\nint a;\n## testCompile()\nint b;\n## global\nint c;\n");
+        assert_eq!(file.global_source(), "int a;\nint c;\n");
     }
 }

@@ -23,12 +23,7 @@ pub struct TestResult {
 }
 
 pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResult> {
-    let global_code: String = file
-        .sections
-        .iter()
-        .filter(|section| section.directive == Directive::Global)
-        .map(|section| section.body.as_str())
-        .collect();
+    let global = file.global_source();
 
     file.sections
         .iter()
@@ -42,56 +37,49 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
 
             let mut actual_error = None;
 
-            let outcome = if section.disabled {
-                Outcome::Skipped("disabled".to_string())
-            } else {
-                match &section.directive {
-                    Directive::TestCompile => {
-                        let program = Program::new().with_source_file(SourceFile::new(format!(
-                            "{global_code}\n{}",
-                            section.body
-                        )));
+            let outcome = match (
+                section.disabled,
+                &section.directive,
+                section.source(&global),
+            ) {
+                (true, ..) => Outcome::Skipped("disabled".to_string()),
+                (false, Directive::TestCompile, Some(source)) => {
+                    let program = Program::new().with_source_file(SourceFile::new(source));
 
-                        if program.error_tokens().count() != 0 || program.diagnostics().count() != 0
-                        {
-                            let detail = describe_parse_errors(&program);
-                            Outcome::Fail(format!("parse error produced\n{detail}"))
+                    if program.error_tokens().count() != 0 || program.diagnostics().count() != 0 {
+                        let detail = describe_parse_errors(&program);
+                        Outcome::Fail(format!("parse error produced\n{detail}"))
+                    } else {
+                        let errors = resolution_errors(program, baseline);
+                        if !errors.is_empty() {
+                            let detail = errors
+                                .iter()
+                                .map(|error| format!("  {error}"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            Outcome::Fail(format!("resolution error produced\n{detail}"))
                         } else {
-                            let errors = resolution_errors(program, baseline);
-                            if !errors.is_empty() {
-                                let detail = errors
-                                    .iter()
-                                    .map(|error| format!("  {error}"))
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                Outcome::Fail(format!("resolution error produced\n{detail}"))
-                            } else {
-                                Outcome::Pass
-                            }
+                            Outcome::Pass
                         }
                     }
-                    Directive::ExpectError(_) => {
-                        let program = Program::new().with_source_file(SourceFile::new(format!(
-                            "{global_code}\n{}",
-                            section.body
-                        )));
+                }
+                (false, Directive::ExpectError(_), Some(source)) => {
+                    let program = Program::new().with_source_file(SourceFile::new(source));
 
-                        if program.error_tokens().count() != 0 || program.diagnostics().count() != 0
-                        {
-                            actual_error = Some(describe_parse_errors(&program));
+                    if program.error_tokens().count() != 0 || program.diagnostics().count() != 0 {
+                        actual_error = Some(describe_parse_errors(&program));
+                        Outcome::Pass
+                    } else {
+                        let errors = resolution_errors(program, baseline);
+                        if !errors.is_empty() {
+                            actual_error = Some(errors.join("\n"));
                             Outcome::Pass
                         } else {
-                            let errors = resolution_errors(program, baseline);
-                            if !errors.is_empty() {
-                                actual_error = Some(errors.join("\n"));
-                                Outcome::Pass
-                            } else {
-                                Outcome::Fail("expected an error but none occurred".to_string())
-                            }
+                            Outcome::Fail("expected an error but none occurred".to_string())
                         }
                     }
-                    _ => Outcome::Skipped(format!("execution of '{name}' not yet supported")),
                 }
+                _ => Outcome::Skipped(format!("execution of '{name}' not yet supported")),
             };
 
             TestResult {
@@ -179,7 +167,7 @@ mod tests {
                 name: "testCompile".into(),
                 line: 1,
                 outcome: Outcome::Fail(
-                    "parse error produced\n  3:9: at \"{\" in \"void f( { }\"\n  3:9: error: Expected a type\n  3:11: error: Found \"}\" when expecting identifier\n  3:11: error: Found \"}\" when expecting \")\"\n  3:11: error: Found \"}\" when expecting \"{\"".into()
+                    "parse error produced\n  2:9: at \"{\" in \"void f( { }\"\n  2:9: error: Expected a type\n  2:11: error: Found \"}\" when expecting identifier\n  2:11: error: Found \"}\" when expecting \")\"\n  2:11: error: Found \"}\" when expecting \"{\"".into()
                 ),
                 expected_error: None,
                 actual_error: None,
@@ -190,12 +178,12 @@ mod tests {
     #[test]
     fn parse_error_columns_count_characters_not_bytes() {
         let file = parse_test_file(
-            "## expectError (\"3:17: error: Expected a type\")\n\n/* é */ void f( { }\n",
+            "## expectError (\"2:17: error: Expected a type\")\n\n/* é */ void f( { }\n",
         );
         let results = run(&file, None);
         let actual = results[0].actual_error.as_deref().unwrap();
-        assert!(actual.contains("3:17: at \"{\""), "{actual}");
-        assert!(actual.contains("3:17: error: Expected a type"), "{actual}");
+        assert!(actual.contains("2:17: at \"{\""), "{actual}");
+        assert!(actual.contains("2:17: error: Expected a type"), "{actual}");
     }
 
     #[test]
@@ -217,7 +205,7 @@ mod tests {
                 line: 1,
                 outcome: Outcome::Pass,
                 expected_error: Some("2:9: error: nope".into()),
-                actual_error: Some("  3:9: at \"{\" in \"void f( { }\"\n  3:9: error: Expected a type\n  3:11: error: Found \"}\" when expecting identifier\n  3:11: error: Found \"}\" when expecting \")\"\n  3:11: error: Found \"}\" when expecting \"{\"".into()),
+                actual_error: Some("  2:9: at \"{\" in \"void f( { }\"\n  2:9: error: Expected a type\n  2:11: error: Found \"}\" when expecting identifier\n  2:11: error: Found \"}\" when expecting \")\"\n  2:11: error: Found \"}\" when expecting \"{\"".into()),
             }]
         );
     }
@@ -282,7 +270,7 @@ mod tests {
     fn note_in_the_standard_library_names_its_file() {
         let stdlib = stdlib_declaring_processor_p();
         let file = parse_test_file(
-            "## expectError (\"2:11: error: nope\")\n\nprocessor P { output stream int out; }\n",
+            "## expectError (\"2:11: error: nope\", {\"doNotWrapInTestNamespace\": true})\n\nprocessor P { output stream int out; }\n",
         );
 
         let results = run(&file, Some(&stdlib));
@@ -290,7 +278,7 @@ mod tests {
         assert_eq!(
             results[0].actual_error.as_deref(),
             Some(
-                "3:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
+                "2:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
             )
         );
     }
@@ -305,7 +293,7 @@ mod tests {
         assert_eq!(
             results[0].outcome,
             Outcome::Fail(
-                "resolution error produced\n  3:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
+                "resolution error produced\n  2:11: error: The name 'P' is already in use //// lib.cmajor:1:11: note: See previous declaration"
                     .into()
             )
         );
@@ -319,5 +307,46 @@ mod tests {
         let results = run(&file, None);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].outcome, Outcome::Pass);
+    }
+
+    #[test]
+    fn global_code_does_not_shift_body_line_numbers() {
+        let with_global = parse_test_file(
+            "## global\n\nstruct S { int i; }\nstruct T { int j; }\n\n## testCompile()\n\nvoid f( { }\n",
+        );
+        let without_global = parse_test_file("## testCompile()\n\nvoid f( { }\n");
+
+        assert_eq!(
+            run(&with_global, None)[0].outcome,
+            run(&without_global, None)[0].outcome
+        );
+    }
+
+    #[test]
+    fn expect_error_body_is_wrapped_in_the_tests_namespace() {
+        let file = parse_test_file(
+            "## global\n\nstruct T { tests::S s; }\n\n## expectError (\"3:12: error: Cannot find symbol 'Missing'\")\n\nstruct S { int i; }\nstruct U { Missing m; }\n",
+        );
+
+        let results = run(&file, None);
+
+        assert_eq!(
+            results[0].actual_error.as_deref(),
+            Some("3:12: error: Cannot find symbol 'Missing'")
+        );
+    }
+
+    #[test]
+    fn unwrapped_expect_error_is_compiled_bare() {
+        let file = parse_test_file(
+            "## expectError (\"1:12: error: Cannot find symbol 'Missing'\", {\"doNotWrapInTestNamespace\": true})\nstruct U { Missing m; }\n",
+        );
+
+        let results = run(&file, None);
+
+        assert_eq!(
+            results[0].actual_error.as_deref(),
+            Some("1:12: error: Cannot find symbol 'Missing'")
+        );
     }
 }
