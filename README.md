@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cmajor = "0.7"
+cmajor = "0.8"
 ```
 
 You will also need to [download the Cmajor library](https://github.com/cmajor-lang/cmajor/releases) and tell the crate
@@ -26,27 +26,27 @@ to find it, either by:
 
 1. Passing the path on construction:
 
-    ```rust
-    use {cmajor::Cmajor, std::error::Error};
+   ```rust
+   use {cmajor::Cmajor, std::error::Error};
 
-    fn main() -> Result<(), Box<dyn Error>> {
-        let cmajor = Cmajor::new("path/to/libCmajPerformer.so")?;
-    }
-    ```
+   fn main() -> Result<(), Box<dyn Error>> {
+       let cmajor = Cmajor::new("path/to/libCmajPerformer.so")?;
+   }
+   ```
 
 2. Setting the `CMAJOR_LIB_PATH` environment variable (`.env` files are supported):
 
-    ```
-    CMAJOR_LIB_PATH=path/to/libCmajPerformer.so
-    ```
+   ```
+   CMAJOR_LIB_PATH=path/to/libCmajPerformer.so
+   ```
 
-    ```rust
-    use cmajor::{Cmajor, std::error::Error};
+   ```rust
+   use cmajor::{Cmajor, std::error::Error};
 
-    fn main() -> Result<(), Box<dyn Error>> {
-        let cmajor = Cmajor::new_from_env()?;
-    }
-    ```
+   fn main() -> Result<(), Box<dyn Error>> {
+       let cmajor = Cmajor::new_from_env()?;
+   }
+   ```
 
 ## Crate Features
 
