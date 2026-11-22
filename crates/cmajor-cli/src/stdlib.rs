@@ -9,9 +9,10 @@ pub fn collect(dir: &Path) -> impl Iterator<Item = SourceFile> {
     collect_into(dir, &mut files);
     files.sort();
 
-    files.into_iter().map(|path| {
+    files.into_iter().map(move |path| {
         let source = io::read_file(&path);
-        SourceFile::new(source).with_name(path.display().to_string())
+        let name = path.strip_prefix(dir).unwrap_or(&path);
+        SourceFile::new(source).with_name(name.display().to_string())
     })
 }
 

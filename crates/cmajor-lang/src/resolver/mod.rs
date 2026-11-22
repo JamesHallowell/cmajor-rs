@@ -50,6 +50,7 @@ pub fn resolve(program: &Program) -> Resolution {
 pub struct StandardLibrary {
     program: Program,
     state: State,
+    diagnostics: Vec<(UnitId, Diagnostic)>,
 }
 
 pub fn declare_stdlib(program: &Program) -> StandardLibrary {
@@ -57,10 +58,18 @@ pub fn declare_stdlib(program: &Program) -> StandardLibrary {
 
     declare_units(&mut state, program);
     compute_intrinsics_scope(&mut state, program);
+    let diagnostics = std::mem::take(&mut state.diagnostics);
 
     StandardLibrary {
         program: program.clone(),
         state,
+        diagnostics,
+    }
+}
+
+impl StandardLibrary {
+    pub fn diagnostics(&self) -> &[(UnitId, Diagnostic)] {
+        &self.diagnostics
     }
 }
 
@@ -2677,6 +2686,48 @@ mod tests {
             );
 
             resolve_with_standard_library(program, &stdlib)
+        }
+
+        fn stdlib_declaring_p_twice() -> StandardLibrary {
+            declare_stdlib(
+                &Program::new()
+                    .with_source_file(
+                        SourceFile::new("processor P { output stream int out; }")
+                            .with_name("a.cmajor"),
+                    )
+                    .with_source_file(
+                        SourceFile::new("processor P { output stream int out; }")
+                            .with_name("b.cmajor"),
+                    ),
+            )
+        }
+
+        #[test]
+        fn stdlib_reports_its_own_declaration_diagnostics() {
+            let stdlib = stdlib_declaring_p_twice();
+
+            assert!(matches!(
+                stdlib.diagnostics(),
+                [(
+                    _,
+                    Diagnostic {
+                        error: CompileError::NameInUse { .. },
+                        ..
+                    }
+                )]
+            ));
+        }
+
+        #[test]
+        fn stdlib_declaration_diagnostics_are_not_reported_with_programs_resolved_against_it() {
+            let stdlib = stdlib_declaring_p_twice();
+            let program = Program::new()
+                .with_source_file(SourceFile::new("processor Q { output stream int out; }"));
+
+            let ResolvedProgram { resolution, .. } =
+                resolve_with_standard_library(program, &stdlib);
+
+            assert_eq!(resolution.diagnostics, vec![]);
         }
 
         #[test]

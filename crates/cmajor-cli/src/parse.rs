@@ -1,5 +1,5 @@
 use {
-    crate::{io, stdlib},
+    crate::{diagnostics, io, stdlib},
     cmajor_lang::{Program, SourceFile, ast, lexer, parser},
     std::path::{Path, PathBuf},
 };
@@ -29,10 +29,7 @@ fn compile_with_stdlib(stdlib_dir: &Path, path: &Path) -> bool {
 
     let resolution = cmajor_lang::resolver::resolve(&program);
 
-    for (unit, diagnostic) in &resolution.diagnostics {
-        let unit_name = program[*unit].source.name().unwrap_or("<unknown>");
-        eprintln!("{unit_name}:{}", diagnostic.in_unit(*unit, &program));
-    }
+    diagnostics::eprint(&program, &resolution.diagnostics);
 
     resolution.diagnostics.is_empty()
 }

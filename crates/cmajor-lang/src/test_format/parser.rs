@@ -1,4 +1,4 @@
-use std::fmt;
+use {crate::utils::source::Line, std::fmt};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TestFile {
@@ -11,20 +11,26 @@ pub struct Section {
     pub directive: Directive,
     pub disabled: bool,
     pub body: String,
-    pub line: usize,
+    pub line: Line,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Directive {
-    Global,
+    Global {
+        files: Vec<String>,
+    },
     TestCompile,
     TestFunction,
     TestProcessor,
     TestConsole,
     TestInputEndpoints,
     ExpectError(ExpectedError),
-    Other { name: String },
-    Unknown { raw: String },
+    Other {
+        name: String,
+    },
+    Unknown {
+        raw: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -44,12 +50,20 @@ const TEST_PROCESSOR: &str =
     "processor TestProcessor { output stream float32 out; void main() { advance(); } }";
 
 impl TestFile {
-    pub fn global_source(&self) -> String {
-        self.sections
-            .iter()
-            .filter(|section| section.directive == Directive::Global)
-            .map(|section| section.body.as_str())
-            .collect()
+    pub fn global_source(&self, mut read_file: impl FnMut(&str) -> String) -> String {
+        let mut source = String::new();
+        for section in &self.sections {
+            match &section.directive {
+                Directive::Global { files } if files.is_empty() => source.push_str(&section.body),
+                Directive::Global { files } => {
+                    for file in files {
+                        source.push_str(&read_file(file));
+                    }
+                }
+                _ => {}
+            }
+        }
+        source
     }
 }
 
@@ -87,7 +101,7 @@ impl Section {
             | Directive::TestInputEndpoints => Check::Accepts {
                 source: format!("{body}{global}"),
             },
-            Directive::Global | Directive::Other { .. } | Directive::Unknown { .. } => {
+            Directive::Global { .. } | Directive::Other { .. } | Directive::Unknown { .. } => {
                 Check::NotCompiled
             }
         }
@@ -97,7 +111,7 @@ impl Section {
 impl fmt::Display for Directive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Directive::Global => "global",
+            Directive::Global { .. } => "global",
             Directive::TestCompile => "testCompile",
             Directive::TestFunction => "testFunction",
             Directive::TestProcessor => "testProcessor",
@@ -223,7 +237,7 @@ pub fn parse_test_file(source: &str) -> TestFile {
             directive,
             disabled,
             body,
-            line: header_line + 1,
+            line: Line::from(header_line + 1),
         });
     }
 
@@ -250,7 +264,9 @@ fn classify_directive(rest: &str) -> Directive {
     };
 
     match name {
-        "global" if args.is_none() => Directive::Global,
+        "global" => Directive::Global {
+            files: args.map(string_list).unwrap_or_default(),
+        },
         "testCompile" => Directive::TestCompile,
         "testFunction" => Directive::TestFunction,
         "testProcessor" => Directive::TestProcessor,
@@ -308,6 +324,13 @@ fn ends_statement(text: &str) -> bool {
     let text = text.trim_start();
     let text = text.strip_prefix(';').unwrap_or(text).trim_start();
     text.is_empty() || text.starts_with("//")
+}
+
+fn string_list(args: &str) -> Vec<String> {
+    split_top_level_commas(args)
+        .map(str::trim)
+        .filter_map(parse_string_literal)
+        .collect()
 }
 
 fn split_top_level_commas(text: &str) -> impl Iterator<Item = &str> {
@@ -430,7 +453,10 @@ mod tests {
     fn global_section() {
         let file =
             parse_test_file("## global\n\nprocessor P {}\n\n## testCompile()\n\nvoid f() {}\n");
-        assert_eq!(file.sections[0].directive, Directive::Global);
+        assert_eq!(
+            file.sections[0].directive,
+            Directive::Global { files: vec![] }
+        );
         assert!(!file.sections[0].disabled);
         assert_eq!(file.sections[0].body, "\nprocessor P {}\n\n");
     }
@@ -753,8 +779,8 @@ mod tests {
         assert_eq!(file.sections.len(), 2);
         assert_eq!(file.sections[0].body, "\nvoid a() {}\n\n");
         assert_eq!(file.sections[1].body, "\nvoid b() {}\n");
-        assert_eq!(file.sections[0].line, 1);
-        assert_eq!(file.sections[1].line, 5);
+        assert_eq!(file.sections[0].line, Line::from(1));
+        assert_eq!(file.sections[1].line, Line::from(5));
     }
 
     #[test]
@@ -868,10 +894,35 @@ mod tests {
         );
     }
 
+    fn no_files(name: &str) -> String {
+        unreachable!("no global file should be read, but {name} was")
+    }
+
+    #[test]
+    fn global_with_arguments_names_its_files() {
+        assert_eq!(
+            directive_of("## global (\"d/test.cmajor\", \"d/test2.cmajor\")"),
+            Directive::Global {
+                files: vec!["d/test.cmajor".into(), "d/test2.cmajor".into()]
+            }
+        );
+    }
+
     #[test]
     fn global_source_joins_every_global_section_in_order() {
         let file =
             parse_test_file("## global\nint a;\n## testCompile()\nint b;\n## global\nint c;\n");
-        assert_eq!(file.global_source(), "int a;\nint c;\n");
+        assert_eq!(file.global_source(no_files), "int a;\nint c;\n");
+    }
+
+    #[test]
+    fn global_source_reads_named_files_in_place_of_the_body() {
+        let file = parse_test_file(
+            "## global (\"a.cmajor\", \"b\")\nint ignored;\n## testCompile()\nint body;\n",
+        );
+
+        let source = file.global_source(|name| format!("// {name}\n"));
+
+        assert_eq!(source, "// a.cmajor\n// b\n");
     }
 }

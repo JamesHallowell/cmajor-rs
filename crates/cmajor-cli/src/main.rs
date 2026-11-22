@@ -1,3 +1,4 @@
+mod diagnostics;
 mod io;
 mod parse;
 mod stdlib;

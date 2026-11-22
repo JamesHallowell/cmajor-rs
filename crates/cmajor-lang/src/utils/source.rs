@@ -132,18 +132,15 @@ impl std::ops::Index<std::ops::Range<SourceLocation>> for SourceFile {
 impl std::ops::Index<Line> for SourceFile {
     type Output = str;
 
-    fn index(&self, line: Line) -> &Self::Output {
-        let start = SourceLocation {
-            line,
-            column: 1.into(),
-        };
-        let end = SourceLocation {
-            line: line + 1.into(),
-            column: 1.into(),
-        };
-        let span = Span { start, end };
+    fn index(&self, Line(line): Line) -> &Self::Output {
+        let start = self.line_starts[line - 1];
+        let end = self
+            .line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.contents.len());
 
-        &self[span]
+        &self.contents[start..end]
     }
 }
 
@@ -174,14 +171,6 @@ impl From<Line> for usize {
 impl From<usize> for Line {
     fn from(value: usize) -> Self {
         Self(value)
-    }
-}
-
-impl std::ops::Add for Line {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
     }
 }
 
@@ -284,6 +273,13 @@ mod tests {
         let y = 2;
         let z = 3;
     "};
+
+    #[test]
+    fn last_line_without_a_trailing_newline_ends_at_the_end_of_the_source() {
+        let source = SourceFile::new("let x = 1;\nlet y = 2;");
+
+        assert_eq!(&source[line!(2)], "let y = 2;");
+    }
 
     #[test]
     fn fetching_source_locations() {

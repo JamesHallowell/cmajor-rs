@@ -3,6 +3,7 @@ use {
     crate::{
         Program, SourceFile,
         resolver::{self, ResolvedProgram, StandardLibrary},
+        utils::source::Line,
     },
     std::fmt,
 };
@@ -10,7 +11,7 @@ use {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestResult {
     pub directive: Directive,
-    pub line: usize,
+    pub line: Line,
     pub outcome: Outcome,
 }
 
@@ -34,19 +35,17 @@ pub enum Skip {
     NotCompiled,
 }
 
-pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResult> {
-    let global = file.global_source();
-
+pub fn run(file: &TestFile, global: &str, baseline: Option<&StandardLibrary>) -> Vec<TestResult> {
     file.sections
         .iter()
-        .filter(|section| section.directive != Directive::Global)
+        .filter(|section| !matches!(section.directive, Directive::Global { .. }))
         .map(|section| TestResult {
             directive: section.directive.clone(),
             line: section.line,
             outcome: if section.disabled {
                 Outcome::Skipped(Skip::Disabled)
             } else {
-                section.check(&global).run(baseline)
+                section.check(global).run(baseline)
             },
         })
         .collect()
@@ -151,8 +150,13 @@ impl fmt::Display for Skip {
 mod tests {
     use {super::*, crate::test_format::parse_test_file};
 
+    fn no_files(name: &str) -> String {
+        unreachable!("no global file should be read, but {name} was")
+    }
+
     fn outcomes(test_file: &str, baseline: Option<&StandardLibrary>) -> Vec<Outcome> {
-        run(&parse_test_file(test_file), baseline)
+        let file = parse_test_file(test_file);
+        run(&file, &file.global_source(no_files), baseline)
             .into_iter()
             .map(|result| result.outcome)
             .collect()
@@ -173,16 +177,14 @@ mod tests {
 
     #[test]
     fn result_names_its_directive_and_header_line() {
-        let results = run(
-            &parse_test_file("## global\n\nint g;\n\n## testCompile()\n\nvoid f() {}\n"),
-            None,
-        );
+        let file = parse_test_file("## global\n\nint g;\n\n## testCompile()\n\nvoid f() {}\n");
+        let results = run(&file, &file.global_source(no_files), None);
 
         assert_eq!(
             results,
             vec![TestResult {
                 directive: Directive::TestCompile,
-                line: 5,
+                line: Line::from(5),
                 outcome: Outcome::Pass,
             }]
         );
