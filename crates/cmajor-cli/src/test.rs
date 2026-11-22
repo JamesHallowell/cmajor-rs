@@ -38,7 +38,6 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
         let is_plain_cmajor = file_path.extension().is_some_and(|ext| ext == "cmajor");
         let file = if is_plain_cmajor {
             TestFile {
-                prelude: String::new(),
                 sections: vec![Section {
                     directive: Directive::TestCompile,
                     disabled: false,

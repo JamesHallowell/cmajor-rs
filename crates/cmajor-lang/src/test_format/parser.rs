@@ -2,7 +2,6 @@ use {crate::utils::source::Line, std::fmt};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TestFile {
-    pub prelude: String,
     pub sections: Vec<Section>,
 }
 
@@ -16,21 +15,15 @@ pub struct Section {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Directive {
-    Global {
-        files: Vec<String>,
-    },
+    Global { files: Vec<String> },
     TestCompile,
     TestFunction,
     TestProcessor,
     TestConsole,
     TestInputEndpoints,
     ExpectError(ExpectedError),
-    Other {
-        name: String,
-    },
-    Unknown {
-        raw: String,
-    },
+    Other { name: String },
+    Unknown { raw: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -199,27 +192,17 @@ fn number_value(literal: &str) -> Option<f64> {
 }
 
 pub fn parse_test_file(source: &str) -> TestFile {
-    let lines: Vec<&str> = source.lines().collect();
+    let lines: Vec<&str> = source
+        .split_inclusive('\n')
+        .map(|line| line.strip_suffix('\n').unwrap_or(line))
+        .collect();
 
-    let first_header = lines
+    let headers: Vec<usize> = lines
         .iter()
-        .position(|line| line.trim_start().starts_with("##"));
-
-    let Some(first_header) = first_header else {
-        return TestFile {
-            prelude: lines.join("\n"),
-            sections: Vec::new(),
-        };
-    };
-
-    let prelude = lines[..first_header].join("\n");
-
-    let mut headers = Vec::new();
-    for (i, line) in lines.iter().enumerate().skip(first_header) {
-        if line.trim_start().starts_with("##") {
-            headers.push(i);
-        }
-    }
+        .enumerate()
+        .filter(|(_, line)| is_header(line))
+        .map(|(i, _)| i)
+        .collect();
 
     let mut sections = Vec::with_capacity(headers.len());
     for (idx, &header_line) in headers.iter().enumerate() {
@@ -230,7 +213,7 @@ pub fn parse_test_file(source: &str) -> TestFile {
             .flat_map(|line| [*line, "\n"])
             .collect();
 
-        let header_rest = lines[header_line].trim_start()[2..].trim();
+        let header_rest = lines[header_line][2..].trim();
         let (directive, disabled) = classify_header(header_rest);
 
         sections.push(Section {
@@ -241,7 +224,11 @@ pub fn parse_test_file(source: &str) -> TestFile {
         });
     }
 
-    TestFile { prelude, sections }
+    TestFile { sections }
+}
+
+fn is_header(line: &str) -> bool {
+    line.len() > 2 && line.starts_with("##")
 }
 
 fn classify_header(header_rest: &str) -> (Directive, bool) {
@@ -431,22 +418,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prelude_is_captured_verbatim() {
+    fn lines_before_the_first_header_belong_to_no_section() {
         let file = parse_test_file(
             "// helper comment\nfunction helper() { return 1; }\n\n## testCompile()\n\nvoid f() {}\n",
         );
-        assert_eq!(
-            file.prelude,
-            "// helper comment\nfunction helper() { return 1; }\n"
-        );
         assert_eq!(file.sections.len(), 1);
+        assert_eq!(file.sections[0].body, "\nvoid f() {}\n");
     }
 
     #[test]
-    fn no_header_lines_is_all_prelude() {
+    fn indented_hash_line_is_body_not_a_header() {
+        let file = parse_test_file("## testCompile()\n    ## not a header\nvoid f() {}\n");
+        assert_eq!(file.sections.len(), 1);
+        assert_eq!(file.sections[0].body, "    ## not a header\nvoid f() {}\n");
+    }
+
+    #[test]
+    fn bare_hash_line_is_body_not_a_header() {
+        let file = parse_test_file("## testCompile()\n##\nvoid f() {}\n");
+        assert_eq!(file.sections.len(), 1);
+        assert_eq!(file.sections[0].body, "##\nvoid f() {}\n");
+    }
+
+    #[test]
+    fn body_lines_keep_a_trailing_carriage_return() {
+        let file = parse_test_file("## testCompile()\r\nvoid f() {}\r\n");
+        assert_eq!(file.sections[0].body, "void f() {}\r\n");
+    }
+
+    #[test]
+    fn header_ending_in_a_carriage_return_is_still_recognised() {
+        let file = parse_test_file("## testCompile()\r\nvoid f() {}\r\n");
+        assert_eq!(file.sections[0].directive, Directive::TestCompile);
+    }
+
+    #[test]
+    fn file_without_headers_has_no_sections() {
         let file = parse_test_file("just some javascript\nwith no directives\n");
-        assert_eq!(file.sections.len(), 0);
-        assert_eq!(file.prelude, "just some javascript\nwith no directives");
+        assert_eq!(file.sections, vec![]);
     }
 
     #[test]
