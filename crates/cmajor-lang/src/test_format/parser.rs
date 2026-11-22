@@ -53,26 +53,43 @@ impl TestFile {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Check<'a> {
+    Accepts { source: String },
+    Rejects { source: String, expected: &'a str },
+    NotCompiled,
+}
+
 impl Section {
-    pub fn source(&self, global: &str) -> Option<String> {
+    pub(super) fn check(&self, global: &str) -> Check<'_> {
         let body = &self.body;
         match &self.directive {
             Directive::ExpectError(ExpectedError {
+                message,
                 namespace: TestNamespace::Wrapped,
-                ..
-            }) => Some(format!(
-                "namespace tests {{ {body} }}\n{TEST_PROCESSOR}\n{global}"
-            )),
-            Directive::TestFunction => Some(format!("namespace tests {{ {body} }}{global}")),
+            }) => Check::Rejects {
+                source: format!("namespace tests {{ {body} }}\n{TEST_PROCESSOR}\n{global}"),
+                expected: message,
+            },
             Directive::ExpectError(ExpectedError {
+                message,
                 namespace: TestNamespace::Unwrapped,
-                ..
-            })
-            | Directive::TestCompile
+            }) => Check::Rejects {
+                source: format!("{body}{global}"),
+                expected: message,
+            },
+            Directive::TestFunction => Check::Accepts {
+                source: format!("namespace tests {{ {body} }}{global}"),
+            },
+            Directive::TestCompile
             | Directive::TestProcessor
             | Directive::TestConsole
-            | Directive::TestInputEndpoints => Some(format!("{body}{global}")),
-            Directive::Global | Directive::Other { .. } | Directive::Unknown { .. } => None,
+            | Directive::TestInputEndpoints => Check::Accepts {
+                source: format!("{body}{global}"),
+            },
+            Directive::Global | Directive::Other { .. } | Directive::Unknown { .. } => {
+                Check::NotCompiled
+            }
         }
     }
 }
@@ -758,86 +775,97 @@ mod tests {
         assert_eq!(file.sections[0].body, "");
     }
 
-    fn source_of(header: &str, global: &str) -> Option<String> {
-        let file = parse_test_file(&format!("{header}\nint body;\n"));
-        file.sections[0].source(global)
+    fn section(header: &str) -> Section {
+        parse_test_file(&format!("{header}\nint body;\n"))
+            .sections
+            .remove(0)
+    }
+
+    fn accepts(source: &str) -> Check<'static> {
+        Check::Accepts {
+            source: source.to_string(),
+        }
     }
 
     #[test]
-    fn expect_error_source_wraps_the_body_and_adds_the_test_processor() {
+    fn expect_error_wraps_the_body_adds_the_test_processor_and_expects_its_message() {
         assert_eq!(
-            source_of("## expectError (\"1:1: error: a\")", "int global;\n").as_deref(),
-            Some(
-                "namespace tests { int body;\n }\nprocessor TestProcessor { output stream float32 out; void main() { advance(); } }\nint global;\n"
-            )
+            section("## expectError (\"1:1: error: a\")").check("int global;\n"),
+            Check::Rejects {
+                source: "namespace tests { int body;\n }\nprocessor TestProcessor { output stream float32 out; void main() { advance(); } }\nint global;\n".into(),
+                expected: "1:1: error: a",
+            }
         );
     }
 
     #[test]
-    fn unwrapped_expect_error_source_is_the_body_then_global_code() {
+    fn unwrapped_expect_error_is_the_body_then_global_code_and_expects_its_message() {
         assert_eq!(
-            source_of(
-                "## expectError (\"1:1: error: a\", {\"doNotWrapInTestNamespace\": true})",
-                "int global;\n"
-            )
-            .as_deref(),
-            Some("int body;\nint global;\n")
+            section("## expectError (\"1:1: error: a\", {\"doNotWrapInTestNamespace\": true})")
+                .check("int global;\n"),
+            Check::Rejects {
+                source: "int body;\nint global;\n".into(),
+                expected: "1:1: error: a",
+            }
         );
     }
 
     #[test]
-    fn test_function_source_wraps_the_body_without_a_test_processor() {
+    fn test_function_wraps_the_body_without_a_test_processor_and_must_be_accepted() {
         assert_eq!(
-            source_of("## testFunction()", "int global;\n").as_deref(),
-            Some("namespace tests { int body;\n }int global;\n")
+            section("## testFunction()").check("int global;\n"),
+            accepts("namespace tests { int body;\n }int global;\n")
         );
     }
 
     #[test]
-    fn test_compile_source_is_the_body_then_global_code() {
+    fn test_compile_is_the_body_then_global_code_and_must_be_accepted() {
         assert_eq!(
-            source_of("## testCompile()", "int global;\n").as_deref(),
-            Some("int body;\nint global;\n")
+            section("## testCompile()").check("int global;\n"),
+            accepts("int body;\nint global;\n")
         );
     }
 
     #[test]
-    fn test_processor_source_is_the_body_then_global_code() {
+    fn test_processor_is_the_body_then_global_code_and_must_be_accepted() {
         assert_eq!(
-            source_of("## testProcessor()", "int global;\n").as_deref(),
-            Some("int body;\nint global;\n")
+            section("## testProcessor()").check("int global;\n"),
+            accepts("int body;\nint global;\n")
         );
     }
 
     #[test]
-    fn test_console_source_is_the_body_then_global_code() {
+    fn test_console_is_the_body_then_global_code_and_must_be_accepted() {
         assert_eq!(
-            source_of("## testConsole (\"hi\")", "int global;\n").as_deref(),
-            Some("int body;\nint global;\n")
+            section("## testConsole (\"hi\")").check("int global;\n"),
+            accepts("int body;\nint global;\n")
         );
     }
 
     #[test]
-    fn test_input_endpoints_source_is_the_body_then_global_code() {
+    fn test_input_endpoints_is_the_body_then_global_code_and_must_be_accepted() {
         assert_eq!(
-            source_of("## testInputEndpoints ([])", "int global;\n").as_deref(),
-            Some("int body;\nint global;\n")
+            section("## testInputEndpoints ([])").check("int global;\n"),
+            accepts("int body;\nint global;\n")
         );
     }
 
     #[test]
-    fn global_section_has_no_source_of_its_own() {
-        assert_eq!(source_of("## global", ""), None);
+    fn global_section_is_not_compiled_on_its_own() {
+        assert_eq!(section("## global").check(""), Check::NotCompiled);
     }
 
     #[test]
-    fn other_directive_has_no_source() {
-        assert_eq!(source_of("## runScript ({})", ""), None);
+    fn other_directive_is_not_compiled() {
+        assert_eq!(section("## runScript ({})").check(""), Check::NotCompiled);
     }
 
     #[test]
-    fn unknown_header_has_no_source() {
-        assert_eq!(source_of("## if (x) testCompile()", ""), None);
+    fn unknown_header_is_not_compiled() {
+        assert_eq!(
+            section("## if (x) testCompile()").check(""),
+            Check::NotCompiled
+        );
     }
 
     #[test]

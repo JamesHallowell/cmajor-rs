@@ -50,7 +50,7 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
             .unwrap_or_else(|| file_path.to_string_lossy().into_owned());
 
         for result in test_format::run(&file, standard_library.as_ref()) {
-            let name = format!("{location}:{}:{}", result.line, result.name);
+            let name = format!("{location}:{}:{}", result.line, result.directive);
             trials.push(Trial::ignorable_test(name, move || outcome_of(result)));
         }
     }
@@ -65,27 +65,9 @@ pub fn run(path: &Path, stdlib_dir: Option<&Path>) -> bool {
 
 fn outcome_of(result: TestResult) -> Result<Completion, Failed> {
     match result.outcome {
-        Outcome::Pass => {
-            if let Some(expected) = &result.expected_error {
-                println!("  expected: {expected}");
-                println!(
-                    "  actual:   {}",
-                    result.actual_error.as_deref().unwrap_or("<none>")
-                );
-            }
-            Ok(Completion::Completed)
-        }
-        Outcome::Fail(mut reason) => {
-            if let Some(expected) = &result.expected_error {
-                reason.push_str(&format!("\n  expected: {expected}"));
-                reason.push_str(&format!(
-                    "\n  actual:   {}",
-                    result.actual_error.as_deref().unwrap_or("<none>")
-                ));
-            }
-            Err(Failed::from(reason))
-        }
-        Outcome::Skipped(reason) => Ok(Completion::ignored_with(reason)),
+        Outcome::Pass => Ok(Completion::Completed),
+        Outcome::Fail(failure) => Err(Failed::from(failure)),
+        Outcome::Skipped(skip) => Ok(Completion::ignored_with(skip.to_string())),
     }
 }
 
