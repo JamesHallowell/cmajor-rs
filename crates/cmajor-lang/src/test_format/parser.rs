@@ -157,7 +157,10 @@ pub fn parse_test_file(source: &str) -> TestFile {
     for (idx, &header_line) in headers.iter().enumerate() {
         let body_start = header_line + 1;
         let body_end = headers.get(idx + 1).copied().unwrap_or(lines.len());
-        let body = lines[body_start..body_end].join("\n");
+        let body = lines[body_start..body_end]
+            .iter()
+            .flat_map(|line| [*line, "\n"])
+            .collect();
 
         let header_rest = lines[header_line].trim_start()[2..].trim();
         let (directive, disabled) = classify_header(header_rest);
@@ -375,7 +378,7 @@ mod tests {
             parse_test_file("## global\n\nprocessor P {}\n\n## testCompile()\n\nvoid f() {}\n");
         assert_eq!(file.sections[0].directive, Directive::Global);
         assert!(!file.sections[0].disabled);
-        assert_eq!(file.sections[0].body, "\nprocessor P {}\n");
+        assert_eq!(file.sections[0].body, "\nprocessor P {}\n\n");
     }
 
     fn directive_of(header: &str) -> Directive {
@@ -694,9 +697,27 @@ mod tests {
             "## expectError (\"1:1: error: a\")\n\nvoid a() {}\n\n## expectError (\"1:1: error: b\")\n\nvoid b() {}\n",
         );
         assert_eq!(file.sections.len(), 2);
-        assert_eq!(file.sections[0].body, "\nvoid a() {}\n");
-        assert_eq!(file.sections[1].body, "\nvoid b() {}");
+        assert_eq!(file.sections[0].body, "\nvoid a() {}\n\n");
+        assert_eq!(file.sections[1].body, "\nvoid b() {}\n");
         assert_eq!(file.sections[0].line, 1);
         assert_eq!(file.sections[1].line, 5);
+    }
+
+    #[test]
+    fn body_starts_on_the_line_after_its_header() {
+        let file = parse_test_file("## testCompile()\nvoid f() {}\nvoid g() {}\n");
+        assert_eq!(file.sections[0].body, "void f() {}\nvoid g() {}\n");
+    }
+
+    #[test]
+    fn last_body_ends_with_a_newline_when_the_file_does_not() {
+        let file = parse_test_file("## testCompile()\nvoid f() {}");
+        assert_eq!(file.sections[0].body, "void f() {}\n");
+    }
+
+    #[test]
+    fn section_with_no_lines_has_an_empty_body() {
+        let file = parse_test_file("## testCompile()\n## testCompile()\nvoid f() {}\n");
+        assert_eq!(file.sections[0].body, "");
     }
 }

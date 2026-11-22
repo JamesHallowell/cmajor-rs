@@ -28,8 +28,7 @@ pub fn run(file: &TestFile, baseline: Option<&StandardLibrary>) -> Vec<TestResul
         .iter()
         .filter(|section| section.directive == Directive::Global)
         .map(|section| section.body.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
 
     file.sections
         .iter()
